@@ -11,6 +11,8 @@ export const colors = {
   error: '#B42318',
   disabled: '#D8CECC',
   focus: '#F21F26',
+  success: '#147D64',
+  successSubtle: '#E7F6F0',
 } as const;
 
 export type ColorToken = keyof typeof colors;

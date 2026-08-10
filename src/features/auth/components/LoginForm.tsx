@@ -7,9 +7,16 @@ import { appRoutes } from '@/config/routes';
 import type { LoginField, LoginFormValues } from '@/features/auth/types/login';
 import { getEmailError, getPasswordError } from '@/features/auth/utils/validation';
 import { AppButton, AppText, AppTextInput } from '@/shared/components';
-import { colors, iconSizes, spacing } from '@/shared/theme';
+import { colors, iconSizes, radius, spacing } from '@/shared/theme';
 
 const initialValues: LoginFormValues = { email: '', password: '' };
+
+type DemoArea = 'employee' | 'manager';
+
+const DEMO_AREAS: readonly { key: DemoArea; label: string }[] = [
+  { key: 'employee', label: 'Funcionário' },
+  { key: 'manager', label: 'Gestor' },
+];
 
 function FieldIcon({ name }: { name: 'email' | 'lock' }) {
   const path =
@@ -59,6 +66,7 @@ export function LoginForm() {
     password: false,
   });
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [selectedArea, setSelectedArea] = useState<DemoArea>('employee');
 
   const errors = useMemo(
     () => ({ email: getEmailError(values.email), password: getPasswordError(values.password) }),
@@ -83,17 +91,19 @@ export function LoginForm() {
 
     Keyboard.dismiss();
 
+    const targetRoute = selectedArea === 'manager' ? appRoutes.managerHome : appRoutes.employeeHome;
+
     if (Platform.OS === 'web') {
-      router.replace(appRoutes.employeeHome);
+      router.replace(targetRoute);
       return;
     }
 
     Alert.alert(
       'Acesso de demonstração',
-      'A autenticação será conectada ao servidor em uma próxima etapa.',
+      `Abrir a área de ${selectedArea === 'manager' ? 'gestor' : 'funcionário'}?`,
       [
         { style: 'cancel', text: 'Cancelar' },
-        { text: 'Ver início', onPress: () => router.replace(appRoutes.employeeHome) },
+        { text: 'Ver início', onPress: () => router.replace(targetRoute) },
       ],
     );
   }
@@ -166,6 +176,36 @@ export function LoginForm() {
         </AppText>
       </Pressable>
 
+      <View style={styles.areaGroup}>
+        <AppText color="textMuted" variant="label">
+          Área de acesso
+        </AppText>
+        <View accessibilityRole="radiogroup" style={styles.areaSelector}>
+          {DEMO_AREAS.map((area) => {
+            const isSelected = area.key === selectedArea;
+
+            return (
+              <Pressable
+                key={area.key}
+                accessibilityLabel={`Entrar como ${area.label}`}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: isSelected }}
+                style={({ pressed }) => [
+                  styles.areaOption,
+                  isSelected && styles.areaOptionSelected,
+                  pressed && styles.areaOptionPressed,
+                ]}
+                onPress={() => setSelectedArea(area.key)}
+              >
+                <AppText color={isSelected ? 'onPrimary' : 'textMuted'} variant="label">
+                  {area.label}
+                </AppText>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
       <AppButton
         accessibilityHint={
           isValid
@@ -181,6 +221,31 @@ export function LoginForm() {
 }
 
 const styles = StyleSheet.create({
+  areaGroup: {
+    gap: spacing.sm,
+  },
+  areaOption: {
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.sm,
+  },
+  areaOptionPressed: {
+    opacity: 0.75,
+  },
+  areaOptionSelected: {
+    backgroundColor: colors.primary,
+  },
+  areaSelector: {
+    backgroundColor: colors.primarySubtle,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    padding: spacing.xs,
+  },
   forgotPassword: {
     alignSelf: 'flex-end',
     minHeight: 44,

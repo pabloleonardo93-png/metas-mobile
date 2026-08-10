@@ -1,18 +1,14 @@
+import type { Campaign } from '@/features/campaigns/types/campaign.types';
+import type { EmployeeRole } from '@/shared/types/userRole';
+
 export interface EmployeeDashboardUser {
+  cargo: EmployeeRole;
   nome: string;
 }
 
 export interface MonetaryGoal {
   objetivo: number;
   realizado: number;
-}
-
-export interface PriorityGoal {
-  id: string;
-  objetivo: number;
-  produto: string;
-  realizado: number;
-  unidade: string;
 }
 
 export interface PerformanceSummaryData {
@@ -22,8 +18,8 @@ export interface PerformanceSummaryData {
 }
 
 export interface EmployeeDashboardData {
+  activeStoreCampaigns: Campaign[];
   metaMensal: MonetaryGoal;
-  metasPrioritarias: PriorityGoal[];
   resumo: PerformanceSummaryData;
   usuario: EmployeeDashboardUser;
 }

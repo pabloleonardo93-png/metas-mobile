@@ -1,48 +1,53 @@
 import { StyleSheet, View } from 'react-native';
 
+import type { Campaign } from '@/features/campaigns/types/campaign.types';
+import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
 import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar';
-import type { PriorityGoal } from '@/features/dashboard/types/employeeDashboard';
-import { calculateProgress } from '@/features/dashboard/utils/calculateProgress';
-import { formatBrazilianCurrency, formatPercentage } from '@/features/dashboard/utils/formatters';
+import { formatPercentage } from '@/features/dashboard/utils/formatters';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
 
-interface PriorityGoalCardProps {
-  goal: PriorityGoal;
+interface StoreCampaignCardProps {
+  campaign: Campaign;
 }
 
-export function PriorityGoalCard({ goal }: PriorityGoalCardProps) {
-  const progress = calculateProgress(goal.realizado, goal.objetivo);
-  const progressDescription =
-    goal.unidade === 'reais'
-      ? `${formatBrazilianCurrency(goal.realizado)} / ${formatBrazilianCurrency(goal.objetivo)}`
-      : `${goal.realizado} / ${goal.objetivo} ${goal.unidade}`;
+export function StoreCampaignCard({ campaign }: StoreCampaignCardProps) {
+  const metrics = calculateCampaignMetrics(campaign);
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <View style={styles.productCopy}>
+        <View style={styles.campaignCopy}>
           <AppText numberOfLines={2} variant="bodyMedium">
-            {goal.produto}
+            {campaign.name}
           </AppText>
           <AppText color="textMuted" variant="caption">
-            {progressDescription}
+            {metrics.soldQuantity} / {metrics.targetQuantity} unidades da loja
           </AppText>
         </View>
         <AppText color="primary" variant="bodyMedium">
-          {formatPercentage(progress, 0)}
+          {formatPercentage(metrics.progress, 0)}
         </AppText>
       </View>
 
       <GoalProgressBar
-        label={`Progresso de ${goal.produto}: ${formatPercentage(progress, 0)}`}
-        progress={progress}
+        label={`Progresso geral da campanha ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
+        progress={metrics.progress}
       />
+
+      <AppText color="textMuted" variant="caption">
+        Objetivo coletivo da loja
+      </AppText>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  campaignCopy: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+  },
   card: {
     ...shadows.panel,
     backgroundColor: colors.surface,
@@ -57,9 +62,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     justifyContent: 'space-between',
-  },
-  productCopy: {
-    flex: 1,
-    gap: spacing.xs,
   },
 });

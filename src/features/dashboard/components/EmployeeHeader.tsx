@@ -2,18 +2,10 @@ import { StyleSheet, View } from 'react-native';
 
 import { AppText } from '@/shared/components';
 import { colors, radius, spacing } from '@/shared/theme';
+import { getInitials } from '@/shared/utils/getInitials';
 
 interface EmployeeHeaderProps {
   name: string;
-}
-
-function getInitials(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join('');
 }
 
 export function EmployeeHeader({ name }: EmployeeHeaderProps) {

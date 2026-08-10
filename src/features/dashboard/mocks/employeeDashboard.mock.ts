@@ -1,29 +1,24 @@
 import type { EmployeeDashboardData } from '@/features/dashboard/types/employeeDashboard';
+import { campaignsMock } from '@/features/campaigns/mocks/campaigns.mock';
+import {
+  normalizeCampaign,
+  selectActiveCampaigns,
+} from '@/features/campaigns/utils/campaign.utils';
+
+const activeStoreCampaigns = selectActiveCampaigns(
+  campaignsMock.map((campaign) => normalizeCampaign({ ...campaign })),
+).slice(0, 2);
 
 export const employeeDashboardMock = {
+  activeStoreCampaigns,
   usuario: {
+    cargo: 'BALCONISTA',
     nome: 'Pablo',
   },
   metaMensal: {
     objetivo: 10_000,
     realizado: 8_450,
   },
-  metasPrioritarias: [
-    {
-      id: '1',
-      produto: 'Vitamina X',
-      objetivo: 50,
-      realizado: 38,
-      unidade: 'unidades',
-    },
-    {
-      id: '2',
-      produto: 'Protetor Solar Y',
-      objetivo: 30,
-      realizado: 22,
-      unidade: 'unidades',
-    },
-  ],
   resumo: {
     hoje: 540,
     semana: 2_850,

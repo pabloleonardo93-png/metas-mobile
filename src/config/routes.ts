@@ -1,7 +1,17 @@
 export const appRoutes = {
   employeeHome: '/(funcionario)',
   login: '/login',
+  managerGoals: '/(gestor)/metas',
   managerHome: '/(gestor)',
   managerGoalSettings: '/(gestor)/configuracao-metas',
+  managerCampaigns: '/(gestor)/campanhas',
+  managerNewCampaign: '/(gestor)/campanhas/novo',
+  managerCampaignDetails: (campaignId: string) => `/(gestor)/campanhas/${campaignId}` as const,
+  managerEditCampaign: (campaignId: string) => `/(gestor)/campanhas/editar/${campaignId}` as const,
+  managerProfile: '/(gestor)/perfil',
+  managerTeam: '/(gestor)/equipe',
+  managerNewEmployee: '/(gestor)/equipe/novo',
+  managerEmployeeDetails: (employeeId: string) => `/(gestor)/equipe/${employeeId}` as const,
+  managerEditEmployee: (employeeId: string) => `/(gestor)/equipe/editar/${employeeId}` as const,
   root: '/',
 } as const;

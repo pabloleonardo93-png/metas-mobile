@@ -1,4 +1,6 @@
-export type TeamRole = 'BALCONISTA' | 'FARMACEUTICO' | 'CAIXA';
+import type { EmployeeRole } from '@/shared/types/userRole';
+
+export type TeamRole = EmployeeRole;
 
 export interface TeamDistribution {
   quantity: number;

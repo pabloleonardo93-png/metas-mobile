@@ -1,10 +1,11 @@
-import { forwardRef, type ComponentRef } from 'react';
+import { forwardRef, type ComponentRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Pressable,
   StyleSheet,
   type PressableProps,
   type PressableStateCallbackType,
+  View,
 } from 'react-native';
 
 import { AppText } from '@/shared/components/AppText';
@@ -15,6 +16,7 @@ type AppButtonVariant = 'primary' | 'secondary';
 interface AppButtonProps extends Omit<PressableProps, 'children'> {
   fullWidth?: boolean;
   label: string;
+  leftIcon?: ReactNode;
   loading?: boolean;
   variant?: AppButtonVariant;
 }
@@ -26,6 +28,7 @@ export const AppButton = forwardRef<ComponentRef<typeof Pressable>, AppButtonPro
       disabled = false,
       fullWidth = true,
       label,
+      leftIcon,
       loading = false,
       style,
       variant = 'primary',
@@ -61,9 +64,17 @@ export const AppButton = forwardRef<ComponentRef<typeof Pressable>, AppButtonPro
         {loading ? (
           <ActivityIndicator color={variant === 'primary' ? colors.onPrimary : colors.primary} />
         ) : (
-          <AppText color={variant === 'primary' ? 'onPrimary' : 'primary'} variant="button">
-            {label}
-          </AppText>
+          <View style={styles.content}>
+            {leftIcon}
+            <AppText
+              color={variant === 'primary' ? 'onPrimary' : 'primary'}
+              numberOfLines={2}
+              style={styles.label}
+              variant="button"
+            >
+              {label}
+            </AppText>
+          </View>
         )}
       </Pressable>
     );
@@ -79,11 +90,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  content: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    maxWidth: '100%',
+  },
   disabled: {
     backgroundColor: colors.disabled,
   },
   fullWidth: {
     alignSelf: 'stretch',
+  },
+  label: {
+    flexShrink: 1,
+    letterSpacing: 0,
+    textAlign: 'center',
   },
   primary: {
     backgroundColor: colors.primary,

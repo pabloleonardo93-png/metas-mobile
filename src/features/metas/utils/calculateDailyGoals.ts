@@ -4,6 +4,10 @@ import type {
   DailyGoalsStatus,
   TeamDistribution,
 } from '@/features/metas/types/teamDistribution.types';
+import {
+  calculateDailyGoalAmount,
+  calculateRemainingGoalAmount,
+} from '@/shared/utils/goalCalculations';
 
 function createEmptyResult(
   status: Exclude<DailyGoalsStatus, 'success'>,
@@ -49,7 +53,7 @@ export function calculateDailyGoals(
     return createEmptyResult('invalid-settings', 'Revise os valores informados para calcular.');
   }
 
-  const remainingAmount = Math.max(settings.monthlyTarget - settings.soldAmount, 0);
+  const remainingAmount = calculateRemainingGoalAmount(settings.monthlyTarget, settings.soldAmount);
 
   if (remainingAmount === 0) {
     return createEmptyResult('goal-achieved', 'Meta mensal atingida.');
@@ -83,7 +87,7 @@ export function calculateDailyGoals(
     );
   }
 
-  const dailyStoreGoal = remainingAmount / settings.remainingBusinessDays;
+  const dailyStoreGoal = calculateDailyGoalAmount(remainingAmount, settings.remainingBusinessDays);
 
   if (!Number.isFinite(dailyStoreGoal) || dailyStoreGoal < 0) {
     return createEmptyResult('invalid-settings', 'Revise os valores informados para calcular.');

@@ -1,4 +1,5 @@
 import type { TeamRole } from '@/features/metas/types/teamDistribution.types';
+import { USER_ROLE_LABELS } from '@/shared/config/userRoles';
 
 export const ROLE_WEIGHTS = {
   BALCONISTA: 1,
@@ -7,16 +8,7 @@ export const ROLE_WEIGHTS = {
 } as const satisfies Record<TeamRole, number>;
 
 export const TEAM_ROLE_LABELS = {
-  BALCONISTA: {
-    plural: 'Balconistas',
-    singular: 'Balconista',
-  },
-  FARMACEUTICO: {
-    plural: 'Farmacêuticos',
-    singular: 'Farmacêutico',
-  },
-  CAIXA: {
-    plural: 'Caixas',
-    singular: 'Caixa',
-  },
+  BALCONISTA: USER_ROLE_LABELS.BALCONISTA,
+  FARMACEUTICO: USER_ROLE_LABELS.FARMACEUTICO,
+  CAIXA: USER_ROLE_LABELS.CAIXA,
 } as const satisfies Record<TeamRole, { plural: string; singular: string }>;
