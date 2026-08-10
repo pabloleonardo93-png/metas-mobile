@@ -13,6 +13,9 @@ export function ManagerHomeScreen() {
         <AppText color="textMuted">
           Esta é uma tela provisória para confirmar a rota do perfil de gestor.
         </AppText>
+        <Link asChild href={appRoutes.managerGoalSettings}>
+          <AppButton label="Abrir configuração geral" />
+        </Link>
         <Link asChild href={appRoutes.root}>
           <AppButton label="Voltar à entrada" variant="secondary" />
         </Link>

@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
-import { Alert, Keyboard, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Alert, Keyboard, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
+import { appRoutes } from '@/config/routes';
 import type { LoginField, LoginFormValues } from '@/features/auth/types/login';
 import { getEmailError, getPasswordError } from '@/features/auth/utils/validation';
 import { AppButton, AppText, AppTextInput } from '@/shared/components';
@@ -49,6 +51,7 @@ function EyeIcon({ visible }: { visible: boolean }) {
 }
 
 export function LoginForm() {
+  const router = useRouter();
   const passwordRef = useRef<TextInput>(null);
   const [values, setValues] = useState<LoginFormValues>(initialValues);
   const [touched, setTouched] = useState<Record<LoginField, boolean>>({
@@ -79,7 +82,20 @@ export function LoginForm() {
     }
 
     Keyboard.dismiss();
-    Alert.alert('Em breve', 'A autenticação será conectada ao servidor em uma próxima etapa.');
+
+    if (Platform.OS === 'web') {
+      router.replace(appRoutes.employeeHome);
+      return;
+    }
+
+    Alert.alert(
+      'Acesso de demonstração',
+      'A autenticação será conectada ao servidor em uma próxima etapa.',
+      [
+        { style: 'cancel', text: 'Cancelar' },
+        { text: 'Ver início', onPress: () => router.replace(appRoutes.employeeHome) },
+      ],
+    );
   }
 
   return (
