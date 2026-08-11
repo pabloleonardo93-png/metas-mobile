@@ -55,6 +55,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
       <View style={styles.fieldGroup}>
         <AppText variant="label">Marca / Produto</AppText>
         <AppTextInput
+          accessibilityLabel="Marca ou produto"
           autoCapitalize="words"
           error={submitted ? errors.name : undefined}
           placeholder="Ex.: Protetor Solar La Roche"
@@ -67,6 +68,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
       <View style={styles.fieldGroup}>
         <AppText variant="label">Quantidade a vender</AppText>
         <AppTextInput
+          accessibilityLabel="Quantidade a vender"
           error={submitted ? errors.targetQuantity : undefined}
           inputMode="numeric"
           keyboardType="number-pad"
@@ -82,6 +84,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
         <View style={[styles.fieldGroup, styles.dateField]}>
           <AppText variant="label">Data inicial</AppText>
           <AppTextInput
+            accessibilityLabel="Data inicial"
             error={submitted ? errors.startDate : undefined}
             inputMode="numeric"
             keyboardType="number-pad"
@@ -94,6 +97,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
         <View style={[styles.fieldGroup, styles.dateField]}>
           <AppText variant="label">Data final</AppText>
           <AppTextInput
+            accessibilityLabel="Data final"
             error={submitted ? errors.endDate : undefined}
             inputMode="numeric"
             keyboardType="number-pad"

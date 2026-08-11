@@ -30,6 +30,7 @@ export function CampaignFilters({ onSelect, selectedFilter }: CampaignFiltersPro
         return (
           <Pressable
             key={filter.value}
+            accessibilityLabel={filter.label}
             accessibilityRole="button"
             accessibilityState={{ selected: isSelected }}
             style={({ pressed }) => [

@@ -18,6 +18,8 @@ import { StoreGoalCard } from '@/features/dashboard/components/StoreGoalCard';
 import { TeamPerformance } from '@/features/dashboard/components/TeamPerformance';
 import { managerDashboardMock } from '@/features/dashboard/mocks/managerDashboard.mock';
 import { calculateManagerDashboardMetrics } from '@/features/dashboard/utils/calculateManagerDashboard';
+import { useEmployees } from '@/features/employees/context/EmployeesContext';
+import { currentManagerMock } from '@/features/employees/mocks/employees.mock';
 import { useGoals } from '@/features/metas/context/GoalsContext';
 import { ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
@@ -33,12 +35,23 @@ export function ManagerHomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { campaigns } = useCampaigns();
-  const { currentGoal } = useGoals();
+  const { employees } = useEmployees();
+  const { currentGoal, teamDistribution } = useGoals();
+  const currentManager =
+    employees.find((employee) => employee.id === currentManagerMock.id) ?? currentManagerMock;
   const activeCampaigns = useMemo(() => selectActiveCampaigns(campaigns), [campaigns]);
+  const teamPerformance = useMemo(
+    () =>
+      managerDashboardMock.team.map((item) => ({
+        ...item,
+        quantity: teamDistribution.find((role) => role.role === item.role)?.quantity ?? 0,
+      })),
+    [teamDistribution],
+  );
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
   const metrics = calculateManagerDashboardMetrics(
     currentGoal,
-    managerDashboardMock.team,
+    teamPerformance,
     activeCampaigns.length,
   );
 
@@ -53,10 +66,10 @@ export function ManagerHomeScreen() {
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
       >
-        <ManagerHeader name={managerDashboardMock.manager.name} />
+        <ManagerHeader name={currentManager.name} />
         <StoreGoalCard metrics={metrics} />
         <ManagerQuickSummary metrics={metrics} />
-        <TeamPerformance team={managerDashboardMock.team} />
+        <TeamPerformance team={teamPerformance} />
         <PriorityProducts
           campaigns={activeCampaigns}
           onSeeAll={() => router.push(appRoutes.managerCampaigns)}

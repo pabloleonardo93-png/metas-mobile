@@ -31,6 +31,7 @@ export function EmployeeRoleFilters({ selectedRole, onSelect }: EmployeeRoleFilt
         return (
           <Pressable
             key={filter.value}
+            accessibilityLabel={filter.label}
             accessibilityRole="button"
             accessibilityState={{ selected: isSelected }}
             style={({ pressed }) => [

@@ -51,6 +51,7 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
       <View style={styles.fieldGroup}>
         <AppText variant="label">Nome</AppText>
         <AppTextInput
+          accessibilityLabel="Nome do funcionário"
           autoCapitalize="words"
           autoComplete="name"
           error={submitted ? errors.name : undefined}
@@ -65,6 +66,7 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
       <View style={styles.fieldGroup}>
         <AppText variant="label">E-mail</AppText>
         <AppTextInput
+          accessibilityLabel="E-mail do funcionário"
           autoCapitalize="none"
           autoComplete="email"
           autoCorrect={false}
@@ -121,6 +123,7 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
             return (
               <Pressable
                 key={status.value}
+                accessibilityLabel={status.label}
                 accessibilityRole="radio"
                 accessibilityState={{ checked: isSelected }}
                 style={({ pressed }) => [

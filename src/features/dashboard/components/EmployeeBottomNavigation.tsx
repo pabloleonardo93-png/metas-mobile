@@ -1,10 +1,16 @@
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
+import { appRoutes } from '@/config/routes';
 import { AppText } from '@/shared/components';
 import { colors, iconSizes, shadows, spacing } from '@/shared/theme';
 
 type EmployeeTab = 'home' | 'goals' | 'profile' | 'results';
+
+interface EmployeeBottomNavigationProps {
+  activeTab: EmployeeTab;
+}
 
 interface NavigationIconProps {
   color: string;
@@ -34,7 +40,8 @@ function NavigationIcon({ color, name }: NavigationIconProps) {
   );
 }
 
-export function EmployeeBottomNavigation() {
+export function EmployeeBottomNavigation({ activeTab }: EmployeeBottomNavigationProps) {
+  const router = useRouter();
   const tabs: readonly { label: string; name: EmployeeTab }[] = [
     { label: 'Início', name: 'home' },
     { label: 'Metas', name: 'goals' },
@@ -43,17 +50,32 @@ export function EmployeeBottomNavigation() {
   ];
 
   function handlePress(tab: EmployeeTab) {
-    if (tab === 'home') {
+    if (tab === activeTab) {
       return;
     }
 
-    Alert.alert('Em breve', 'Esta área será criada em uma próxima etapa.');
+    if (tab === 'home') {
+      router.push(appRoutes.employeeHome);
+      return;
+    }
+
+    if (tab === 'goals') {
+      router.push(appRoutes.employeeGoals);
+      return;
+    }
+
+    if (tab === 'results') {
+      router.push(appRoutes.employeeResults);
+      return;
+    }
+
+    router.push(appRoutes.employeeProfile);
   }
 
   return (
     <View accessibilityRole="tablist" style={styles.container}>
       {tabs.map((tab) => {
-        const isActive = tab.name === 'home';
+        const isActive = tab.name === activeTab;
 
         return (
           <Pressable

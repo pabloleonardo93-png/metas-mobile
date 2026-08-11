@@ -13,7 +13,14 @@
     "src/features/metas/types/teamDistribution.types.ts",
     "src/features/metas/types/goalSettings.types.ts",
     "src/features/metas/utils/calculateDailyGoals.ts",
+    "src/features/metas/utils/getEmployeeGoalByRole.ts",
+    "src/features/results/types/employeePerformance.types.ts",
+    "src/features/results/utils/calculateEmployeePerformance.ts",
+    "src/features/results/utils/resolveCampaignContributions.ts",
+    "src/features/campaigns/types/campaign.types.ts",
+    "src/features/employees/types/employee.types.ts",
     "src/shared/types/userRole.ts",
+    "src/shared/utils/calculateProgress.ts",
     "src/shared/utils/goalCalculations.ts"
   ]
 }

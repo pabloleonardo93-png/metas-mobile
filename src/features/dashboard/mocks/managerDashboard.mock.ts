@@ -1,37 +1,31 @@
 import type { ManagerDashboardData } from '@/features/dashboard/types/managerDashboard';
+import { currentEmployeeMock } from '@/features/employees/mocks/employees.mock';
 
 export const managerDashboardMock = {
-  manager: {
-    name: 'Gestor',
-    role: 'GESTOR',
-  },
   team: [
     {
       role: 'BALCONISTA',
-      quantity: 3,
       progress: 68,
     },
     {
       role: 'FARMACEUTICO',
-      quantity: 1,
       progress: 74,
     },
     {
       role: 'CAIXA',
-      quantity: 1,
       progress: 61,
     },
   ],
   employeesNearGoal: [
     {
-      id: 'ana',
-      name: 'Ana',
-      role: 'BALCONISTA',
+      id: currentEmployeeMock.id,
+      name: currentEmployeeMock.name,
+      role: currentEmployeeMock.role,
       progress: 92,
     },
     {
-      id: 'carlos',
-      name: 'Carlos',
+      id: 'juliana-costa',
+      name: 'Juliana Costa',
       role: 'FARMACEUTICO',
       progress: 87,
     },

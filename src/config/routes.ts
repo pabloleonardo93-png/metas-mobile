@@ -1,5 +1,8 @@
 export const appRoutes = {
+  employeeGoals: '/(funcionario)/metas',
   employeeHome: '/(funcionario)',
+  employeeProfile: '/(funcionario)/perfil',
+  employeeResults: '/(funcionario)/resultados',
   login: '/login',
   managerGoals: '/(gestor)/metas',
   managerHome: '/(gestor)',

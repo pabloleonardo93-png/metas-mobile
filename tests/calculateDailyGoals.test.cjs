@@ -20,6 +20,9 @@ const { calculateDailyGoals, calculateTeamWeightSummary } = require(
 const { calculateCurrentGoalMetrics } = require(
   path.join(buildRoot, 'src/features/metas/utils/calculateCurrentGoal.js'),
 );
+const { getEmployeeGoalByRole } = require(
+  path.join(buildRoot, 'src/features/metas/utils/getEmployeeGoalByRole.js'),
+);
 
 const settings = {
   monthlyTarget: 500000,
@@ -116,6 +119,72 @@ test('distribui meta diária da loja, do cargo e por funcionário', () => {
       },
     ],
   );
+});
+
+test('seleciona a meta calculada do BALCONISTA pelo cargo', () => {
+  const result = calculateDailyGoals(settings, defaultTeam);
+  const goal = getEmployeeGoalByRole(result, 'BALCONISTA', settings.remainingBusinessDays);
+
+  assert.deepEqual(goal, {
+    dailyGoal: 4750,
+    remainingBusinessDays: 20,
+    remainingPeriodGoal: 95000,
+    role: 'BALCONISTA',
+  });
+});
+
+test('seleciona a meta calculada do FARMACEUTICO pelo cargo', () => {
+  const result = calculateDailyGoals(settings, defaultTeam);
+  const goal = getEmployeeGoalByRole(result, 'FARMACEUTICO', settings.remainingBusinessDays);
+
+  assert.equal(goal?.dailyGoal, 3325);
+  assert.equal(goal?.remainingPeriodGoal, 66500);
+});
+
+test('seleciona a meta calculada do CAIXA pelo cargo', () => {
+  const result = calculateDailyGoals(settings, defaultTeam);
+  const goal = getEmployeeGoalByRole(result, 'CAIXA', settings.remainingBusinessDays);
+
+  assert.equal(goal?.dailyGoal, 1425);
+  assert.equal(goal?.remainingPeriodGoal, 28500);
+});
+
+test('não atribui meta individual a GESTOR', () => {
+  const result = calculateDailyGoals(settings, defaultTeam);
+
+  assert.equal(getEmployeeGoalByRole(result, 'GESTOR', settings.remainingBusinessDays), null);
+});
+
+test('não seleciona cargo ausente do resultado', () => {
+  const result = calculateDailyGoals(settings, [
+    defaultTeam[0],
+    { ...defaultTeam[1], quantity: 0 },
+    defaultTeam[2],
+  ]);
+
+  assert.equal(getEmployeeGoalByRole(result, 'FARMACEUTICO', settings.remainingBusinessDays), null);
+});
+
+test('não cria meta individual para cargo com peso zero', () => {
+  const result = calculateDailyGoals(settings, [
+    { ...defaultTeam[0], weight: 0 },
+    defaultTeam[1],
+    defaultTeam[2],
+  ]);
+
+  assert.equal(getEmployeeGoalByRole(result, 'BALCONISTA', settings.remainingBusinessDays), null);
+});
+
+test('não cria meta individual quando a meta da loja foi atingida', () => {
+  const result = calculateDailyGoals({ ...settings, soldAmount: 500000 }, defaultTeam);
+
+  assert.equal(getEmployeeGoalByRole(result, 'BALCONISTA', settings.remainingBusinessDays), null);
+});
+
+test('não cria meta individual com zero dias restantes', () => {
+  const result = calculateDailyGoals({ ...settings, remainingBusinessDays: 0 }, defaultTeam);
+
+  assert.equal(getEmployeeGoalByRole(result, 'BALCONISTA', 0), null);
 });
 
 test('ignora cargo sem funcionários no resultado individual', () => {

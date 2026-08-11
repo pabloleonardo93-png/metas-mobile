@@ -7,15 +7,14 @@ export interface EmployeeCampaignContribution {
   contributedQuantity: number;
 }
 
-export interface EmployeeGoalSummary {
+export interface EmployeeSalesSnapshot {
   campaignContributions: EmployeeCampaignContribution[];
-  currentAmount: number;
-  targetAmount: number;
+  monthSalesAmount: number;
 }
 
 export interface Employee {
   email: string;
-  goal?: EmployeeGoalSummary;
+  performance?: EmployeeSalesSnapshot;
   id: string;
   joinedAt: string;
   name: string;

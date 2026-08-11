@@ -9,9 +9,10 @@ import { colors, radius, shadows, spacing } from '@/shared/theme';
 
 interface StoreCampaignCardProps {
   campaign: Campaign;
+  contributedQuantity?: number;
 }
 
-export function StoreCampaignCard({ campaign }: StoreCampaignCardProps) {
+export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampaignCardProps) {
   const metrics = calculateCampaignMetrics(campaign);
 
   return (
@@ -38,6 +39,17 @@ export function StoreCampaignCard({ campaign }: StoreCampaignCardProps) {
       <AppText color="textMuted" variant="caption">
         Objetivo coletivo da loja
       </AppText>
+
+      {contributedQuantity !== undefined ? (
+        <View style={styles.contribution}>
+          <AppText color="textMuted" variant="caption">
+            Sua contribuição
+          </AppText>
+          <AppText color="primary" variant="bodyMedium">
+            {contributedQuantity} {contributedQuantity === 1 ? 'unidade' : 'unidades'}
+          </AppText>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -56,6 +68,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: spacing.md,
     padding: spacing.md,
+  },
+  contribution: {
+    alignItems: 'center',
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: spacing.md,
   },
   header: {
     alignItems: 'center',

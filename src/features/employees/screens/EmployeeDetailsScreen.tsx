@@ -10,6 +10,7 @@ import { EmployeeStatusBadge } from '@/features/employees/components/EmployeeSta
 import { useEmployees } from '@/features/employees/context/EmployeesContext';
 import { formatJoinedDate } from '@/features/employees/utils/employee.utils';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
+import { useEmployeeGoal } from '@/features/metas/hooks/useEmployeeGoal';
 import { USER_ROLE_LABELS } from '@/shared/config/userRoles';
 import { AppButton, AppIcon, AppText, ScreenContainer } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
@@ -26,6 +27,7 @@ export function EmployeeDetailsScreen() {
   const { employees } = useEmployees();
   const employeeId = getEmployeeId(params.employeeId);
   const employee = employees.find((item) => item.id === employeeId);
+  const { calculationResult, employeeGoal } = useEmployeeGoal(employee?.role ?? 'GESTOR');
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
 
   if (!employee) {
@@ -48,6 +50,11 @@ export function EmployeeDetailsScreen() {
   }
 
   const isManager = employee.role === 'GESTOR';
+  const employeeRole = employee.role === 'GESTOR' ? null : employee.role;
+  const goalStatusMessage =
+    calculationResult.status === 'success' && !employeeGoal
+      ? 'Este cargo não possui meta individual na distribuição atual.'
+      : calculationResult.message;
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
@@ -106,12 +113,18 @@ export function EmployeeDetailsScreen() {
               </AppText>
             </View>
           </View>
-        ) : employee.goal ? (
-          <EmployeeGoalDetails campaigns={campaigns} goal={employee.goal} />
+        ) : employee.performance && employeeRole ? (
+          <EmployeeGoalDetails
+            campaigns={campaigns}
+            financialGoal={employeeGoal}
+            performance={employee.performance}
+            role={employeeRole}
+            statusMessage={goalStatusMessage}
+          />
         ) : (
           <View style={styles.managerNotice}>
             <AppIcon color={colors.textMuted} name="target" size={22} />
-            <AppText color="textMuted">Nenhuma meta individual atribuída.</AppText>
+            <AppText color="textMuted">Nenhum desempenho individual disponível.</AppText>
           </View>
         )}
 

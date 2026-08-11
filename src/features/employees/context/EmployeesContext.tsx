@@ -21,10 +21,10 @@ const EmployeesContext = createContext<EmployeesContextValue | null>(null);
 function cloneEmployees(): Employee[] {
   return employeesMock.map((employee) => ({
     ...employee,
-    goal: employee.goal
+    performance: employee.performance
       ? {
-          ...employee.goal,
-          campaignContributions: employee.goal.campaignContributions.map((contribution) => ({
+          ...employee.performance,
+          campaignContributions: employee.performance.campaignContributions.map((contribution) => ({
             ...contribution,
           })),
         }

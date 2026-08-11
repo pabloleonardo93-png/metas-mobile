@@ -23,6 +23,13 @@ export interface DailyGoalByRole extends TeamWeightByRole {
   weightedGroupShare: number;
 }
 
+export interface EmployeeFinancialGoal {
+  dailyGoal: number;
+  remainingBusinessDays: number;
+  remainingPeriodGoal: number;
+  role: EmployeeRole;
+}
+
 export type DailyGoalsStatus =
   | 'success'
   | 'goal-achieved'

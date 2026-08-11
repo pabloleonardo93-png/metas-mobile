@@ -1,74 +1,49 @@
 import { StyleSheet, View } from 'react-native';
 
 import type { Campaign } from '@/features/campaigns/types/campaign.types';
-import type { EmployeeGoalSummary } from '@/features/employees/types/employee.types';
-import { AppProgressBar, AppText } from '@/shared/components';
+import type { EmployeeSalesSnapshot } from '@/features/employees/types/employee.types';
+import { EmployeeFinancialGoalCard } from '@/features/metas/components/EmployeeFinancialGoalCard';
+import type { EmployeeFinancialGoal } from '@/features/metas/types/teamDistribution.types';
+import { resolveCampaignContributions } from '@/features/results/utils/resolveCampaignContributions';
+import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
-import { calculateProgress } from '@/shared/utils/calculateProgress';
-import { formatBrazilianCurrency, formatPercentage } from '@/shared/utils/formatters';
-import { calculateRemainingGoalAmount } from '@/shared/utils/goalCalculations';
+import type { EmployeeRole } from '@/shared/types/userRole';
+import { formatBrazilianCurrency } from '@/shared/utils/formatters';
 
 interface EmployeeGoalDetailsProps {
   campaigns: readonly Campaign[];
-  goal: EmployeeGoalSummary;
+  financialGoal: EmployeeFinancialGoal | null;
+  performance: EmployeeSalesSnapshot;
+  role: EmployeeRole;
+  statusMessage?: string;
 }
 
-interface ResolvedContribution {
-  campaign: Campaign;
-  contributedQuantity: number;
-}
-
-export function EmployeeGoalDetails({ campaigns, goal }: EmployeeGoalDetailsProps) {
-  const progress = calculateProgress(goal.currentAmount, goal.targetAmount);
-  const remaining = calculateRemainingGoalAmount(goal.targetAmount, goal.currentAmount);
-  const remainingText =
-    remaining > 0 ? `Faltam ${formatBrazilianCurrency(remaining)}` : 'Meta individual atingida.';
-  const contributions = goal.campaignContributions.reduce<ResolvedContribution[]>(
-    (resolvedContributions, contribution) => {
-      const campaign = campaigns.find((item) => item.id === contribution.campaignId);
-
-      if (campaign) {
-        resolvedContributions.push({
-          campaign,
-          contributedQuantity: contribution.contributedQuantity,
-        });
-      }
-
-      return resolvedContributions;
-    },
-    [],
-  );
+export function EmployeeGoalDetails({
+  campaigns,
+  financialGoal,
+  performance,
+  role,
+  statusMessage,
+}: EmployeeGoalDetailsProps) {
+  const contributions = resolveCampaignContributions(campaigns, performance.campaignContributions);
 
   return (
     <View style={styles.section}>
       <AppText accessibilityRole="header" style={styles.sectionTitle} variant="title">
-        Meta atual
+        Meta financeira
       </AppText>
 
-      <View style={styles.goalCard}>
-        <View style={styles.goalHeader}>
-          <View style={styles.goalCopy}>
-            <AppText style={styles.amount} variant="display">
-              {formatBrazilianCurrency(goal.currentAmount)}
-            </AppText>
-            <AppText color="textMuted" variant="caption">
-              de {formatBrazilianCurrency(goal.targetAmount)}
-            </AppText>
-          </View>
-          <View style={styles.percentageBadge}>
-            <AppText color="primary" variant="bodyMedium">
-              {formatPercentage(progress)}
-            </AppText>
-          </View>
+      <EmployeeFinancialGoalCard goal={financialGoal} role={role} statusMessage={statusMessage} />
+
+      <View style={styles.performanceCard}>
+        <View style={styles.performanceCopy}>
+          <AppText variant="bodyMedium">Desempenho individual simulado</AppText>
+          <AppText color="textMuted" variant="caption">
+            Vendas registradas no mês
+          </AppText>
         </View>
-
-        <AppProgressBar
-          label={`Progresso da meta individual: ${formatPercentage(progress)}`}
-          progress={progress}
-        />
-
-        <AppText color="textMuted" variant="caption">
-          {remainingText}
+        <AppText color="primary" variant="bodyMedium">
+          {formatBrazilianCurrency(performance.monthSalesAmount)}
         </AppText>
       </View>
 
@@ -107,36 +82,6 @@ export function EmployeeGoalDetails({ campaigns, goal }: EmployeeGoalDetailsProp
 }
 
 const styles = StyleSheet.create({
-  amount: {
-    fontSize: 28,
-    letterSpacing: 0,
-    lineHeight: 36,
-  },
-  goalCard: {
-    ...shadows.panel,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  goalCopy: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  goalHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'space-between',
-  },
-  percentageBadge: {
-    backgroundColor: colors.primarySubtle,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
   contributionCopy: {
     flex: 1,
     gap: spacing.xs,
@@ -168,6 +113,22 @@ const styles = StyleSheet.create({
   },
   contributionsSection: {
     gap: spacing.md,
+  },
+  performanceCard: {
+    ...shadows.panel,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    padding: spacing.md,
+  },
+  performanceCopy: {
+    flex: 1,
+    gap: spacing.xs,
   },
   section: {
     gap: spacing.md,
