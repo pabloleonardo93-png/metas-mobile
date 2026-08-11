@@ -18,6 +18,7 @@ import { StoreGoalCard } from '@/features/dashboard/components/StoreGoalCard';
 import { TeamPerformance } from '@/features/dashboard/components/TeamPerformance';
 import { managerDashboardMock } from '@/features/dashboard/mocks/managerDashboard.mock';
 import { calculateManagerDashboardMetrics } from '@/features/dashboard/utils/calculateManagerDashboard';
+import { useGoals } from '@/features/metas/context/GoalsContext';
 import { ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 
@@ -32,10 +33,11 @@ export function ManagerHomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { campaigns } = useCampaigns();
+  const { currentGoal } = useGoals();
   const activeCampaigns = useMemo(() => selectActiveCampaigns(campaigns), [campaigns]);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
   const metrics = calculateManagerDashboardMetrics(
-    managerDashboardMock.goal,
+    currentGoal,
     managerDashboardMock.team,
     activeCampaigns.length,
   );

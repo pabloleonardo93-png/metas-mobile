@@ -3,11 +3,9 @@ import type {
   DailyGoalsCalculationResult,
   DailyGoalsStatus,
   TeamDistribution,
+  TeamWeightSummary,
 } from '@/features/metas/types/teamDistribution.types';
-import {
-  calculateDailyGoalAmount,
-  calculateRemainingGoalAmount,
-} from '@/shared/utils/goalCalculations';
+import { calculateCurrentGoalMetrics } from '@/features/metas/utils/calculateCurrentGoal';
 
 function createEmptyResult(
   status: Exclude<DailyGoalsStatus, 'success'>,
@@ -45,6 +43,29 @@ function hasValidTeam(team: readonly TeamDistribution[]): boolean {
   );
 }
 
+export function calculateTeamWeightSummary(team: readonly TeamDistribution[]): TeamWeightSummary {
+  const roles = team.map((role) => {
+    const hasValidValues =
+      Number.isInteger(role.quantity) &&
+      role.quantity >= 0 &&
+      Number.isFinite(role.weight) &&
+      role.weight >= 0;
+    const weightedGroupValue = hasValidValues ? role.quantity * role.weight : 0;
+
+    return {
+      ...role,
+      weightedGroupValue:
+        Number.isFinite(weightedGroupValue) && weightedGroupValue >= 0 ? weightedGroupValue : 0,
+    };
+  });
+  const totalTeamWeight = roles.reduce((total, role) => total + role.weightedGroupValue, 0);
+
+  return {
+    roles,
+    totalTeamWeight: Number.isFinite(totalTeamWeight) && totalTeamWeight >= 0 ? totalTeamWeight : 0,
+  };
+}
+
 export function calculateDailyGoals(
   settings: GoalGeneralSettings,
   team: readonly TeamDistribution[],
@@ -53,7 +74,8 @@ export function calculateDailyGoals(
     return createEmptyResult('invalid-settings', 'Revise os valores informados para calcular.');
   }
 
-  const remainingAmount = calculateRemainingGoalAmount(settings.monthlyTarget, settings.soldAmount);
+  const currentGoalMetrics = calculateCurrentGoalMetrics(settings);
+  const { remaining: remainingAmount } = currentGoalMetrics;
 
   if (remainingAmount === 0) {
     return createEmptyResult('goal-achieved', 'Meta mensal atingida.');
@@ -77,7 +99,8 @@ export function calculateDailyGoals(
     );
   }
 
-  const totalTeamWeight = team.reduce((total, role) => total + role.quantity * role.weight, 0);
+  const weightSummary = calculateTeamWeightSummary(team);
+  const { totalTeamWeight } = weightSummary;
 
   if (!Number.isFinite(totalTeamWeight) || totalTeamWeight <= 0) {
     return createEmptyResult(
@@ -87,18 +110,31 @@ export function calculateDailyGoals(
     );
   }
 
-  const dailyStoreGoal = calculateDailyGoalAmount(remainingAmount, settings.remainingBusinessDays);
+  const dailyStoreGoal = currentGoalMetrics.dailyTarget;
 
   if (!Number.isFinite(dailyStoreGoal) || dailyStoreGoal < 0) {
     return createEmptyResult('invalid-settings', 'Revise os valores informados para calcular.');
   }
 
-  const roles = team
+  const roles = weightSummary.roles
     .filter((role) => role.quantity > 0)
-    .map((role) => ({
-      ...role,
-      dailyGoalPerEmployee: (dailyStoreGoal * role.weight) / totalTeamWeight,
-    }));
+    .map((role) => {
+      const weightedGroupShare = role.weightedGroupValue / totalTeamWeight;
+      const dailyGoalPerEmployee = (dailyStoreGoal * role.weight) / totalTeamWeight;
+      const dailyGoalForGroup = dailyGoalPerEmployee * role.quantity;
+
+      return {
+        ...role,
+        dailyGoalForGroup:
+          Number.isFinite(dailyGoalForGroup) && dailyGoalForGroup >= 0 ? dailyGoalForGroup : 0,
+        dailyGoalPerEmployee:
+          Number.isFinite(dailyGoalPerEmployee) && dailyGoalPerEmployee >= 0
+            ? dailyGoalPerEmployee
+            : 0,
+        weightedGroupShare:
+          Number.isFinite(weightedGroupShare) && weightedGroupShare >= 0 ? weightedGroupShare : 0,
+      };
+    });
 
   return {
     dailyStoreGoal,

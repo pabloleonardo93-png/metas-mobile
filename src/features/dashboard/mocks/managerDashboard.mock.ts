@@ -5,12 +5,6 @@ export const managerDashboardMock = {
     name: 'Gestor',
     role: 'GESTOR',
   },
-  goal: {
-    target: 500_000,
-    sold: 120_000,
-    remainingBusinessDays: 20,
-    totalBusinessDays: 26,
-  },
   team: [
     {
       role: 'BALCONISTA',

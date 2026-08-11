@@ -1,13 +1,13 @@
 import { StyleSheet, View } from 'react-native';
 
 import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar';
-import type { ManagerDashboardMetrics } from '@/features/dashboard/types/managerDashboard';
 import { formatBrazilianCurrency, formatPercentage } from '@/features/dashboard/utils/formatters';
+import type { CurrentGoalMetrics } from '@/features/metas/types/goalSettings.types';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
 
 interface StoreGoalCardProps {
-  metrics: ManagerDashboardMetrics;
+  metrics: CurrentGoalMetrics;
 }
 
 export function StoreGoalCard({ metrics }: StoreGoalCardProps) {

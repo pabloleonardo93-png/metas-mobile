@@ -5,6 +5,7 @@ import type { DailyGoalsCalculationResult } from '@/features/metas/types/teamDis
 import { formatBrazilianCurrency, formatDecimal } from '@/features/metas/utils/formatCurrency';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import { formatPercentage } from '@/shared/utils/formatters';
 
 interface DailyGoalsResultProps {
   result: DailyGoalsCalculationResult;
@@ -25,7 +26,7 @@ export function DailyGoalsResult({ result }: DailyGoalsResultProps) {
   return (
     <View accessibilityLiveRegion="polite" style={styles.section}>
       <AppText accessibilityRole="header" variant="title">
-        Resultado calculado
+        Distribuição da meta diária
       </AppText>
 
       <View style={styles.resultCard}>
@@ -43,7 +44,7 @@ export function DailyGoalsResult({ result }: DailyGoalsResultProps) {
 
         <View style={styles.divider} />
 
-        <AppText variant="bodyMedium">Meta diária por funcionário</AppText>
+        <AppText variant="bodyMedium">Distribuição por cargo</AppText>
 
         <View style={styles.roleResults}>
           {result.roles.map((role) => {
@@ -51,20 +52,53 @@ export function DailyGoalsResult({ result }: DailyGoalsResultProps) {
             const employeeLabel = role.quantity === 1 ? 'funcionário' : 'funcionários';
 
             return (
-              <View key={role.role} style={styles.roleRow}>
-                <View style={styles.roleCopy}>
-                  <AppText variant="bodyMedium">{labels.singular}</AppText>
+              <View key={role.role} style={styles.roleBlock}>
+                <View style={styles.roleHeading}>
+                  <AppText variant="bodyMedium">{labels.plural}</AppText>
                   <AppText color="textMuted" variant="caption">
-                    {role.quantity} {employeeLabel} - Peso {formatDecimal(role.weight)}
+                    {role.quantity} {employeeLabel}
                   </AppText>
                 </View>
 
-                <View style={styles.roleValue}>
+                <View style={styles.metrics}>
+                  <View style={styles.metricRow}>
+                    <AppText color="textMuted" variant="caption">
+                      Peso individual
+                    </AppText>
+                    <AppText variant="label">{formatDecimal(role.weight)}</AppText>
+                  </View>
+
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricCopy}>
+                      <AppText color="textMuted" variant="caption">
+                        Participação ponderada do cargo
+                      </AppText>
+                      <AppText color="textMuted" variant="caption">
+                        {formatDecimal(role.weightedGroupValue)} de{' '}
+                        {formatDecimal(result.totalTeamWeight)} pontos
+                      </AppText>
+                    </View>
+                    <AppText variant="label">
+                      {formatPercentage(role.weightedGroupShare * 100)}
+                    </AppText>
+                  </View>
+
+                  <View style={styles.metricRow}>
+                    <AppText color="textMuted" variant="caption">
+                      Meta do cargo / dia
+                    </AppText>
+                    <AppText variant="label">
+                      {formatBrazilianCurrency(role.dailyGoalForGroup)}
+                    </AppText>
+                  </View>
+                </View>
+
+                <View style={styles.individualGoal}>
+                  <AppText color="textMuted" variant="caption">
+                    Meta por funcionário / dia
+                  </AppText>
                   <AppText color="primary" variant="bodyMedium">
                     {formatBrazilianCurrency(role.dailyGoalPerEmployee)}
-                  </AppText>
-                  <AppText color="textMuted" style={styles.valueCaption} variant="caption">
-                    por funcionário / dia
                   </AppText>
                 </View>
               </View>
@@ -90,23 +124,40 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
   },
-  roleCopy: {
+  individualGoal: {
+    alignItems: 'center',
+    backgroundColor: colors.primarySubtle,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+    padding: spacing.sm,
+  },
+  metricCopy: {
     flex: 1,
     gap: spacing.xs,
     minWidth: 0,
   },
-  roleResults: {
-    gap: spacing.md,
-  },
-  roleRow: {
-    alignItems: 'flex-start',
+  metricRow: {
+    alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.md,
     justifyContent: 'space-between',
   },
-  roleValue: {
-    alignItems: 'flex-end',
-    flexShrink: 1,
+  metrics: {
+    gap: spacing.sm,
+  },
+  roleResults: {
+    gap: 0,
+  },
+  roleBlock: {
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  roleHeading: {
     gap: spacing.xs,
   },
   section: {
@@ -134,8 +185,5 @@ const styles = StyleSheet.create({
   },
   storeGoal: {
     gap: spacing.xs,
-  },
-  valueCaption: {
-    textAlign: 'right',
   },
 });

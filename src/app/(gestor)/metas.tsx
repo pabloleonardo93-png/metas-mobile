@@ -1,5 +1,5 @@
-import { ManagerPlaceholderScreen } from '@/features/dashboard/screens/ManagerPlaceholderScreen';
+import { ManagerGoalsScreen } from '@/features/metas/screens/ManagerGoalsScreen';
 
 export default function ManagerGoalsRoute() {
-  return <ManagerPlaceholderScreen activeTab="goals" title="Metas" />;
+  return <ManagerGoalsScreen />;
 }

@@ -8,8 +8,19 @@ export interface TeamDistribution {
   weight: number;
 }
 
-export interface DailyGoalByRole extends TeamDistribution {
+export interface TeamWeightByRole extends TeamDistribution {
+  weightedGroupValue: number;
+}
+
+export interface TeamWeightSummary {
+  roles: TeamWeightByRole[];
+  totalTeamWeight: number;
+}
+
+export interface DailyGoalByRole extends TeamWeightByRole {
+  dailyGoalForGroup: number;
   dailyGoalPerEmployee: number;
+  weightedGroupShare: number;
 }
 
 export type DailyGoalsStatus =

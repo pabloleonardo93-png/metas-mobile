@@ -1,15 +1,9 @@
 import type { EmployeeRole, UserRole } from '@/shared/types/userRole';
+import type { CurrentGoalMetrics } from '@/features/metas/types/goalSettings.types';
 
 export interface ManagerDashboardUser {
   name: string;
   role: Extract<UserRole, 'GESTOR'>;
-}
-
-export interface ManagerStoreGoal {
-  remainingBusinessDays: number;
-  sold: number;
-  target: number;
-  totalBusinessDays: number;
 }
 
 export interface ManagerTeamPerformance {
@@ -27,18 +21,11 @@ export interface ManagerEmployeeNearGoal {
 
 export interface ManagerDashboardData {
   employeesNearGoal: ManagerEmployeeNearGoal[];
-  goal: ManagerStoreGoal;
   manager: ManagerDashboardUser;
   team: ManagerTeamPerformance[];
 }
 
-export interface ManagerDashboardMetrics {
+export interface ManagerDashboardMetrics extends CurrentGoalMetrics {
   activeEmployees: number;
-  dailyTarget: number;
   activeCampaigns: number;
-  progress: number;
-  remaining: number;
-  remainingBusinessDays: number;
-  sold: number;
-  target: number;
 }

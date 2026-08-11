@@ -4,38 +4,36 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 're
 import { DailyGoalsResult } from '@/features/metas/components/DailyGoalsResult';
 import { GeneralGoalSettingsForm } from '@/features/metas/components/GeneralGoalSettingsForm';
 import { TeamDistributionSection } from '@/features/metas/components/TeamDistributionSection';
-import { generalGoalSettingsMock } from '@/features/metas/mocks/generalGoalSettings.mock';
-import { teamDistributionMock } from '@/features/metas/mocks/teamDistribution.mock';
+import { useGoals } from '@/features/metas/context/GoalsContext';
 import type { GoalGeneralSettings } from '@/features/metas/types/goalSettings.types';
-import type {
-  DailyGoalsCalculationResult,
-  TeamDistribution,
-} from '@/features/metas/types/teamDistribution.types';
+import type { DailyGoalsCalculationResult } from '@/features/metas/types/teamDistribution.types';
 import { calculateDailyGoals } from '@/features/metas/utils/calculateDailyGoals';
 import { AppButton, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 
 export function GeneralGoalSettingsScreen() {
-  const [settings, setSettings] = useState<GoalGeneralSettings>(generalGoalSettingsMock);
-  const [teamDistribution, setTeamDistribution] = useState<TeamDistribution[]>(() =>
-    teamDistributionMock.map((role) => ({ ...role })),
-  );
+  const { currentGoal, teamDistribution, updateCurrentGoalSettings, updateTeamDistribution } =
+    useGoals();
   const [calculationResult, setCalculationResult] = useState<DailyGoalsCalculationResult | null>(
     null,
   );
 
   function handleSettingsChange(nextSettings: GoalGeneralSettings) {
-    setSettings(nextSettings);
-    setCalculationResult(null);
+    updateCurrentGoalSettings(nextSettings);
+    setCalculationResult((currentResult) =>
+      currentResult ? calculateDailyGoals(nextSettings, teamDistribution) : null,
+    );
   }
 
-  function handleTeamChange(nextDistribution: TeamDistribution[]) {
-    setTeamDistribution(nextDistribution);
-    setCalculationResult(null);
+  function handleTeamChange(nextDistribution: typeof teamDistribution) {
+    updateTeamDistribution(nextDistribution);
+    setCalculationResult((currentResult) =>
+      currentResult ? calculateDailyGoals(currentGoal, nextDistribution) : null,
+    );
   }
 
   function handleCalculate() {
-    setCalculationResult(calculateDailyGoals(settings, teamDistribution));
+    setCalculationResult(calculateDailyGoals(currentGoal, teamDistribution));
   }
 
   return (
@@ -58,10 +56,7 @@ export function GeneralGoalSettingsScreen() {
               </AppText>
             </View>
 
-            <GeneralGoalSettingsForm
-              initialValues={generalGoalSettingsMock}
-              onChange={handleSettingsChange}
-            />
+            <GeneralGoalSettingsForm initialValues={currentGoal} onChange={handleSettingsChange} />
 
             <TeamDistributionSection distribution={teamDistribution} onChange={handleTeamChange} />
 
