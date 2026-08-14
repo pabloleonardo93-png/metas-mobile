@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "meta",
+    "slug": "metas",
+    "version": "1.0.0",
+    "scheme": "metas",
+    "orientation": "portrait",
+    "icon": "./assets/launcher-icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.pabloleonardo.metas",
+      "supportsTablet": true
+    },
+    "android": {
+      "icon": "./assets/launcher-icon.png",
+      "package": "com.pabloleonardo.metas",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/launcher-icon-foreground.png",
+        "monochromeImage": "./assets/launcher-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "react-native-nitro-google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.114371870899-5m2r54ob8q39qv6v4phcbaflrepl0fkp"
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a39781be-7b54-4e0e-89c3-da34ffe56469"
+      }
+    },
+    "owner": "pablo-leonardo-dev"
+  }
+}
