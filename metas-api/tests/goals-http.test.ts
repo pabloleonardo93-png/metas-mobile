@@ -137,6 +137,25 @@ await test('manager loads and saves goal configuration preserving cents', async 
   assert.equal(savedBody.soldAmountCents, '12000050');
 });
 
+await test('goal configuration accepts sold amounts below, equal to, and above target', async () => {
+  const soldAmounts = ['25000000', '50050500', '60000000', '250506556'];
+
+  for (const soldAmountCents of soldAmounts) {
+    const response = await request(createTestApp())
+      .put('/v1/manager/goals/configuration')
+      .set(authorization)
+      .send({
+        ...input,
+        monthlyTargetCents: '50050500',
+        soldAmountCents,
+      })
+      .expect(200);
+    const body = parseJson<ManagerGoalConfigurationDto>(response.text);
+    assert.equal(body.monthlyTargetCents, '50050500');
+    assert.equal(body.soldAmountCents, soldAmountCents);
+  }
+});
+
 await test('goal configuration requires manager authorization', async () => {
   const app = createTestApp();
   await request(app).get('/v1/manager/goals/configuration').expect(401);

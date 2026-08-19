@@ -76,6 +76,7 @@ const createManagerFixture = async (
 
 const configurationInput = (
   expectedLockVersion: number | null = null,
+  overrides: Partial<SaveManagerGoalConfigurationInput> = {},
 ): SaveManagerGoalConfigurationInput => ({
   expectedLockVersion,
   monthlyTargetCents: '50000056',
@@ -87,6 +88,7 @@ const configurationInput = (
   ],
   soldAmountCents: '125099',
   totalBusinessDays: 22,
+  ...overrides,
 });
 
 const testDatabases = createIntegrationDatabases(4, 3);
@@ -139,6 +141,35 @@ if (testDatabases === null) {
       );
       assert.equal(counts[0]?.currentGoals, '1');
       assert.equal(counts[0]?.roleSnapshots, '3');
+    });
+
+    await test('manager persists sold amounts below, equal to, and above the monthly target', async () => {
+      const manager = await createManagerFixture(migrationDatabase, 'sold-progress');
+      const soldAmounts = ['25000000', '50050500', '60000000', '250506556'];
+      let expectedLockVersion: number | null = null;
+
+      for (const soldAmountCents of soldAmounts) {
+        const saved = await goalService.saveConfiguration(
+          manager.session,
+          configurationInput(expectedLockVersion, {
+            monthlyTargetCents: '50050500',
+            remainingBusinessDays: 13,
+            soldAmountCents,
+            totalBusinessDays: 31,
+          }),
+        );
+        assert.equal(saved.monthlyTargetCents, '50050500');
+        assert.equal(saved.soldAmountCents, soldAmountCents);
+        assert.equal(saved.remainingBusinessDays, 13);
+        assert.equal(saved.totalBusinessDays, 31);
+        expectedLockVersion = saved.lockVersion;
+      }
+
+      const loaded = await goalService.getConfiguration(manager.session);
+      assert.equal(loaded.monthlyTargetCents, '50050500');
+      assert.equal(loaded.soldAmountCents, '250506556');
+      assert.equal(loaded.remainingBusinessDays, 13);
+      assert.equal(loaded.totalBusinessDays, 31);
     });
 
     await test('goal configuration rejects non-manager and stale concurrent writes', async () => {

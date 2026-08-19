@@ -9,27 +9,14 @@ export function sanitizeBrlCurrencyInput(value: string): string {
     return '';
   }
 
-  const compactValue = value.replace(/R\$/gi, '').replace(/\s/g, '');
-  const commaIndex = compactValue.lastIndexOf(',');
+  const digits = value.replace(/\D/g, '');
+  const cents = BigInt(digits || '0');
 
-  if (commaIndex >= 0) {
-    const integerPart = compactValue.slice(0, commaIndex).replace(/\D/g, '');
-    const decimalPart = compactValue
-      .slice(commaIndex + 1)
-      .replace(/\D/g, '')
-      .slice(0, 2);
-
-    return `${integerPart || '0'},${decimalPart}`;
+  if (cents > MAX_SAFE_CENTS) {
+    return '';
   }
 
-  const dotParts = compactValue.split('.');
-
-  if (dotParts.length === 2 && /^\d{1,2}$/.test(dotParts[1] ?? '')) {
-    const integerPart = (dotParts[0] ?? '').replace(/\D/g, '');
-    return `${integerPart || '0'},${dotParts[1]}`;
-  }
-
-  return compactValue.replace(/\D/g, '');
+  return formatCentsForBrlInput(Number(cents));
 }
 
 export function parseBrlCurrencyToCents(value: string): number | null {
@@ -37,14 +24,12 @@ export function parseBrlCurrencyToCents(value: string): number | null {
     return null;
   }
 
-  const normalizedValue = sanitizeBrlCurrencyInput(value);
-
-  if (!/^\d+(,\d{0,2})?$/.test(normalizedValue)) {
+  const digits = value.replace(/\D/g, '');
+  if (!digits) {
     return null;
   }
 
-  const [integerPart, decimalPart = ''] = normalizedValue.split(',');
-  const cents = BigInt(integerPart) * 100n + BigInt(decimalPart.padEnd(2, '0'));
+  const cents = BigInt(digits);
 
   if (cents > MAX_SAFE_CENTS) {
     return null;

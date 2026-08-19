@@ -24,16 +24,50 @@ const { validateCampaignForm } = require(
   path.join(buildRoot, 'src/features/campaigns/utils/validateCampaignForm.js'),
 );
 
-test('converte entradas brasileiras para centavos inteiros', () => {
-  assert.equal(parseBrlCurrencyToCents('500000'), 50000000);
-  assert.equal(parseBrlCurrencyToCents('500000,50'), 50000050);
-  assert.equal(parseBrlCurrencyToCents('1.250,99'), 125099);
-  assert.equal(parseBrlCurrencyToCents('1250.99'), 125099);
+test('interpreta todos os digitos como centavos inteiros exatos', () => {
+  assert.equal(parseBrlCurrencyToCents('2'), 2);
+  assert.equal(parseBrlCurrencyToCents('50050500'), 50050500);
+  assert.equal(parseBrlCurrencyToCents('500.505,56'), 50050556);
+  assert.equal(parseBrlCurrencyToCents('2.505.065,56'), 250506556);
 });
 
 test('formata centavos como BRL com duas casas decimais', () => {
   assert.equal(formatCentsForBrlInput(50000050), '500.000,50');
   assert.equal(formatCentsAsBrl(125099), 'R$ 1.250,99');
+});
+
+test('aplica mascara automatica de centavos durante a digitacao', () => {
+  const examples = [
+    ['2', '0,02'],
+    ['22', '0,22'],
+    ['223', '2,23'],
+    ['22300', '223,00'],
+    ['223456', '2.234,56'],
+    ['50050500', '500.505,00'],
+    ['250506556', '2.505.065,56'],
+  ];
+
+  for (const [input, expected] of examples) {
+    assert.equal(sanitizeBrlCurrencyInput(input), expected);
+  }
+});
+
+test('backspace desloca os centavos no sentido inverso', () => {
+  const expectedValues = ['223,45', '22,34', '2,23', '0,22', '0,02', '0,00'];
+  let currentValue = '2.234,56';
+
+  for (const expectedValue of expectedValues) {
+    currentValue = sanitizeBrlCurrencyInput(currentValue.slice(0, -1));
+    assert.equal(currentValue, expectedValue);
+  }
+});
+
+test('aceita colagem brasileira e sanitiza caracteres extras', () => {
+  assert.equal(sanitizeBrlCurrencyInput('500.505,56'), '500.505,56');
+  assert.equal(sanitizeBrlCurrencyInput('abc 250506556 xyz'), '2.505.065,56');
+  assert.equal(sanitizeBrlCurrencyInput('0'), '0,00');
+  assert.equal(sanitizeBrlCurrencyInput(''), '0,00');
+  assert.equal(parseBrlCurrencyToCents(''), null);
 });
 
 test('rejeita negativos e valores acima do limite seguro', () => {

@@ -79,6 +79,44 @@ await test('unknown errors return 500 without leaking internal details', async (
   assert.doesNotMatch(response.text, /DATABASE_URL|postgresql|stack|secret/u);
 });
 
+await test('database failures log only safe diagnostic metadata', async () => {
+  const logged: Array<{ context?: Parameters<Logger['error']>[1]; event: string }> = [];
+  const capturingLogger: Logger = {
+    error: (event, context) => logged.push({ context, event }),
+    info: () => undefined,
+  };
+  const app = express();
+  app.use(requestId);
+  app.get('/database-failure', () => {
+    const error = new Error('SQL and credentials must remain private');
+    Object.assign(error, {
+      parent: {
+        code: '42702',
+        constraint: 'private_constraint',
+        message: 'private SQL message',
+        routine: 'plpgsql_post_column_ref',
+        sql: 'SELECT secret',
+      },
+    });
+    error.name = 'SequelizeDatabaseError';
+    throw error;
+  });
+  app.use(createErrorHandler(capturingLogger));
+
+  const response = await request(app).get('/database-failure').expect(500);
+  const body = parseJson(response.text);
+
+  assert.equal(body.code, 'INTERNAL_ERROR');
+  assert.deepEqual(logged[0]?.context, {
+    databaseCode: '42702',
+    databaseConstraint: 'private_constraint',
+    databaseRoutine: 'plpgsql_post_column_ref',
+    errorType: 'SequelizeDatabaseError',
+    requestId: response.headers['x-request-id'],
+  });
+  assert.doesNotMatch(JSON.stringify(logged), /credentials|private SQL|SELECT secret/u);
+});
+
 await test('JSON payloads above 64 KB are rejected with a controlled response', async () => {
   const response = await request(createApp({ logger: silentLogger }))
     .post('/health')
