@@ -11,7 +11,7 @@ interface ApiErrorBody {
 
 interface ApiRequestOptions {
   body?: unknown;
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'PATCH' | 'POST';
   sessionToken?: string;
 }
 

@@ -27,6 +27,9 @@
     "src/features/employees/types/employee.types.ts",
     "src/shared/types/userRole.ts",
     "src/shared/utils/calculateProgress.ts",
-    "src/shared/utils/goalCalculations.ts"
+    "src/shared/utils/goalCalculations.ts",
+    "src/features/employees/services/employeeApiClient.ts",
+    "src/features/employees/state/employeesState.ts",
+    "src/features/employees/utils/employeeApiError.ts"
   ]
 }

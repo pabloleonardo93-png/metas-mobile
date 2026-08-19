@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { FlatList, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { appRoutes } from '@/config/routes';
 import { EmployeeCard } from '@/features/employees/components/EmployeeCard';
@@ -22,7 +22,7 @@ import { colors, spacing } from '@/shared/theme';
 export function EmployeesScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { employees } = useEmployees();
+  const { employees, errorMessage, isLoading, refreshEmployees } = useEmployees();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<EmployeeRoleFilter>('ALL');
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
@@ -45,11 +45,30 @@ export function EmployeesScreen() {
         keyExtractor={(employee) => employee.id}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <AppIcon color={colors.textMuted} name="users" size={32} />
-            <AppText variant="bodyMedium">Nenhum funcionário encontrado</AppText>
-            <AppText color="textMuted" style={styles.emptyText} variant="caption">
-              Ajuste a busca ou selecione outro cargo.
-            </AppText>
+            {isLoading ? (
+              <>
+                <ActivityIndicator color={colors.primary} size="large" />
+                <AppText color="textMuted">Carregando equipe...</AppText>
+              </>
+            ) : errorMessage ? (
+              <>
+                <AppIcon color={colors.error} name="settings" size={32} />
+                <AppText style={styles.emptyText}>{errorMessage}</AppText>
+                <AppButton
+                  label="Tentar novamente"
+                  variant="secondary"
+                  onPress={() => void refreshEmployees()}
+                />
+              </>
+            ) : (
+              <>
+                <AppIcon color={colors.textMuted} name="users" size={32} />
+                <AppText variant="bodyMedium">Nenhum funcionário encontrado</AppText>
+                <AppText color="textMuted" style={styles.emptyText} variant="caption">
+                  Ajuste a busca ou selecione outro cargo.
+                </AppText>
+              </>
+            )}
           </View>
         }
         ListHeaderComponent={
@@ -71,6 +90,8 @@ export function EmployeesScreen() {
             </AppText>
           </View>
         }
+        onRefresh={() => void refreshEmployees()}
+        refreshing={isLoading && employees.length > 0}
         renderItem={({ item }) => (
           <EmployeeCard
             employee={item}

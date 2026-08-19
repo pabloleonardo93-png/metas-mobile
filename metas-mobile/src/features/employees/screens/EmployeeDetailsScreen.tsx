@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { appRoutes } from '@/config/routes';
 import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
@@ -24,11 +24,34 @@ export function EmployeeDetailsScreen() {
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ employeeId?: string | string[] }>();
   const { campaigns } = useCampaigns();
-  const { employees } = useEmployees();
+  const { employees, errorMessage, isLoading, refreshEmployees } = useEmployees();
   const employeeId = getEmployeeId(params.employeeId);
   const employee = employees.find((item) => item.id === employeeId);
   const { calculationResult, employeeGoal } = useEmployeeGoal(employee?.role ?? 'GESTOR');
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
+
+  if (isLoading || errorMessage) {
+    return (
+      <ScreenContainer edges={['top', 'bottom']}>
+        <View style={[styles.notFound, { paddingHorizontal: horizontalPadding }]}>
+          <EmployeeScreenHeader title="Detalhes do funcionário" onBack={() => router.back()} />
+          {isLoading ? (
+            <ActivityIndicator color={colors.primary} size="large" />
+          ) : (
+            <>
+              <AppText color="textMuted">{errorMessage}</AppText>
+              <AppButton
+                label="Tentar novamente"
+                variant="secondary"
+                onPress={() => void refreshEmployees()}
+              />
+            </>
+          )}
+        </View>
+        <ManagerBottomNavigation activeTab="team" />
+      </ScreenContainer>
+    );
+  }
 
   if (!employee) {
     return (

@@ -22,12 +22,13 @@ export interface Employee {
   status: EmployeeStatus;
 }
 
-export type EmployeeInput = Pick<Employee, 'email' | 'name' | 'role' | 'status'>;
+export type EmployeeInput = Pick<Employee, 'email' | 'joinedAt' | 'name' | 'role' | 'status'>;
 
 export type EmployeeRoleFilter = 'ALL' | UserRole;
 
 export interface EmployeeFormValues {
   email: string;
+  joinedAt: string;
   name: string;
   role: '' | UserRole;
   status: EmployeeStatus;

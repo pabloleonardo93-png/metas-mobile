@@ -11,7 +11,7 @@ import type { UserRole } from '@/shared/types/userRole';
 interface EmployeeFormProps {
   initialValues: EmployeeFormValues;
   submitLabel: string;
-  onSubmit: (values: EmployeeFormValues & { role: UserRole }) => void;
+  onSubmit: (values: EmployeeFormValues & { role: UserRole }) => Promise<void> | void;
 }
 
 const STATUS_OPTIONS: readonly { label: string; value: EmployeeStatus }[] = [
@@ -22,6 +22,7 @@ const STATUS_OPTIONS: readonly { label: string; value: EmployeeStatus }[] = [
 export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeFormProps) {
   const [values, setValues] = useState<EmployeeFormValues>(initialValues);
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const errors = useMemo(() => validateEmployeeForm(values), [values]);
 
   function updateValue<Key extends keyof EmployeeFormValues>(
@@ -31,19 +32,24 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     setSubmitted(true);
 
     if (Object.keys(errors).length > 0 || !values.role) {
       return;
     }
 
-    onSubmit({
-      ...values,
-      email: values.email.trim().toLocaleLowerCase('pt-BR'),
-      name: values.name.trim(),
-      role: values.role,
-    });
+    setIsSubmitting(true);
+    try {
+      await onSubmit({
+        ...values,
+        email: values.email.trim().toLocaleLowerCase('pt-BR'),
+        name: values.name.trim(),
+        role: values.role,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -78,6 +84,20 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
           textContentType="emailAddress"
           value={values.email}
           onChangeText={(value) => updateValue('email', value)}
+        />
+      </View>
+
+      <View style={styles.fieldGroup}>
+        <AppText variant="label">Data de entrada</AppText>
+        <AppTextInput
+          accessibilityLabel="Data de entrada do funcionário"
+          autoCapitalize="none"
+          autoCorrect={false}
+          error={submitted ? errors.joinedAt : undefined}
+          inputMode="numeric"
+          placeholder="AAAA-MM-DD"
+          value={values.joinedAt}
+          onChangeText={(value) => updateValue('joinedAt', value)}
         />
       </View>
 
@@ -142,7 +162,7 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
         </View>
       </View>
 
-      <AppButton label={submitLabel} onPress={handleSubmit} />
+      <AppButton label={submitLabel} loading={isSubmitting} onPress={() => void handleSubmit()} />
     </View>
   );
 }

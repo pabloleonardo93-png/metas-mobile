@@ -3,61 +3,87 @@ import {
   type PropsWithChildren,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
-  useState,
+  useReducer,
 } from 'react';
 
-import { employeesMock } from '@/features/employees/mocks/employees.mock';
-import type { Employee, EmployeeInput } from '@/features/employees/types/employee.types';
+import { useAuth } from '@/features/auth/context/AuthContext';
+import { employeesApi } from '@/features/employees/api/employeesApi';
+import { employeesReducer, initialEmployeesState } from '@/features/employees/state/employeesState';
+import type {
+  Employee,
+  EmployeeInput,
+  EmployeeStatus,
+} from '@/features/employees/types/employee.types';
+import { getEmployeeApiErrorMessage } from '@/features/employees/utils/employeeApiError';
 
 interface EmployeesContextValue {
-  addEmployee: (input: EmployeeInput) => Employee;
+  addEmployee(input: EmployeeInput): Promise<Employee>;
   employees: Employee[];
-  updateEmployee: (employeeId: string, input: EmployeeInput) => void;
+  errorMessage: string | null;
+  isLoading: boolean;
+  refreshEmployees(): Promise<void>;
+  setEmployeeStatus(employeeId: string, status: EmployeeStatus): Promise<Employee>;
+  updateEmployee(employeeId: string, input: EmployeeInput): Promise<Employee>;
 }
 
 const EmployeesContext = createContext<EmployeesContextValue | null>(null);
 
-function cloneEmployees(): Employee[] {
-  return employeesMock.map((employee) => ({
-    ...employee,
-    performance: employee.performance
-      ? {
-          ...employee.performance,
-          campaignContributions: employee.performance.campaignContributions.map((contribution) => ({
-            ...contribution,
-          })),
-        }
-      : undefined,
-  }));
-}
-
 export function EmployeesProvider({ children }: PropsWithChildren) {
-  const [employees, setEmployees] = useState<Employee[]>(cloneEmployees);
+  const { status: authStatus, user } = useAuth();
+  const [state, dispatch] = useReducer(employeesReducer, initialEmployeesState);
 
-  const addEmployee = useCallback((input: EmployeeInput): Employee => {
-    const newEmployee: Employee = {
-      ...input,
-      id: `employee-${Date.now()}`,
-      joinedAt: new Date().toISOString().slice(0, 10),
-    };
-
-    setEmployees((currentEmployees) => [...currentEmployees, newEmployee]);
-
-    return newEmployee;
+  const refreshEmployees = useCallback(async () => {
+    dispatch({ type: 'loadStarted' });
+    try {
+      dispatch({ type: 'loadSucceeded', employees: await employeesApi.list() });
+    } catch (error: unknown) {
+      dispatch({ type: 'loadFailed', errorMessage: getEmployeeApiErrorMessage(error) });
+    }
   }, []);
 
-  const updateEmployee = useCallback((employeeId: string, input: EmployeeInput) => {
-    setEmployees((currentEmployees) =>
-      currentEmployees.map((employee) =>
-        employee.id === employeeId ? { ...employee, ...input } : employee,
-      ),
-    );
+  useEffect(() => {
+    if (authStatus === 'authenticated' && user?.role === 'GESTOR') {
+      void refreshEmployees();
+    }
+  }, [authStatus, refreshEmployees, user?.role]);
+
+  const addEmployee = useCallback(async (input: EmployeeInput): Promise<Employee> => {
+    const employee = await employeesApi.create(input);
+    dispatch({ type: 'upserted', employee });
+    return employee;
   }, []);
+
+  const updateEmployee = useCallback(
+    async (employeeId: string, input: EmployeeInput): Promise<Employee> => {
+      const employee = await employeesApi.update(employeeId, input);
+      dispatch({ type: 'upserted', employee });
+      return employee;
+    },
+    [],
+  );
+
+  const setEmployeeStatus = useCallback(
+    async (employeeId: string, status: EmployeeStatus): Promise<Employee> => {
+      const employee = await employeesApi.setStatus(employeeId, status);
+      dispatch({ type: 'upserted', employee });
+      return employee;
+    },
+    [],
+  );
 
   const value = useMemo(
-    () => ({ addEmployee, employees, updateEmployee }),
-    [addEmployee, employees, updateEmployee],
+    () => ({
+      addEmployee,
+      employees: state.employees,
+      errorMessage: state.errorMessage,
+      isLoading: state.status === 'loading',
+      refreshEmployees,
+      setEmployeeStatus,
+      updateEmployee,
+    }),
+    [addEmployee, refreshEmployees, setEmployeeStatus, state, updateEmployee],
   );
 
   return <EmployeesContext.Provider value={value}>{children}</EmployeesContext.Provider>;
