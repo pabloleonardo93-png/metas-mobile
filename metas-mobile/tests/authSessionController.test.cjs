@@ -22,7 +22,7 @@ const employee = {
 
 function createHarness(overrides = {}) {
   let token = overrides.initialToken ?? null;
-  const calls = { deleted: 0, loginBody: null, logoutToken: null, saved: [] };
+  const calls = { deleted: 0, googleSignOut: 0, loginBody: null, logoutToken: null, saved: [] };
   const storage = {
     deleteToken: async () => {
       calls.deleted += 1;
@@ -55,6 +55,12 @@ function createHarness(overrides = {}) {
   };
   const google = {
     signIn: overrides.signIn ?? (async () => ({ idToken: 'google-id-token', type: 'success' })),
+    signOut: async () => {
+      calls.googleSignOut += 1;
+      if (overrides.googleSignOutError) {
+        throw overrides.googleSignOutError;
+      }
+    },
   };
 
   return {
@@ -125,6 +131,20 @@ test('logout always removes the local session when the API is unavailable', asyn
 
   await assert.rejects(() => harness.controller.logout());
   assert.equal(harness.calls.logoutToken, 'valid-token');
+  assert.equal(harness.calls.googleSignOut, 1);
+  assert.equal(harness.getToken(), null);
+});
+
+test('Google sign-out failure does not prevent application logout', async () => {
+  const harness = createHarness({
+    googleSignOutError: new Error('google unavailable'),
+    initialToken: 'valid-token',
+  });
+
+  await harness.controller.logout();
+
+  assert.equal(harness.calls.logoutToken, 'valid-token');
+  assert.equal(harness.calls.googleSignOut, 1);
   assert.equal(harness.getToken(), null);
 });
 

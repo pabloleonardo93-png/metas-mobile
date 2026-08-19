@@ -22,11 +22,8 @@ async function signIn(): Promise<GoogleSignInResult> {
 
   try {
     await GoogleOneTapSignIn.checkPlayServices();
-    let response = await GoogleOneTapSignIn.signIn();
+    let response = await GoogleOneTapSignIn.createAccount();
 
-    if (isNoSavedCredentialFoundResponse(response)) {
-      response = await GoogleOneTapSignIn.createAccount();
-    }
     if (isNoSavedCredentialFoundResponse(response)) {
       response = await GoogleOneTapSignIn.presentExplicitSignIn();
     }
@@ -46,4 +43,19 @@ async function signIn(): Promise<GoogleSignInResult> {
   }
 }
 
-export const googleSignInGateway: GoogleSignInGateway = { signIn };
+async function signOut(): Promise<void> {
+  if (!publicEnv.isGoogleConfigured) {
+    return;
+  }
+
+  const { GoogleOneTapSignIn } = await import('react-native-nitro-google-signin');
+
+  GoogleOneTapSignIn.configure({
+    autoSelectOnSignIn: false,
+    webClientId: publicEnv.googleWebClientId,
+  });
+
+  await GoogleOneTapSignIn.signOut();
+}
+
+export const googleSignInGateway: GoogleSignInGateway = { signIn, signOut };

@@ -76,6 +76,11 @@ export class AuthSessionController {
       }
     } finally {
       await this.storage.deleteToken();
+      try {
+        await this.google.signOut();
+      } catch {
+        // Google state must not prevent local logout from completing.
+      }
     }
   }
 

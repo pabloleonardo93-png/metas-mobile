@@ -2,6 +2,7 @@ export type GoogleSignInResult = { idToken: string; type: 'success' } | { type: 
 
 export interface GoogleSignInGateway {
   signIn(): Promise<GoogleSignInResult>;
+  signOut(): Promise<void>;
 }
 
 export const googleSignInGateway: GoogleSignInGateway;
