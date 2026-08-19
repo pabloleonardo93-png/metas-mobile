@@ -5,6 +5,7 @@ import { connectDatabase, createDatabase, disconnectDatabase } from './config/da
 import { loadEnv } from './config/env.js';
 import { PostgresAuthenticationService } from './modules/auth/authenticationService.js';
 import { OfficialGoogleIdTokenVerifier } from './modules/auth/googleIdTokenVerifier.js';
+import { PostgresEmployeeService } from './modules/employees/employeeService.js';
 import { logger } from './shared/logging/logger.js';
 
 const listen = async (server: Server, host: string, port: number): Promise<void> =>
@@ -54,6 +55,7 @@ const bootstrap = async (): Promise<void> => {
   const app = createApp({
     authenticationService,
     corsOrigins: env.corsOrigins,
+    employeeService: new PostgresEmployeeService(database),
     trustProxyHops: env.trustProxyHops,
   });
   const server = createServer(app);

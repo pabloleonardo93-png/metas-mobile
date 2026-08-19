@@ -43,6 +43,12 @@ const expectedSecurityDefinerFunctions = [
   'bootstrap_first_manager',
   'enforce_employee_manager_invariants',
   'has_active_database_context',
+  'manager_create_employee',
+  'manager_get_employee',
+  'manager_list_employees',
+  'manager_set_employee_status',
+  'manager_update_employee',
+  'require_manager_store',
   'resolve_session',
   'revoke_session',
 ] as const;
@@ -242,6 +248,11 @@ const inspectMigratedSchema = async (): Promise<void> => {
     const runtimeExecutableFunctions = new Set([
       'authenticate_google_identity',
       'has_active_database_context',
+      'manager_create_employee',
+      'manager_get_employee',
+      'manager_list_employees',
+      'manager_set_employee_status',
+      'manager_update_employee',
       'resolve_session',
       'revoke_session',
     ]);

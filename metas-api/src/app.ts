@@ -8,6 +8,8 @@ import { requestId } from './middleware/requestId.js';
 import { createRequestLogger } from './middleware/requestLogger.js';
 import { createAuthRouter, type AuthRateLimitOptions } from './modules/auth/auth.routes.js';
 import type { AuthenticationService } from './modules/auth/auth.types.js';
+import { createEmployeeRouter } from './modules/employees/employee.routes.js';
+import type { EmployeeService } from './modules/employees/employee.types.js';
 import { healthRouter } from './routes/health.routes.js';
 import { AppError } from './shared/errors/AppError.js';
 import { logger as defaultLogger, type Logger } from './shared/logging/logger.js';
@@ -16,6 +18,7 @@ export interface AppOptions {
   authRateLimit?: AuthRateLimitOptions;
   authenticationService?: AuthenticationService;
   corsOrigins?: readonly string[];
+  employeeService?: EmployeeService;
   logger?: Logger;
   trustProxyHops?: number;
 }
@@ -54,6 +57,16 @@ export const createApp = (options: AppOptions = {}): express.Express => {
         ...(options.authRateLimit ? { rateLimitOptions: options.authRateLimit } : {}),
       }),
     );
+    if (options.employeeService) {
+      app.use(
+        '/v1/manager/employees',
+        createEmployeeRouter({
+          authenticationService: options.authenticationService,
+          employeeService: options.employeeService,
+          logger,
+        }),
+      );
+    }
   }
 
   app.use(notFound);
