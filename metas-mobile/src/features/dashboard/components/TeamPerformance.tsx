@@ -30,7 +30,7 @@ export function TeamPerformance({ team }: TeamPerformanceProps) {
                 </AppText>
               </View>
               <AppText color="textMuted" variant="caption">
-                Desempenho ainda nÃ£o disponÃ­vel.
+                Desempenho ainda não disponível.
               </AppText>
             </View>
           ))}

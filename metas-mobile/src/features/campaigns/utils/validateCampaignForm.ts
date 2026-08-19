@@ -14,6 +14,8 @@ export function validateCampaignForm(values: CampaignFormValues): CampaignFormEr
 
   if (!values.name.trim()) {
     errors.name = 'Informe a marca ou o produto.';
+  } else if (values.name.trim().length > 120) {
+    errors.name = 'Use no máximo 120 caracteres.';
   }
 
   if (!values.targetQuantity.trim()) {
@@ -22,6 +24,8 @@ export function validateCampaignForm(values: CampaignFormValues): CampaignFormEr
     errors.targetQuantity = 'Use somente números inteiros.';
   } else if (targetQuantity <= 0) {
     errors.targetQuantity = 'A quantidade deve ser maior que zero.';
+  } else if (targetQuantity > 1_000_000_000) {
+    errors.targetQuantity = 'A quantidade informada é muito alta.';
   }
 
   if (!values.targetAmount.trim()) {

@@ -5,6 +5,7 @@ import { connectDatabase, createDatabase, disconnectDatabase } from './config/da
 import { loadEnv } from './config/env.js';
 import { PostgresAuthenticationService } from './modules/auth/authenticationService.js';
 import { OfficialGoogleIdTokenVerifier } from './modules/auth/googleIdTokenVerifier.js';
+import { PostgresCampaignService } from './modules/campaigns/campaignService.js';
 import { PostgresEmployeeService } from './modules/employees/employeeService.js';
 import { PostgresGoalService } from './modules/goals/goalService.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
@@ -58,6 +59,7 @@ const bootstrap = async (): Promise<void> => {
   const realtimeServer = new AuthenticatedRealtimeServer(server, authenticationService, logger);
   const app = createApp({
     authenticationService,
+    campaignService: new PostgresCampaignService(database),
     corsOrigins: env.corsOrigins,
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),

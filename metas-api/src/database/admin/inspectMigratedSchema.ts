@@ -9,6 +9,7 @@ import { databaseRoles } from '../roles.js';
 
 const expectedTables = [
   'auth_identities',
+  'campaigns',
   'employees',
   'goal_roles',
   'goals',
@@ -20,6 +21,7 @@ const expectedTables = [
 
 const expectedRlsTables = [
   'auth_identities',
+  'campaigns',
   'employees',
   'goal_roles',
   'goals',
@@ -31,6 +33,8 @@ const expectedRlsTables = [
 const requiredConstraints = [
   'auth_identities_provider_subject_unique',
   'auth_identities_user_provider_unique',
+  'campaigns_period_valid',
+  'campaigns_store_fk',
   'employees_creation_actor_valid',
   'employees_store_user_unique',
   'goal_roles_goal_store_fk',
@@ -45,6 +49,8 @@ const requiredConstraints = [
 
 const requiredIndexes = [
   'auth_identities_provider_email_idx',
+  'campaigns_store_closed_idx',
+  'campaigns_store_period_idx',
   'employees_store_role_status_idx',
   'employees_store_status_idx',
   'goal_roles_store_role_idx',
@@ -58,12 +64,15 @@ const expectedSecurityDefinerFunctions = [
   'bootstrap_first_manager',
   'enforce_employee_manager_invariants',
   'has_active_database_context',
+  'manager_close_campaign',
+  'manager_create_campaign',
   'manager_create_employee',
   'manager_get_employee',
   'manager_get_goal_configuration',
   'manager_list_employees',
   'manager_save_goal_configuration',
   'manager_set_employee_status',
+  'manager_update_campaign',
   'manager_update_employee',
   'require_manager_store',
   'resolve_session',
@@ -155,7 +164,8 @@ const inspectMigratedSchema = async (): Promise<void> => {
        JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
        WHERE namespace.nspname = 'metas'
          AND relation.relname IN (
-           'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles'
+           'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
+           'campaigns'
          )
        ORDER BY relation.relname`,
       { type: QueryTypes.SELECT },
@@ -189,25 +199,29 @@ const inspectMigratedSchema = async (): Promise<void> => {
          (SELECT bool_and(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'SELECT'
           )) FROM unnest(ARRAY[
-            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles'
+            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
+            'campaigns'
           ])
           table_name) AS "hasSelect",
          (SELECT bool_or(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'INSERT'
           )) FROM unnest(ARRAY[
-            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles'
+            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
+            'campaigns'
           ])
           table_name) AS "hasInsert",
          (SELECT bool_or(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'UPDATE'
           )) FROM unnest(ARRAY[
-            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles'
+            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
+            'campaigns'
           ])
           table_name) AS "hasUpdate",
          (SELECT bool_or(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'DELETE'
           )) FROM unnest(ARRAY[
-            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles'
+            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
+            'campaigns'
           ])
           table_name) AS "hasDelete"
        FROM pg_roles role
@@ -275,11 +289,14 @@ const inspectMigratedSchema = async (): Promise<void> => {
     const runtimeExecutableFunctions = new Set([
       'authenticate_google_identity',
       'has_active_database_context',
+      'manager_close_campaign',
+      'manager_create_campaign',
       'manager_create_employee',
       'manager_get_employee',
       'manager_get_goal_configuration',
       'manager_list_employees',
       'manager_set_employee_status',
+      'manager_update_campaign',
       'manager_save_goal_configuration',
       'manager_update_employee',
       'resolve_session',

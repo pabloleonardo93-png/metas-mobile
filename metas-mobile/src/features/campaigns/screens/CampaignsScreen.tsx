@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { FlatList, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { appRoutes } from '@/config/routes';
 import { CampaignCard } from '@/features/campaigns/components/CampaignCard';
@@ -10,13 +10,13 @@ import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
 import type { CampaignFilter } from '@/features/campaigns/types/campaign.types';
 import { countActiveCampaigns, filterCampaigns } from '@/features/campaigns/utils/campaign.utils';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
-import { AppIcon, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
+import { AppButton, AppIcon, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 
 export function CampaignsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
-  const { campaigns } = useCampaigns();
+  const { campaigns, errorMessage, isLoading, refreshCampaigns } = useCampaigns();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<CampaignFilter>('ALL');
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
@@ -27,6 +27,16 @@ export function CampaignsScreen() {
   );
   const activeCountLabel = `${activeCount} ${activeCount === 1 ? 'campanha ativa' : 'campanhas ativas'}`;
   const hasCampaigns = campaigns.length > 0;
+  const emptyTitle =
+    statusFilter === 'ATIVA'
+      ? 'Nenhuma campanha ativa'
+      : statusFilter === 'AGENDADA'
+        ? 'Nenhuma campanha agendada'
+        : statusFilter === 'ENCERRADA'
+          ? 'Nenhuma campanha encerrada'
+          : hasCampaigns
+            ? 'Nenhuma campanha encontrada'
+            : 'Nenhuma campanha cadastrada';
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
@@ -39,15 +49,25 @@ export function CampaignsScreen() {
         keyExtractor={(campaign) => campaign.id}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <AppIcon color={colors.textMuted} name="target" size={34} />
-            <AppText variant="bodyMedium">
-              {hasCampaigns ? 'Nenhuma campanha encontrada' : 'Nenhuma campanha cadastrada'}
+            {isLoading ? <ActivityIndicator color={colors.primary} /> : null}
+            {!isLoading ? <AppIcon color={colors.textMuted} name="target" size={34} /> : null}
+            <AppText color={errorMessage ? 'error' : undefined} variant="bodyMedium">
+              {errorMessage ?? (isLoading ? 'Carregando campanhas...' : emptyTitle)}
             </AppText>
-            <AppText color="textMuted" style={styles.emptyText} variant="caption">
-              {hasCampaigns
-                ? 'Ajuste a busca ou selecione outro status.'
-                : 'As campanhas reais da loja aparecerão aqui quando a integração estiver disponível.'}
-            </AppText>
+            {!isLoading && !errorMessage ? (
+              <AppText color="textMuted" style={styles.emptyText} variant="caption">
+                {hasCampaigns
+                  ? 'Ajuste a busca ou selecione outro status.'
+                  : 'Crie a primeira campanha para acompanhar os objetivos da loja.'}
+              </AppText>
+            ) : null}
+            {errorMessage ? (
+              <AppButton
+                label="Tentar novamente"
+                variant="secondary"
+                onPress={() => void refreshCampaigns()}
+              />
+            ) : null}
           </View>
         }
         ListHeaderComponent={
@@ -59,6 +79,24 @@ export function CampaignsScreen() {
             <AppText color="textMuted" variant="label">
               {activeCountLabel}
             </AppText>
+            <AppButton
+              label="Nova campanha"
+              leftIcon={<AppIcon color={colors.onPrimary} name="plus" size={20} />}
+              onPress={() => router.push(appRoutes.managerNewCampaign)}
+            />
+            {errorMessage && hasCampaigns ? (
+              <View style={styles.inlineError}>
+                <AppText color="error" variant="caption">
+                  {errorMessage}
+                </AppText>
+                <AppButton
+                  fullWidth={false}
+                  label="Tentar novamente"
+                  variant="secondary"
+                  onPress={() => void refreshCampaigns()}
+                />
+              </View>
+            ) : null}
             <CampaignSearch value={search} onChangeText={setSearch} />
             <CampaignFilters selectedFilter={statusFilter} onSelect={setStatusFilter} />
             <AppText accessibilityRole="header" style={styles.sectionTitle} variant="title">
@@ -72,7 +110,9 @@ export function CampaignsScreen() {
             onPress={() => router.push(appRoutes.managerCampaignDetails(item.id))}
           />
         )}
+        refreshing={isLoading && hasCampaigns}
         showsVerticalScrollIndicator={false}
+        onRefresh={() => void refreshCampaigns()}
       />
 
       <ManagerBottomNavigation activeTab="campaigns" />
@@ -100,6 +140,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingBottom: spacing.xl,
     paddingTop: spacing.lg,
+  },
+  inlineError: {
+    alignItems: 'flex-start',
+    gap: spacing.sm,
   },
   sectionTitle: {
     fontSize: 20,

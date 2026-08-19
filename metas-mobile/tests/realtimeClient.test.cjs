@@ -106,6 +106,10 @@ test('connects once, authenticates after open, and never puts the token in the U
   const harness = createHarness();
   let employeeSyncs = 0;
   let goalSyncs = 0;
+  let campaignSyncs = 0;
+  harness.client.subscribe('campaigns.changed', () => {
+    campaignSyncs += 1;
+  });
   harness.client.subscribe('employees.changed', () => {
     employeeSyncs += 1;
   });
@@ -129,6 +133,33 @@ test('connects once, authenticates after open, and never puts the token in the U
   await flush();
   assert.equal(employeeSyncs, 1);
   assert.equal(goalSyncs, 1);
+  assert.equal(campaignSyncs, 1);
+});
+
+test('campaign invalidations are coalesced without duplicating refresh work', async () => {
+  const harness = createHarness();
+  let releaseRefresh;
+  let refreshes = 0;
+  harness.client.subscribe('campaigns.changed', async () => {
+    refreshes += 1;
+    if (refreshes === 1) {
+      await new Promise((resolve) => {
+        releaseRefresh = resolve;
+      });
+    }
+  });
+  harness.client.start();
+  harness.sockets[0].open();
+  await flush();
+
+  harness.sockets[0].receive({ type: 'campaigns.changed' });
+  harness.sockets[0].receive({ type: 'campaigns.changed' });
+  await flush();
+  assert.equal(refreshes, 1);
+  releaseRefresh();
+  await flush();
+  await flush();
+  assert.equal(refreshes, 2);
 });
 
 test('coalesces duplicate invalidations while the selective refresh is running', async () => {

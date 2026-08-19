@@ -171,6 +171,12 @@ await test('only authenticated clients from the same store receive invalidations
   realtime.publish(storeA, 'employees.changed');
   assert.equal((await eventOne).type, 'employees.changed');
   assert.equal((await eventTwo).type, 'employees.changed');
+
+  const campaignEventOne = nextMessage(storeAOne);
+  const campaignEventTwo = nextMessage(storeATwo);
+  realtime.publish(storeA, 'campaigns.changed');
+  assert.equal((await campaignEventOne).type, 'campaigns.changed');
+  assert.equal((await campaignEventTwo).type, 'campaigns.changed');
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(leakedToStoreB, false);
   assert.equal(leakedToUnauthenticated, false);

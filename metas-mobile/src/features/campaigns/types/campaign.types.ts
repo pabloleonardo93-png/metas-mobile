@@ -1,14 +1,17 @@
 export type CampaignStatus = 'ATIVA' | 'AGENDADA' | 'ENCERRADA';
 
 export interface Campaign {
+  createdAt: string;
   endDate: string;
   id: string;
+  lockVersion: number;
   name: string;
   soldQuantity: number;
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: number;
   targetQuantity: number;
+  updatedAt: string;
 }
 
 export type CampaignInput = Pick<

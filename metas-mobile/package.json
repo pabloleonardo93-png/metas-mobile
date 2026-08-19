@@ -39,7 +39,7 @@
     "web": "expo start --web",
     "lint": "eslint .",
     "test": "npm run test:calculations",
-    "test:calculations": "tsc -p tsconfig.calculation-tests.json && node --test tests/calculateDailyGoals.test.cjs tests/calculateEmployeePerformance.test.cjs tests/authSessionController.test.cjs tests/employeesApi.test.cjs tests/brlCurrency.test.cjs tests/goalConfigurationApi.test.cjs tests/realtimeClient.test.cjs",
+    "test:calculations": "tsc -p tsconfig.calculation-tests.json && node --test tests/calculateDailyGoals.test.cjs tests/calculateEmployeePerformance.test.cjs tests/authSessionController.test.cjs tests/employeesApi.test.cjs tests/campaignsApi.test.cjs tests/brlCurrency.test.cjs tests/goalConfigurationApi.test.cjs tests/realtimeClient.test.cjs",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

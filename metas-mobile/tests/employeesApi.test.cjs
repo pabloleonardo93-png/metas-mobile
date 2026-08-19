@@ -33,6 +33,7 @@ const {
 const {
   buildManagerTeamPerformance,
   calculateManagerDashboardMetrics,
+  formatActiveTeamComposition,
 } = require('../node_modules/.cache/calculation-tests/src/features/dashboard/utils/calculateManagerDashboard.js');
 
 const responseEmployee = {
@@ -197,6 +198,7 @@ test('manager dashboard follows shared employee role and status mutations', () =
   assert.equal(promotedSummary.GESTOR, 2);
   assert.equal(promotedSummary.BALCONISTA, 0);
   assert.deepEqual(buildManagerTeamPerformance(promotedSummary), []);
+  assert.equal(formatActiveTeamComposition(promotedSummary), '2 gestores • 0 funcionários');
 
   const inactive = employeesReducer(promoted, {
     employee: { ...attendant, role: 'GESTOR', status: 'INATIVO' },
@@ -216,6 +218,21 @@ test('manager dashboard follows shared employee role and status mutations', () =
       0,
     ).activeEmployees,
     1,
+  );
+});
+
+test('active team composition pluralizes managers and operational employees', () => {
+  assert.equal(
+    formatActiveTeamComposition({ BALCONISTA: 1, CAIXA: 0, FARMACEUTICO: 0, GESTOR: 1 }),
+    '1 gestor • 1 funcionário',
+  );
+  assert.equal(
+    formatActiveTeamComposition({ BALCONISTA: 1, CAIXA: 1, FARMACEUTICO: 1, GESTOR: 2 }),
+    '2 gestores • 3 funcionários',
+  );
+  assert.equal(
+    formatActiveTeamComposition({ BALCONISTA: 0, CAIXA: 0, FARMACEUTICO: 0, GESTOR: 0 }),
+    '0 gestores • 0 funcionários',
   );
 });
 
@@ -252,4 +269,5 @@ test('runtime source does not contain the removed demonstration catalogs', () =>
   ]) {
     assert.equal(runtimeSource.includes(value), false, `runtime ainda contém: ${value}`);
   }
+  assert.doesNotMatch(runtimeSource, /Ã|Â|�/u);
 });

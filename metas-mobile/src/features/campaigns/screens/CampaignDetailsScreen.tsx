@@ -1,9 +1,19 @@
+import { useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { appRoutes } from '@/config/routes';
 import { CampaignStatusBadge } from '@/features/campaigns/components/CampaignStatusBadge';
 import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
+import type { Campaign } from '@/features/campaigns/types/campaign.types';
+import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
 import { formatCampaignPeriod } from '@/features/campaigns/utils/campaignDates';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
@@ -27,10 +37,27 @@ export function CampaignDetailsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
-  const { campaigns } = useCampaigns();
+  const { campaigns, closeCampaign, errorMessage, isLoading, refreshCampaigns } = useCampaigns();
+  const [isClosing, setIsClosing] = useState(false);
   const campaignId = getCampaignId(params.campaignId);
   const campaign = campaigns.find((item) => item.id === campaignId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
+
+  if (isLoading || errorMessage) {
+    return (
+      <ScreenContainer edges={['top', 'bottom']}>
+        <View style={[styles.notFound, { paddingHorizontal: horizontalPadding }]}>
+          <AppScreenHeader title="Detalhes da campanha" onBack={() => router.back()} />
+          {isLoading ? <ActivityIndicator color={colors.primary} /> : null}
+          {errorMessage ? <AppText color="error">{errorMessage}</AppText> : null}
+          {errorMessage ? (
+            <AppButton label="Tentar novamente" onPress={() => void refreshCampaigns()} />
+          ) : null}
+        </View>
+        <ManagerBottomNavigation activeTab="campaigns" />
+      </ScreenContainer>
+    );
+  }
 
   if (!campaign) {
     return (
@@ -52,6 +79,24 @@ export function CampaignDetailsScreen() {
   }
 
   const metrics = calculateCampaignMetrics(campaign);
+
+  function handleClose(campaignToClose: Campaign) {
+    Alert.alert('Encerrar campanha', 'Esta ação encerra a campanha para toda a loja.', [
+      { style: 'cancel', text: 'Cancelar' },
+      {
+        style: 'destructive',
+        text: 'Encerrar',
+        onPress: () => {
+          setIsClosing(true);
+          void closeCampaign(campaignToClose)
+            .catch((error: unknown) => {
+              Alert.alert('Não foi possível encerrar', getCampaignApiErrorMessage(error));
+            })
+            .finally(() => setIsClosing(false));
+        },
+      },
+    ]);
+  }
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
@@ -119,13 +164,21 @@ export function CampaignDetailsScreen() {
           />
         </View>
 
-        <View style={styles.actions}>
-          <AppButton
-            label="Editar campanha"
-            leftIcon={<AppIcon color={colors.onPrimary} name="edit" size={20} />}
-            onPress={() => router.push(appRoutes.managerEditCampaign(campaign.id))}
-          />
-        </View>
+        {campaign.status !== 'ENCERRADA' ? (
+          <View style={styles.actions}>
+            <AppButton
+              label="Editar campanha"
+              leftIcon={<AppIcon color={colors.onPrimary} name="edit" size={20} />}
+              onPress={() => router.push(appRoutes.managerEditCampaign(campaign.id))}
+            />
+            <AppButton
+              label="Encerrar campanha"
+              loading={isClosing}
+              variant="secondary"
+              onPress={() => handleClose(campaign)}
+            />
+          </View>
+        ) : null}
       </ScrollView>
 
       <ManagerBottomNavigation activeTab="campaigns" />

@@ -14,12 +14,13 @@ import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
 interface CampaignFormProps {
   initialValues: CampaignFormValues;
   submitLabel: string;
-  onSubmit: (input: CampaignInput) => void;
+  onSubmit: (input: CampaignInput) => Promise<void> | void;
 }
 
 export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignFormProps) {
   const [values, setValues] = useState<CampaignFormValues>(initialValues);
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const errors = useMemo(() => validateCampaignForm(values), [values]);
 
   function updateValue<Key extends keyof CampaignFormValues>(
@@ -29,7 +30,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     setSubmitted(true);
 
     if (Object.keys(errors).length > 0) {
@@ -44,13 +45,18 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
       return;
     }
 
-    onSubmit({
-      endDate,
-      name: values.name.trim(),
-      startDate,
-      targetAmountCents,
-      targetQuantity: Number(values.targetQuantity),
-    });
+    setIsSubmitting(true);
+    try {
+      await onSubmit({
+        endDate,
+        name: values.name.trim(),
+        startDate,
+        targetAmountCents,
+        targetQuantity: Number(values.targetQuantity),
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -123,7 +129,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
         </View>
       </View>
 
-      <AppButton label={submitLabel} onPress={handleSubmit} />
+      <AppButton label={submitLabel} loading={isSubmitting} onPress={() => void handleSubmit()} />
     </View>
   );
 }

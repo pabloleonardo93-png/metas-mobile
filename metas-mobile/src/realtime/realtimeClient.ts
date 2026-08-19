@@ -49,7 +49,11 @@ interface DispatchState {
   running: boolean;
 }
 
-const eventTypes = new Set<RealtimeEventType>(['employees.changed', 'goal.configuration.changed']);
+const eventTypes = new Set<RealtimeEventType>([
+  'campaigns.changed',
+  'employees.changed',
+  'goal.configuration.changed',
+]);
 
 export const createRealtimeUrl = (apiBaseUrl: string): string => {
   const url = new URL(apiBaseUrl);

@@ -8,6 +8,11 @@ import { requestId } from './middleware/requestId.js';
 import { createRequestLogger } from './middleware/requestLogger.js';
 import { createAuthRouter, type AuthRateLimitOptions } from './modules/auth/auth.routes.js';
 import type { AuthenticationService } from './modules/auth/auth.types.js';
+import {
+  createCampaignRouter,
+  createManagerCampaignRouter,
+} from './modules/campaigns/campaign.routes.js';
+import type { CampaignService } from './modules/campaigns/campaign.types.js';
 import { createEmployeeRouter } from './modules/employees/employee.routes.js';
 import type { EmployeeService } from './modules/employees/employee.types.js';
 import { createGoalRouter } from './modules/goals/goal.routes.js';
@@ -20,6 +25,7 @@ import { logger as defaultLogger, type Logger } from './shared/logging/logger.js
 export interface AppOptions {
   authRateLimit?: AuthRateLimitOptions;
   authenticationService?: AuthenticationService;
+  campaignService?: CampaignService;
   corsOrigins?: readonly string[];
   employeeService?: EmployeeService;
   goalService?: GoalService;
@@ -72,6 +78,16 @@ export const createApp = (options: AppOptions = {}): express.Express => {
           ...(options.realtimePublisher ? { realtimePublisher: options.realtimePublisher } : {}),
         }),
       );
+    }
+    if (options.campaignService) {
+      const campaignOptions = {
+        authenticationService: options.authenticationService,
+        campaignService: options.campaignService,
+        logger,
+        ...(options.realtimePublisher ? { realtimePublisher: options.realtimePublisher } : {}),
+      };
+      app.use('/v1/campaigns', createCampaignRouter(campaignOptions));
+      app.use('/v1/manager/campaigns', createManagerCampaignRouter(campaignOptions));
     }
     if (options.goalService) {
       app.use(

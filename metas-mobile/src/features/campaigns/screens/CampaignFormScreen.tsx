@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -15,6 +16,7 @@ import { CampaignForm } from '@/features/campaigns/components/CampaignForm';
 import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
 import type { CampaignFormValues, CampaignInput } from '@/features/campaigns/types/campaign.types';
 import { formatCampaignDate } from '@/features/campaigns/utils/campaignDates';
+import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
 import { AppButton, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
@@ -40,7 +42,8 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
-  const { campaigns } = useCampaigns();
+  const { campaigns, createCampaign, errorMessage, isLoading, refreshCampaigns, updateCampaign } =
+    useCampaigns();
   const campaignId = getCampaignId(params.campaignId);
   const campaign = campaigns.find((item) => item.id === campaignId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
@@ -57,6 +60,22 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
 
     return newCampaignInitialValues;
   }, [campaign, mode]);
+
+  if (mode === 'edit' && (isLoading || errorMessage)) {
+    return (
+      <ScreenContainer edges={['top', 'bottom']}>
+        <View style={[styles.notFound, { paddingHorizontal: horizontalPadding }]}>
+          <AppScreenHeader title="Editar campanha" onBack={() => router.back()} />
+          {isLoading ? <ActivityIndicator color={colors.primary} /> : null}
+          {errorMessage ? <AppText color="error">{errorMessage}</AppText> : null}
+          {errorMessage ? (
+            <AppButton label="Tentar novamente" onPress={() => void refreshCampaigns()} />
+          ) : null}
+        </View>
+        <ManagerBottomNavigation activeTab="campaigns" />
+      </ScreenContainer>
+    );
+  }
 
   if (mode === 'edit' && !campaign) {
     return (
@@ -75,11 +94,16 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
     );
   }
 
-  function handleSubmit(_input: CampaignInput) {
-    Alert.alert(
-      'Recurso indisponível',
-      'O cadastro de campanhas será habilitado quando a integração com a API estiver disponível.',
-    );
+  async function handleSubmit(input: CampaignInput) {
+    try {
+      const savedCampaign =
+        mode === 'edit' && campaign
+          ? await updateCampaign(campaign, input)
+          : await createCampaign(input);
+      router.replace(appRoutes.managerCampaignDetails(savedCampaign.id));
+    } catch (error: unknown) {
+      Alert.alert('Não foi possível salvar', getCampaignApiErrorMessage(error));
+    }
   }
 
   const title = mode === 'create' ? 'Nova campanha' : 'Editar campanha';

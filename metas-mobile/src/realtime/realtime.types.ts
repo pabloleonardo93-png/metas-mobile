@@ -1,4 +1,5 @@
-export type RealtimeEventType = 'employees.changed' | 'goal.configuration.changed';
+export type RealtimeEventType =
+  'campaigns.changed' | 'employees.changed' | 'goal.configuration.changed';
 
 export type RealtimeListener = () => Promise<void> | void;
 
