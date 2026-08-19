@@ -16,6 +16,7 @@ import {
   ScreenContainer,
 } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import { formatCentsAsBrl } from '@/shared/utils/brlCurrency';
 import { formatPercentage } from '@/shared/utils/formatters';
 
 function getCampaignId(value: string | string[] | undefined): string {
@@ -104,6 +105,12 @@ export function CampaignDetailsScreen() {
                 Meta
               </AppText>
               <AppText variant="bodyMedium">{metrics.targetQuantity} unidades</AppText>
+            </View>
+            <View style={styles.metric}>
+              <AppText color="textMuted" variant="caption">
+                Valor da meta
+              </AppText>
+              <AppText variant="bodyMedium">{formatCentsAsBrl(campaign.targetAmountCents)}</AppText>
             </View>
             <View style={styles.metric}>
               <AppText color="textMuted" variant="caption">

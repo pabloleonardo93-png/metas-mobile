@@ -6,14 +6,15 @@ import type {
   GoalGeneralSettings,
   GoalGeneralSettingsErrors,
 } from '@/features/metas/types/goalSettings.types';
-import {
-  formatCurrencyInput,
-  formatCurrencyTextInput,
-  parseCurrencyInput,
-} from '@/features/metas/utils/formatCurrency';
 import { validateGoalSettings } from '@/features/metas/utils/validateGoalSettings';
-import { AppButton, AppText, AppTextInput } from '@/shared/components';
+import { AppButton, AppText, BrlCurrencyInput } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import {
+  centsToReais,
+  formatCentsForBrlInput,
+  parseBrlCurrencyToCents,
+  reaisToCents,
+} from '@/shared/utils/brlCurrency';
 
 interface GeneralGoalSettingsFormProps {
   initialValues: GoalGeneralSettings;
@@ -29,18 +30,21 @@ interface GoalGeneralSettingsFormValues {
 
 function toFormValues(settings: GoalGeneralSettings): GoalGeneralSettingsFormValues {
   return {
-    monthlyTarget: formatCurrencyInput(settings.monthlyTarget),
+    monthlyTarget: formatCentsForBrlInput(reaisToCents(settings.monthlyTarget) ?? 0),
     remainingBusinessDays: `${settings.remainingBusinessDays}`,
-    soldAmount: formatCurrencyInput(settings.soldAmount),
+    soldAmount: formatCentsForBrlInput(reaisToCents(settings.soldAmount) ?? 0),
     totalBusinessDays: `${settings.totalBusinessDays}`,
   };
 }
 
 function toSettings(values: GoalGeneralSettingsFormValues): GoalGeneralSettings {
+  const monthlyTargetCents = parseBrlCurrencyToCents(values.monthlyTarget);
+  const soldAmountCents = parseBrlCurrencyToCents(values.soldAmount);
+
   return {
-    monthlyTarget: parseCurrencyInput(values.monthlyTarget),
+    monthlyTarget: monthlyTargetCents === null ? Number.NaN : centsToReais(monthlyTargetCents),
     remainingBusinessDays: Number(values.remainingBusinessDays),
-    soldAmount: parseCurrencyInput(values.soldAmount),
+    soldAmount: soldAmountCents === null ? Number.NaN : centsToReais(soldAmountCents),
     totalBusinessDays: Number(values.totalBusinessDays),
   };
 }
@@ -82,15 +86,13 @@ export function GeneralGoalSettingsForm({ initialValues, onChange }: GeneralGoal
     <View style={styles.card}>
       <View style={styles.fieldGroup}>
         <AppText variant="label">Meta Mensal Total (R$)</AppText>
-        <AppTextInput
+        <BrlCurrencyInput
           accessibilityLabel="Meta mensal total em reais"
           error={errors.monthlyTarget}
-          inputMode="numeric"
-          keyboardType="number-pad"
-          placeholder="500.000"
+          placeholder="500.000,00"
           returnKeyType="next"
           value={values.monthlyTarget}
-          onChangeText={(value) => updateValue('monthlyTarget', formatCurrencyTextInput(value))}
+          onChangeText={(value) => updateValue('monthlyTarget', value)}
         />
       </View>
 
@@ -105,15 +107,13 @@ export function GeneralGoalSettingsForm({ initialValues, onChange }: GeneralGoal
 
       <View style={styles.fieldGroup}>
         <AppText variant="label">Total Vendido até o Momento (R$)</AppText>
-        <AppTextInput
+        <BrlCurrencyInput
           accessibilityLabel="Total vendido até o momento em reais"
           error={errors.soldAmount}
-          inputMode="numeric"
-          keyboardType="number-pad"
-          placeholder="120.000"
+          placeholder="120.000,00"
           returnKeyType="done"
           value={values.soldAmount}
-          onChangeText={(value) => updateValue('soldAmount', formatCurrencyTextInput(value))}
+          onChangeText={(value) => updateValue('soldAmount', value)}
           onSubmitEditing={handleSubmit}
         />
       </View>

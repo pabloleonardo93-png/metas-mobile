@@ -3,6 +3,7 @@ import type { Campaign } from '@/features/campaigns/types/campaign.types';
 export const campaignsMock = [
   {
     id: 'protetor-solar-la-roche',
+    targetAmountCents: 500_000,
     name: 'Protetor Solar La Roche',
     targetQuantity: 50,
     soldQuantity: 32,
@@ -12,6 +13,7 @@ export const campaignsMock = [
   },
   {
     id: 'vitamina-c-equaliv',
+    targetAmountCents: 300_000,
     name: 'Vitamina C Equaliv',
     targetQuantity: 30,
     soldQuantity: 24,
@@ -21,6 +23,7 @@ export const campaignsMock = [
   },
   {
     id: 'omega-3-equaliv',
+    targetAmountCents: 250_000,
     name: 'Ômega 3 Equaliv',
     targetQuantity: 25,
     soldQuantity: 15,
@@ -30,6 +33,7 @@ export const campaignsMock = [
   },
   {
     id: 'hidratacao-neutrogena',
+    targetAmountCents: 400_000,
     name: 'Hidratação Neutrogena',
     targetQuantity: 40,
     soldQuantity: 0,
@@ -39,6 +43,7 @@ export const campaignsMock = [
   },
   {
     id: 'repelente-exposis',
+    targetAmountCents: 200_000,
     name: 'Repelente Exposis',
     targetQuantity: 20,
     soldQuantity: 20,

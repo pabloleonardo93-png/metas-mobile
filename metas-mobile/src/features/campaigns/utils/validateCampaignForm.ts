@@ -3,9 +3,11 @@ import type {
   CampaignFormValues,
 } from '@/features/campaigns/types/campaign.types';
 import { parseBrazilianDate } from '@/features/campaigns/utils/campaignDates';
+import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
 
 export function validateCampaignForm(values: CampaignFormValues): CampaignFormErrors {
   const errors: CampaignFormErrors = {};
+  const targetAmountCents = parseBrlCurrencyToCents(values.targetAmount);
   const targetQuantity = Number(values.targetQuantity);
   const startDate = parseBrazilianDate(values.startDate);
   const endDate = parseBrazilianDate(values.endDate);
@@ -20,6 +22,14 @@ export function validateCampaignForm(values: CampaignFormValues): CampaignFormEr
     errors.targetQuantity = 'Use somente números inteiros.';
   } else if (targetQuantity <= 0) {
     errors.targetQuantity = 'A quantidade deve ser maior que zero.';
+  }
+
+  if (!values.targetAmount.trim()) {
+    errors.targetAmount = 'Informe o valor financeiro da meta.';
+  } else if (targetAmountCents === null) {
+    errors.targetAmount = 'Informe um valor monetário válido.';
+  } else if (targetAmountCents <= 0) {
+    errors.targetAmount = 'O valor da meta deve ser maior que zero.';
   }
 
   if (!values.startDate.trim()) {

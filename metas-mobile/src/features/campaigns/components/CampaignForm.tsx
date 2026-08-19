@@ -7,8 +7,9 @@ import {
   parseBrazilianDate,
 } from '@/features/campaigns/utils/campaignDates';
 import { validateCampaignForm } from '@/features/campaigns/utils/validateCampaignForm';
-import { AppButton, AppIcon, AppText, AppTextInput } from '@/shared/components';
+import { AppButton, AppIcon, AppText, AppTextInput, BrlCurrencyInput } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
+import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
 
 interface CampaignFormProps {
   initialValues: CampaignFormValues;
@@ -37,8 +38,9 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
 
     const startDate = parseBrazilianDate(values.startDate);
     const endDate = parseBrazilianDate(values.endDate);
+    const targetAmountCents = parseBrlCurrencyToCents(values.targetAmount);
 
-    if (!startDate || !endDate) {
+    if (!startDate || !endDate || targetAmountCents === null) {
       return;
     }
 
@@ -46,6 +48,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
       endDate,
       name: values.name.trim(),
       startDate,
+      targetAmountCents,
       targetQuantity: Number(values.targetQuantity),
     });
   }
@@ -77,6 +80,18 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
           returnKeyType="next"
           value={values.targetQuantity}
           onChangeText={(value) => updateValue('targetQuantity', value.replace(/\D/g, ''))}
+        />
+      </View>
+
+      <View style={styles.fieldGroup}>
+        <AppText variant="label">Valor da meta (R$)</AppText>
+        <BrlCurrencyInput
+          accessibilityLabel="Valor financeiro da meta da campanha"
+          error={submitted ? errors.targetAmount : undefined}
+          placeholder="5.000,00"
+          returnKeyType="next"
+          value={values.targetAmount}
+          onChangeText={(value) => updateValue('targetAmount', value)}
         />
       </View>
 

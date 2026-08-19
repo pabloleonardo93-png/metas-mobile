@@ -18,6 +18,7 @@ import { formatCampaignDate } from '@/features/campaigns/utils/campaignDates';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
 import { AppButton, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
+import { formatCentsForBrlInput } from '@/shared/utils/brlCurrency';
 
 interface CampaignFormScreenProps {
   mode: 'create' | 'edit';
@@ -27,6 +28,7 @@ const newCampaignInitialValues: CampaignFormValues = {
   endDate: '',
   name: '',
   startDate: '',
+  targetAmount: '',
   targetQuantity: '',
 };
 
@@ -48,6 +50,7 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
         endDate: formatCampaignDate(campaign.endDate),
         name: campaign.name,
         startDate: formatCampaignDate(campaign.startDate),
+        targetAmount: formatCentsForBrlInput(campaign.targetAmountCents),
         targetQuantity: String(campaign.targetQuantity),
       };
     }

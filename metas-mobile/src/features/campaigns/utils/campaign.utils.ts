@@ -11,6 +11,10 @@ function normalizeQuantity(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
+function normalizeMoneyCents(value: number): number {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
 function normalizeSearchText(value: string): string {
   return value
     .normalize('NFD')
@@ -63,6 +67,7 @@ export function normalizeCampaign(campaign: Campaign, todayIso = getTodayIso()):
     ...campaign,
     soldQuantity: normalizeQuantity(campaign.soldQuantity),
     status: resolveCampaignStatus(campaign, todayIso),
+    targetAmountCents: normalizeMoneyCents(campaign.targetAmountCents),
     targetQuantity: normalizeQuantity(campaign.targetQuantity),
   };
 }

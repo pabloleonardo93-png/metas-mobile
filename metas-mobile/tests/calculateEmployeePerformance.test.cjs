@@ -111,6 +111,7 @@ test('resolve contribuição coletiva sem criar meta individual de campanha', ()
   const campaign = {
     id: 'campanha-1',
     name: 'Produto em foco',
+    targetAmountCents: 500000,
     targetQuantity: 50,
     soldQuantity: 32,
     startDate: '2026-08-01',
