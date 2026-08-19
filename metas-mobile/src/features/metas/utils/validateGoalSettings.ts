@@ -10,8 +10,8 @@ export function validateGoalSettings(settings: GoalGeneralSettings): GoalGeneral
     errors.monthlyTarget = 'Informe uma meta mensal maior que zero.';
   }
 
-  if (!Number.isInteger(settings.remainingBusinessDays) || settings.remainingBusinessDays <= 0) {
-    errors.remainingBusinessDays = 'Informe os dias úteis restantes.';
+  if (!Number.isInteger(settings.remainingBusinessDays) || settings.remainingBusinessDays < 0) {
+    errors.remainingBusinessDays = 'Informe os dias úteis restantes sem valores negativos.';
   }
 
   if (!Number.isInteger(settings.totalBusinessDays) || settings.totalBusinessDays <= 0) {

@@ -33,6 +33,8 @@
     "src/shared/utils/goalCalculations.ts",
     "src/features/employees/services/employeeApiClient.ts",
     "src/features/employees/state/employeesState.ts",
-    "src/features/employees/utils/employeeApiError.ts"
+    "src/features/employees/utils/employeeApiError.ts",
+    "src/features/metas/services/goalConfigurationApiClient.ts",
+    "src/features/metas/utils/goalApiError.ts"
   ]
 }

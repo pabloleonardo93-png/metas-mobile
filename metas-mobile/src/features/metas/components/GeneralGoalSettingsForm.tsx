@@ -5,7 +5,9 @@ import { BusinessDaysFields } from '@/features/metas/components/BusinessDaysFiel
 import type {
   GoalGeneralSettings,
   GoalGeneralSettingsErrors,
+  GoalConfigurationSaveInput,
 } from '@/features/metas/types/goalSettings.types';
+import { getGoalApiErrorMessage } from '@/features/metas/utils/goalApiError';
 import { validateGoalSettings } from '@/features/metas/utils/validateGoalSettings';
 import { AppButton, AppText, BrlCurrencyInput } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
@@ -18,7 +20,9 @@ import {
 
 interface GeneralGoalSettingsFormProps {
   initialValues: GoalGeneralSettings;
+  isSaving: boolean;
   onChange: (settings: GoalGeneralSettings) => void;
+  onSave: (input: Omit<GoalConfigurationSaveInput, 'teamDistribution'>) => Promise<void>;
 }
 
 interface GoalGeneralSettingsFormValues {
@@ -49,12 +53,19 @@ function toSettings(values: GoalGeneralSettingsFormValues): GoalGeneralSettings 
   };
 }
 
-export function GeneralGoalSettingsForm({ initialValues, onChange }: GeneralGoalSettingsFormProps) {
+export function GeneralGoalSettingsForm({
+  initialValues,
+  isSaving,
+  onChange,
+  onSave,
+}: GeneralGoalSettingsFormProps) {
   const [values, setValues] = useState<GoalGeneralSettingsFormValues>(() =>
     toFormValues(initialValues),
   );
   const [errors, setErrors] = useState<GoalGeneralSettingsErrors>({});
-  const [savedSettings, setSavedSettings] = useState<GoalGeneralSettings | null>(null);
+  const [feedback, setFeedback] = useState<{ message: string; type: 'error' | 'success' } | null>(
+    null,
+  );
 
   function updateValue<Key extends keyof GoalGeneralSettingsFormValues>(
     key: Key,
@@ -64,22 +75,36 @@ export function GeneralGoalSettingsForm({ initialValues, onChange }: GeneralGoal
 
     setValues(nextValues);
     setErrors((currentErrors) => ({ ...currentErrors, [key]: undefined }));
-    setSavedSettings(null);
+    setFeedback(null);
     onChange(toSettings(nextValues));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const settings = toSettings(values);
     const validationErrors = validateGoalSettings(settings);
+    const monthlyTargetCents = parseBrlCurrencyToCents(values.monthlyTarget);
+    const soldAmountCents = parseBrlCurrencyToCents(values.soldAmount);
 
     setErrors(validationErrors);
 
     if (Object.keys(validationErrors).length > 0) {
-      setSavedSettings(null);
+      setFeedback(null);
       return;
     }
 
-    setSavedSettings(settings);
+    if (monthlyTargetCents === null || soldAmountCents === null) return;
+
+    try {
+      await onSave({
+        monthlyTargetCents,
+        remainingBusinessDays: settings.remainingBusinessDays,
+        soldAmountCents,
+        totalBusinessDays: settings.totalBusinessDays,
+      });
+      setFeedback({ message: 'Configuração salva com sucesso.', type: 'success' });
+    } catch (error: unknown) {
+      setFeedback({ message: getGoalApiErrorMessage(error), type: 'error' });
+    }
   }
 
   return (
@@ -114,17 +139,36 @@ export function GeneralGoalSettingsForm({ initialValues, onChange }: GeneralGoal
           returnKeyType="done"
           value={values.soldAmount}
           onChangeText={(value) => updateValue('soldAmount', value)}
-          onSubmitEditing={handleSubmit}
+          onSubmitEditing={() => void handleSubmit()}
         />
       </View>
 
-      <AppButton label="Salvar configuração" onPress={handleSubmit} />
+      <AppButton
+        label="Salvar configuração"
+        loading={isSaving}
+        onPress={() => void handleSubmit()}
+      />
 
-      {savedSettings ? (
-        <View accessibilityLiveRegion="polite" style={styles.confirmation}>
-          <View style={styles.confirmationDot} />
-          <AppText color="primary" style={styles.confirmationText} variant="caption">
-            Configuração salva localmente para demonstração.
+      {feedback ? (
+        <View
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.confirmation,
+            feedback.type === 'error' ? styles.errorFeedback : styles.successFeedback,
+          ]}
+        >
+          <View
+            style={[
+              styles.confirmationDot,
+              feedback.type === 'error' ? styles.errorDot : styles.successDot,
+            ]}
+          />
+          <AppText
+            color={feedback.type === 'error' ? 'error' : 'success'}
+            style={styles.confirmationText}
+            variant="caption"
+          >
+            {feedback.message}
           </AppText>
         </View>
       ) : null}
@@ -151,7 +195,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   confirmationDot: {
-    backgroundColor: colors.primary,
     borderRadius: radius.pill,
     height: 8,
     width: 8,
@@ -159,7 +202,19 @@ const styles = StyleSheet.create({
   confirmationText: {
     flex: 1,
   },
+  errorDot: {
+    backgroundColor: colors.error,
+  },
+  errorFeedback: {
+    backgroundColor: colors.primarySubtle,
+  },
   fieldGroup: {
     gap: spacing.sm,
+  },
+  successDot: {
+    backgroundColor: colors.success,
+  },
+  successFeedback: {
+    backgroundColor: colors.successSubtle,
   },
 });

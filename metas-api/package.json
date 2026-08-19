@@ -25,8 +25,8 @@
     "db:inspect:northflank": "tsx src/database/admin/inspectMigratedSchema.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "tsx --test tests/foundation.test.ts tests/database-context.test.ts tests/google-id-token-verifier.test.ts tests/auth-http.test.ts tests/employees-http.test.ts",
-    "test:integration": "tsx --test --test-concurrency=1 tests/postgresql.integration.test.ts tests/authentication.integration.test.ts tests/employees.integration.test.ts",
+    "test": "tsx --test tests/foundation.test.ts tests/database-context.test.ts tests/google-id-token-verifier.test.ts tests/auth-http.test.ts tests/employees-http.test.ts tests/goals-http.test.ts",
+    "test:integration": "tsx --test --test-concurrency=1 tests/postgresql.integration.test.ts tests/authentication.integration.test.ts tests/employees.integration.test.ts tests/goals.integration.test.ts",
     "test:integration:northflank": "tsx src/database/admin/validateNorthflank.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

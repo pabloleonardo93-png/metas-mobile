@@ -5,6 +5,25 @@ export interface GoalGeneralSettings {
   totalBusinessDays: number;
 }
 
+export interface GoalConfigurationSaveInput {
+  monthlyTargetCents: number;
+  remainingBusinessDays: number;
+  soldAmountCents: number;
+  teamDistribution: import('./teamDistribution.types').TeamDistribution[];
+  totalBusinessDays: number;
+}
+
+export interface PersistedGoalConfiguration {
+  id: string | null;
+  lockVersion: number | null;
+  month: string;
+  monthlyTargetCents: number;
+  remainingBusinessDays: number;
+  soldAmountCents: number;
+  teamDistribution: import('./teamDistribution.types').TeamDistribution[];
+  totalBusinessDays: number;
+}
+
 export type GoalStatus = 'CONCLUIDA' | 'EM_ANDAMENTO';
 
 export interface CurrentGoal extends GoalGeneralSettings {
