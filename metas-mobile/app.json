@@ -40,6 +40,12 @@
         "projectId": "a39781be-7b54-4e0e-89c3-da34ffe56469"
       }
     },
-    "owner": "pablo-leonardo-dev"
+    "owner": "pablo-leonardo-dev",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a39781be-7b54-4e0e-89c3-da34ffe56469"
+    }
   }
 }
