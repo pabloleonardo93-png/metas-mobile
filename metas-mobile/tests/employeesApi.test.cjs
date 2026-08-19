@@ -1,5 +1,19 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { test } = require('node:test');
+const Module = require('node:module');
+
+const buildRoot = path.resolve('node_modules/.cache/calculation-tests');
+const originalResolveFilename = Module._resolveFilename;
+
+Module._resolveFilename = function resolveProjectAlias(request, parent, isMain, options) {
+  const resolvedRequest = request.startsWith('@/')
+    ? path.join(buildRoot, 'src', request.slice(2))
+    : request;
+
+  return originalResolveFilename.call(this, resolvedRequest, parent, isMain, options);
+};
 
 const {
   EmployeeApiClient,
@@ -12,6 +26,14 @@ const {
 const {
   getEmployeeApiErrorMessage,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeApiError.js');
+const {
+  countActiveEmployees,
+  summarizeTeamByRole,
+} = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employee.utils.js');
+const {
+  buildManagerTeamPerformance,
+  calculateManagerDashboardMetrics,
+} = require('../node_modules/.cache/calculation-tests/src/features/dashboard/utils/calculateManagerDashboard.js');
 
 const responseEmployee = {
   email: 'ana@example.test',
@@ -137,4 +159,97 @@ test('upsert makes created and edited employees visible without reloading', () =
   assert.equal(updated.employees.length, 1);
   assert.equal(updated.employees[0].name, 'Ana Lima');
   assert.equal(updated.employees[0].status, 'INATIVO');
+});
+
+test('manager dashboard follows shared employee role and status mutations', () => {
+  const manager = {
+    email: 'manager@example.test',
+    id: '00000000-0000-4000-8000-000000000001',
+    joinedAt: '2026-08-01',
+    name: 'Manager One',
+    role: 'GESTOR',
+    status: 'ATIVO',
+  };
+  const attendant = {
+    ...responseEmployee,
+    joinedAt: responseEmployee.joinedOn,
+  };
+  delete attendant.joinedOn;
+
+  const loaded = employeesReducer(initialEmployeesState, {
+    employees: [manager, attendant],
+    type: 'loadSucceeded',
+  });
+  assert.equal(countActiveEmployees(loaded.employees), 2);
+  assert.deepEqual(summarizeTeamByRole(loaded.employees), {
+    BALCONISTA: 1,
+    CAIXA: 0,
+    FARMACEUTICO: 0,
+    GESTOR: 1,
+  });
+
+  const promoted = employeesReducer(loaded, {
+    employee: { ...attendant, role: 'GESTOR' },
+    type: 'upserted',
+  });
+  const promotedSummary = summarizeTeamByRole(promoted.employees);
+  assert.equal(countActiveEmployees(promoted.employees), 2);
+  assert.equal(promotedSummary.GESTOR, 2);
+  assert.equal(promotedSummary.BALCONISTA, 0);
+  assert.deepEqual(buildManagerTeamPerformance(promotedSummary), []);
+
+  const inactive = employeesReducer(promoted, {
+    employee: { ...attendant, role: 'GESTOR', status: 'INATIVO' },
+    type: 'upserted',
+  });
+  assert.equal(countActiveEmployees(inactive.employees), 1);
+  assert.equal(summarizeTeamByRole(inactive.employees).GESTOR, 1);
+  assert.equal(
+    calculateManagerDashboardMetrics(
+      {
+        monthlyTarget: 500000,
+        remainingBusinessDays: 13,
+        soldAmount: 250000.65,
+        totalBusinessDays: 31,
+      },
+      countActiveEmployees(inactive.employees),
+      0,
+    ).activeEmployees,
+    1,
+  );
+});
+
+test('runtime source does not contain the removed demonstration catalogs', () => {
+  const sourceRoot = path.resolve('src');
+  const sourceFiles = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(entryPath);
+      } else if (/\.(?:ts|tsx)$/u.test(entry.name)) {
+        sourceFiles.push(entryPath);
+      }
+    }
+  };
+  visit(sourceRoot);
+
+  assert.deepEqual(
+    sourceFiles.filter((file) => file.includes(`${path.sep}mocks${path.sep}`)),
+    [],
+  );
+
+  const runtimeSource = sourceFiles.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+  for (const value of [
+    'Ana Souza',
+    'Juliana Costa',
+    'Protetor Solar La Roche',
+    'Vitamina C Equaliv',
+    'Ômega 3 Equaliv',
+    'Hidratação Neutrogena',
+    'goalHistoryMock',
+    'managerDashboardMock',
+  ]) {
+    assert.equal(runtimeSource.includes(value), false, `runtime ainda contém: ${value}`);
+  }
 });

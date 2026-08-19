@@ -1,4 +1,3 @@
-import { useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
@@ -9,8 +8,6 @@ import { CurrentGoalDistribution } from '@/features/metas/components/CurrentGoal
 import { GoalHistoryList } from '@/features/metas/components/GoalHistoryList';
 import { GoalQuickSummary } from '@/features/metas/components/GoalQuickSummary';
 import { useGoals } from '@/features/metas/context/GoalsContext';
-import { goalHistoryMock } from '@/features/metas/mocks/goalHistory.mock';
-import type { GoalHistoryItem } from '@/features/metas/types/goalSettings.types';
 import { calculateCurrentGoalMetrics } from '@/features/metas/utils/calculateCurrentGoal';
 import { calculateDailyGoals } from '@/features/metas/utils/calculateDailyGoals';
 import { AppText, ScreenContainer } from '@/shared/components';
@@ -23,19 +20,6 @@ export function ManagerGoalsScreen() {
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
   const metrics = calculateCurrentGoalMetrics(currentGoal);
   const distributionResult = calculateDailyGoals(currentGoal, teamDistribution);
-  const historyItems = useMemo<GoalHistoryItem[]>(
-    () => [
-      {
-        id: currentGoal.id,
-        month: currentGoal.month,
-        sold: currentGoal.soldAmount,
-        status: currentGoal.status,
-        target: currentGoal.monthlyTarget,
-      },
-      ...goalHistoryMock,
-    ],
-    [currentGoal],
-  );
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
@@ -60,7 +44,7 @@ export function ManagerGoalsScreen() {
           result={distributionResult}
           onOpenFullCalculation={() => router.push(appRoutes.managerGoalSettings)}
         />
-        <GoalHistoryList items={historyItems} />
+        <GoalHistoryList items={[]} />
       </ScrollView>
 
       <ManagerBottomNavigation activeTab="goals" />

@@ -61,7 +61,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
           accessibilityLabel="Marca ou produto"
           autoCapitalize="words"
           error={submitted ? errors.name : undefined}
-          placeholder="Ex.: Protetor Solar La Roche"
+          placeholder="Ex.: Produto prioritário"
           returnKeyType="next"
           value={values.name}
           onChangeText={(value) => updateValue('name', value)}

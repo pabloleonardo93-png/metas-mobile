@@ -12,6 +12,7 @@ import { createEmployeeRouter } from './modules/employees/employee.routes.js';
 import type { EmployeeService } from './modules/employees/employee.types.js';
 import { createGoalRouter } from './modules/goals/goal.routes.js';
 import type { GoalService } from './modules/goals/goal.types.js';
+import type { RealtimePublisher } from './realtime/realtime.types.js';
 import { healthRouter } from './routes/health.routes.js';
 import { AppError } from './shared/errors/AppError.js';
 import { logger as defaultLogger, type Logger } from './shared/logging/logger.js';
@@ -23,6 +24,7 @@ export interface AppOptions {
   employeeService?: EmployeeService;
   goalService?: GoalService;
   logger?: Logger;
+  realtimePublisher?: RealtimePublisher;
   trustProxyHops?: number;
 }
 
@@ -67,6 +69,7 @@ export const createApp = (options: AppOptions = {}): express.Express => {
           authenticationService: options.authenticationService,
           employeeService: options.employeeService,
           logger,
+          ...(options.realtimePublisher ? { realtimePublisher: options.realtimePublisher } : {}),
         }),
       );
     }
@@ -77,6 +80,7 @@ export const createApp = (options: AppOptions = {}): express.Express => {
           authenticationService: options.authenticationService,
           goalService: options.goalService,
           logger,
+          ...(options.realtimePublisher ? { realtimePublisher: options.realtimePublisher } : {}),
         }),
       );
     }

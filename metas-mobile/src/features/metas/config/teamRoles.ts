@@ -1,6 +1,12 @@
 import type { TeamRole } from '@/features/metas/types/teamDistribution.types';
 import { USER_ROLE_LABELS } from '@/shared/config/userRoles';
 
+export const TEAM_ROLES = [
+  'BALCONISTA',
+  'FARMACEUTICO',
+  'CAIXA',
+] as const satisfies readonly TeamRole[];
+
 export const ROLE_WEIGHTS = {
   BALCONISTA: 1,
   FARMACEUTICO: 0.7,

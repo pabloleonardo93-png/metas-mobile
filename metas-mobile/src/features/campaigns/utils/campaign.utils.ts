@@ -2,17 +2,11 @@ import type {
   Campaign,
   CampaignFilter,
   CampaignMetrics,
-  CampaignStatus,
 } from '@/features/campaigns/types/campaign.types';
-import { getTodayIso, isValidIsoDate } from '@/features/campaigns/utils/campaignDates';
 import { calculateProgress } from '@/shared/utils/calculateProgress';
 
 function normalizeQuantity(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-}
-
-function normalizeMoneyCents(value: number): number {
-  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 function normalizeSearchText(value: string): string {
@@ -32,43 +26,6 @@ export function calculateCampaignMetrics(campaign: Campaign): CampaignMetrics {
     remainingQuantity: Math.max(targetQuantity - soldQuantity, 0),
     soldQuantity,
     targetQuantity,
-  };
-}
-
-export function resolveCampaignStatus(
-  campaign: Campaign,
-  todayIso = getTodayIso(),
-): CampaignStatus {
-  if (campaign.status === 'ENCERRADA') {
-    return 'ENCERRADA';
-  }
-
-  if (
-    !isValidIsoDate(campaign.startDate) ||
-    !isValidIsoDate(campaign.endDate) ||
-    !isValidIsoDate(todayIso)
-  ) {
-    return campaign.status;
-  }
-
-  if (todayIso < campaign.startDate) {
-    return 'AGENDADA';
-  }
-
-  if (todayIso > campaign.endDate) {
-    return 'ENCERRADA';
-  }
-
-  return 'ATIVA';
-}
-
-export function normalizeCampaign(campaign: Campaign, todayIso = getTodayIso()): Campaign {
-  return {
-    ...campaign,
-    soldQuantity: normalizeQuantity(campaign.soldQuantity),
-    status: resolveCampaignStatus(campaign, todayIso),
-    targetAmountCents: normalizeMoneyCents(campaign.targetAmountCents),
-    targetQuantity: normalizeQuantity(campaign.targetQuantity),
   };
 }
 

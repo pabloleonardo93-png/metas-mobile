@@ -46,4 +46,5 @@ export interface AuthenticationService {
   getMe(session: AuthenticatedSession): Promise<MeResult>;
   loginWithGoogle(idToken: string, metadata: LoginMetadata): Promise<LoginResult>;
   logout(session: AuthenticatedSession): Promise<void>;
+  refreshSession(session: AuthenticatedSession): Promise<AuthenticatedSession>;
 }

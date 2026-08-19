@@ -7,7 +7,10 @@ import type {
   GoalGeneralSettingsErrors,
   GoalConfigurationSaveInput,
 } from '@/features/metas/types/goalSettings.types';
-import { getGoalApiErrorMessage } from '@/features/metas/utils/goalApiError';
+import {
+  type GoalSaveFeedback,
+  saveGoalConfigurationWithFeedback,
+} from '@/features/metas/utils/saveGoalConfigurationFeedback';
 import { validateGoalSettings } from '@/features/metas/utils/validateGoalSettings';
 import { AppButton, AppText, BrlCurrencyInput } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
@@ -63,9 +66,7 @@ export function GeneralGoalSettingsForm({
     toFormValues(initialValues),
   );
   const [errors, setErrors] = useState<GoalGeneralSettingsErrors>({});
-  const [feedback, setFeedback] = useState<{ message: string; type: 'error' | 'success' } | null>(
-    null,
-  );
+  const [feedback, setFeedback] = useState<GoalSaveFeedback | null>(null);
 
   function updateValue<Key extends keyof GoalGeneralSettingsFormValues>(
     key: Key,
@@ -94,17 +95,16 @@ export function GeneralGoalSettingsForm({
 
     if (monthlyTargetCents === null || soldAmountCents === null) return;
 
-    try {
-      await onSave({
-        monthlyTargetCents,
-        remainingBusinessDays: settings.remainingBusinessDays,
-        soldAmountCents,
-        totalBusinessDays: settings.totalBusinessDays,
-      });
-      setFeedback({ message: 'Configuração salva com sucesso.', type: 'success' });
-    } catch (error: unknown) {
-      setFeedback({ message: getGoalApiErrorMessage(error), type: 'error' });
-    }
+    setFeedback(
+      await saveGoalConfigurationWithFeedback(() =>
+        onSave({
+          monthlyTargetCents,
+          remainingBusinessDays: settings.remainingBusinessDays,
+          soldAmountCents,
+          totalBusinessDays: settings.totalBusinessDays,
+        }),
+      ),
+    );
   }
 
   return (

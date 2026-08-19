@@ -27,6 +27,9 @@
     "src/features/auth/utils/authErrorMessage.ts",
     "src/features/auth/utils/authRouting.ts",
     "src/features/employees/types/employee.types.ts",
+    "src/features/employees/utils/employee.utils.ts",
+    "src/features/dashboard/types/managerDashboard.ts",
+    "src/features/dashboard/utils/calculateManagerDashboard.ts",
     "src/shared/types/userRole.ts",
     "src/shared/utils/brlCurrency.ts",
     "src/shared/utils/calculateProgress.ts",
@@ -35,6 +38,9 @@
     "src/features/employees/state/employeesState.ts",
     "src/features/employees/utils/employeeApiError.ts",
     "src/features/metas/services/goalConfigurationApiClient.ts",
-    "src/features/metas/utils/goalApiError.ts"
+    "src/features/metas/utils/goalApiError.ts",
+    "src/features/metas/utils/saveGoalConfigurationFeedback.ts",
+    "src/realtime/realtime.types.ts",
+    "src/realtime/realtimeClient.ts"
   ]
 }

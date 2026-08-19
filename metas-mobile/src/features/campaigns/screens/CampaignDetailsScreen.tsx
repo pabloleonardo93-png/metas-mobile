@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Alert, Platform, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { appRoutes } from '@/config/routes';
 import { CampaignStatusBadge } from '@/features/campaigns/components/CampaignStatusBadge';
@@ -27,7 +27,7 @@ export function CampaignDetailsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
-  const { campaigns, endCampaign } = useCampaigns();
+  const { campaigns } = useCampaigns();
   const campaignId = getCampaignId(params.campaignId);
   const campaign = campaigns.find((item) => item.id === campaignId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
@@ -52,27 +52,6 @@ export function CampaignDetailsScreen() {
   }
 
   const metrics = calculateCampaignMetrics(campaign);
-
-  function confirmEndCampaign() {
-    const finish = () => {
-      endCampaign(campaignId);
-      Alert.alert('Campanha encerrada', 'A campanha foi mantida no histórico da sessão.');
-    };
-
-    if (Platform.OS === 'web') {
-      finish();
-      return;
-    }
-
-    Alert.alert(
-      'Encerrar campanha?',
-      'A campanha permanecerá disponível no histórico e não será excluída.',
-      [
-        { style: 'cancel', text: 'Cancelar' },
-        { style: 'destructive', text: 'Encerrar', onPress: finish },
-      ],
-    );
-  }
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
@@ -146,9 +125,6 @@ export function CampaignDetailsScreen() {
             leftIcon={<AppIcon color={colors.onPrimary} name="edit" size={20} />}
             onPress={() => router.push(appRoutes.managerEditCampaign(campaign.id))}
           />
-          {campaign.status !== 'ENCERRADA' ? (
-            <AppButton label="Encerrar campanha" variant="secondary" onPress={confirmEndCampaign} />
-          ) : null}
         </View>
       </ScrollView>
 

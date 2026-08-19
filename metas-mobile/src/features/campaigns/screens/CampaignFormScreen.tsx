@@ -40,7 +40,7 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
-  const { campaigns, createCampaign, updateCampaign } = useCampaigns();
+  const { campaigns } = useCampaigns();
   const campaignId = getCampaignId(params.campaignId);
   const campaign = campaigns.find((item) => item.id === campaignId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
@@ -75,17 +75,11 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
     );
   }
 
-  function handleSubmit(input: CampaignInput) {
-    if (mode === 'edit' && campaign) {
-      updateCampaign(campaign.id, input);
-      Alert.alert('Campanha atualizada', 'As alterações foram salvas localmente nesta sessão.');
-      router.replace(appRoutes.managerCampaignDetails(campaign.id));
-      return;
-    }
-
-    const newCampaign = createCampaign(input);
-    Alert.alert('Campanha criada', 'A campanha foi salva localmente para demonstração.');
-    router.replace(appRoutes.managerCampaignDetails(newCampaign.id));
+  function handleSubmit(_input: CampaignInput) {
+    Alert.alert(
+      'Recurso indisponível',
+      'O cadastro de campanhas será habilitado quando a integração com a API estiver disponível.',
+    );
   }
 
   const title = mode === 'create' ? 'Nova campanha' : 'Editar campanha';

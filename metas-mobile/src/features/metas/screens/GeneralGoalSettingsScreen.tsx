@@ -23,7 +23,6 @@ import { colors, spacing } from '@/shared/theme';
 
 export function GeneralGoalSettingsScreen() {
   const {
-    configurationVersionKey,
     currentGoal,
     errorMessage,
     isLoading,
@@ -100,7 +99,6 @@ export function GeneralGoalSettingsScreen() {
             ) : (
               <>
                 <GeneralGoalSettingsForm
-                  key={configurationVersionKey}
                   initialValues={currentGoal}
                   isSaving={isSaving}
                   onChange={handleSettingsChange}

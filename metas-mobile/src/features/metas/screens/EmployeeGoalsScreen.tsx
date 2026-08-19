@@ -7,7 +7,6 @@ import { EmployeeBottomNavigation } from '@/features/dashboard/components/Employ
 import { EmployeeCampaignsSection } from '@/features/dashboard/components/EmployeeCampaignsSection';
 import { EmployeeFinancialGoalCard } from '@/features/metas/components/EmployeeFinancialGoalCard';
 import { useEmployeeGoal } from '@/features/metas/hooks/useEmployeeGoal';
-import { employeeCampaignContributionsMock } from '@/features/results/mocks/employeePerformance.mock';
 import { AppScreenHeader, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 
@@ -38,10 +37,7 @@ export function EmployeeGoalsScreen() {
           statusMessage={goalStatusMessage}
         />
 
-        <EmployeeCampaignsSection
-          campaigns={activeCampaigns}
-          contributions={employeeCampaignContributionsMock}
-        />
+        <EmployeeCampaignsSection campaigns={activeCampaigns} contributions={[]} />
       </ScrollView>
 
       <EmployeeBottomNavigation activeTab="goals" />

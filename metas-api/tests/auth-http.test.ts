@@ -59,6 +59,10 @@ class FakeAuthenticationService implements AuthenticationService {
     this.logoutCalled = true;
     return Promise.resolve();
   }
+
+  public refreshSession(currentSession: AuthenticatedSession): Promise<AuthenticatedSession> {
+    return Promise.resolve(currentSession);
+  }
 }
 
 const logEntries: Array<{ context?: LogContext; event: string }> = [];

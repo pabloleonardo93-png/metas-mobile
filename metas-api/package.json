@@ -25,7 +25,7 @@
     "db:inspect:northflank": "tsx src/database/admin/inspectMigratedSchema.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "tsx --test tests/foundation.test.ts tests/database-context.test.ts tests/google-id-token-verifier.test.ts tests/auth-http.test.ts tests/employees-http.test.ts tests/goals-http.test.ts",
+    "test": "tsx --test tests/foundation.test.ts tests/database-context.test.ts tests/google-id-token-verifier.test.ts tests/auth-http.test.ts tests/employees-http.test.ts tests/goals-http.test.ts tests/realtime.test.ts",
     "test:integration": "tsx --test --test-concurrency=1 tests/postgresql.integration.test.ts tests/authentication.integration.test.ts tests/employees.integration.test.ts tests/goals.integration.test.ts",
     "test:integration:northflank": "tsx src/database/admin/validateNorthflank.ts",
     "format": "prettier --write .",
@@ -42,6 +42,7 @@
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.8",
     "umzug": "^3.8.3",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -50,6 +51,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.2.0",
     "@types/supertest": "^7.2.1",
+    "@types/ws": "^8.18.1",
     "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",

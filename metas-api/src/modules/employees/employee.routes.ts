@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { AppError } from '../../shared/errors/AppError.js';
 import type { Logger } from '../../shared/logging/logger.js';
+import { noopRealtimePublisher, type RealtimePublisher } from '../../realtime/realtime.types.js';
 import { createAuthenticateSession } from '../auth/authenticateSession.js';
 import type { AuthenticatedSession, AuthenticationService } from '../auth/auth.types.js';
 import type { EmployeeService } from './employee.types.js';
@@ -31,6 +32,7 @@ interface EmployeeRouterOptions {
   authenticationService: AuthenticationService;
   employeeService: EmployeeService;
   logger: Logger;
+  realtimePublisher?: RealtimePublisher;
 }
 
 const asyncHandler =
@@ -60,6 +62,7 @@ export const createEmployeeRouter = ({
   authenticationService,
   employeeService,
   logger,
+  realtimePublisher = noopRealtimePublisher,
 }: EmployeeRouterOptions): Router => {
   const router = Router();
   const authenticateSession = createAuthenticateSession(authenticationService);
@@ -80,8 +83,10 @@ export const createEmployeeRouter = ({
       if (!parsed.success) {
         throw new AppError(422, 'INVALID_INPUT', 'Os dados do funcionário são inválidos.');
       }
-      const employee = await employeeService.create(requireSession(request), parsed.data);
+      const session = requireSession(request);
+      const employee = await employeeService.create(session, parsed.data);
       logger.info('EMPLOYEE_CREATED', { employeeId: employee.id, requestId: request.requestId });
+      realtimePublisher.publish(session.storeId, 'employees.changed');
       response.status(201).json(employee);
     }),
   );
@@ -102,12 +107,10 @@ export const createEmployeeRouter = ({
       if (!parsed.success) {
         throw new AppError(422, 'INVALID_INPUT', 'Os dados do funcionário são inválidos.');
       }
-      const employee = await employeeService.update(
-        requireSession(request),
-        parseEmployeeId(request),
-        parsed.data,
-      );
+      const session = requireSession(request);
+      const employee = await employeeService.update(session, parseEmployeeId(request), parsed.data);
       logger.info('EMPLOYEE_UPDATED', { employeeId: employee.id, requestId: request.requestId });
+      realtimePublisher.publish(session.storeId, 'employees.changed');
       response.status(200).json(employee);
     }),
   );
@@ -119,8 +122,9 @@ export const createEmployeeRouter = ({
       if (!parsed.success) {
         throw new AppError(422, 'INVALID_INPUT', 'O status informado é inválido.');
       }
+      const session = requireSession(request);
       const employee = await employeeService.setStatus(
-        requireSession(request),
+        session,
         parseEmployeeId(request),
         parsed.data.status,
       );
@@ -129,6 +133,7 @@ export const createEmployeeRouter = ({
         requestId: request.requestId,
         status: employee.status,
       });
+      realtimePublisher.publish(session.storeId, 'employees.changed');
       response.status(200).json(employee);
     }),
   );

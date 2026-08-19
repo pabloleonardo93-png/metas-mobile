@@ -19,6 +19,26 @@ export function sanitizeBrlCurrencyInput(value: string): string {
   return formatCentsForBrlInput(Number(cents));
 }
 
+export function getBrlCurrencyValueAfterBackspace(value: string): string {
+  const cents = parseBrlCurrencyToCents(value);
+  if (cents === null || cents === 0) {
+    return formatCentsForBrlInput(0);
+  }
+
+  return formatCentsForBrlInput(Math.floor(cents / 10));
+}
+
+export function shouldPreserveBrlZeroDuringDeletion(
+  currentValue: string,
+  nextValue: string,
+): boolean {
+  return (
+    nextValue.length < currentValue.length &&
+    parseBrlCurrencyToCents(currentValue) === 0 &&
+    (nextValue.length === 0 || parseBrlCurrencyToCents(nextValue) === 0)
+  );
+}
+
 export function parseBrlCurrencyToCents(value: string): number | null {
   if (value.includes('-')) {
     return null;

@@ -43,10 +43,16 @@ export function countActiveEmployees(employees: readonly Employee[]): number {
 
 export function summarizeTeamByRole(employees: readonly Employee[]): TeamRoleSummary {
   return employees.reduce<TeamRoleSummary>(
-    (summary, employee) => ({
-      ...summary,
-      [employee.role]: summary[employee.role] + 1,
-    }),
+    (summary, employee) => {
+      if (employee.status === 'INATIVO') {
+        return summary;
+      }
+
+      return {
+        ...summary,
+        [employee.role]: summary[employee.role] + 1,
+      };
+    },
     {
       GESTOR: 0,
       BALCONISTA: 0,

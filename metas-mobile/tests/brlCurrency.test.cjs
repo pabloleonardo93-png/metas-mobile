@@ -17,8 +17,10 @@ Module._resolveFilename = function resolveProjectAlias(request, parent, isMain, 
 const {
   formatCentsAsBrl,
   formatCentsForBrlInput,
+  getBrlCurrencyValueAfterBackspace,
   parseBrlCurrencyToCents,
   sanitizeBrlCurrencyInput,
+  shouldPreserveBrlZeroDuringDeletion,
 } = require(path.join(buildRoot, 'src/shared/utils/brlCurrency.js'));
 const { validateCampaignForm } = require(
   path.join(buildRoot, 'src/features/campaigns/utils/validateCampaignForm.js'),
@@ -57,9 +59,30 @@ test('backspace desloca os centavos no sentido inverso', () => {
   let currentValue = '2.234,56';
 
   for (const expectedValue of expectedValues) {
-    currentValue = sanitizeBrlCurrencyInput(currentValue.slice(0, -1));
+    currentValue = getBrlCurrencyValueAfterBackspace(currentValue);
     assert.equal(currentValue, expectedValue);
   }
+});
+
+test('backspace em zero e um no-op visual estavel', () => {
+  assert.equal(getBrlCurrencyValueAfterBackspace('0,05'), '0,00');
+
+  let currentValue = '0,00';
+  for (let index = 0; index < 10; index += 1) {
+    currentValue = getBrlCurrencyValueAfterBackspace(currentValue);
+    assert.equal(currentValue, '0,00');
+  }
+
+  assert.equal(shouldPreserveBrlZeroDuringDeletion('0,00', '0,0'), true);
+  assert.equal(shouldPreserveBrlZeroDuringDeletion('0,00', '0,'), true);
+  assert.equal(shouldPreserveBrlZeroDuringDeletion('0,00', ''), true);
+});
+
+test('permite digitar novamente depois de apagar ate zero', () => {
+  const zeroValue = getBrlCurrencyValueAfterBackspace('0,05');
+  assert.equal(sanitizeBrlCurrencyInput(`${zeroValue}2`), '0,02');
+  assert.equal(sanitizeBrlCurrencyInput(`${zeroValue}22`), '0,22');
+  assert.equal(sanitizeBrlCurrencyInput(`${zeroValue}223`), '2,23');
 });
 
 test('aceita colagem brasileira e sanitiza caracteres extras', () => {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { AppError } from '../../shared/errors/AppError.js';
 import type { Logger } from '../../shared/logging/logger.js';
+import { noopRealtimePublisher, type RealtimePublisher } from '../../realtime/realtime.types.js';
 import { createAuthenticateSession } from '../auth/authenticateSession.js';
 import type { AuthenticatedSession, AuthenticationService } from '../auth/auth.types.js';
 import type { GoalService } from './goal.types.js';
@@ -41,6 +42,7 @@ interface GoalRouterOptions {
   authenticationService: AuthenticationService;
   goalService: GoalService;
   logger: Logger;
+  realtimePublisher?: RealtimePublisher;
 }
 
 const asyncHandler =
@@ -62,6 +64,7 @@ export const createGoalRouter = ({
   authenticationService,
   goalService,
   logger,
+  realtimePublisher = noopRealtimePublisher,
 }: GoalRouterOptions): Router => {
   const router = Router();
   router.use(createAuthenticateSession(authenticationService));
@@ -80,14 +83,13 @@ export const createGoalRouter = ({
       if (!parsed.success) {
         throw new AppError(422, 'INVALID_INPUT', 'Os dados da configuração são inválidos.');
       }
-      const configuration = await goalService.saveConfiguration(
-        requireSession(request),
-        parsed.data,
-      );
+      const session = requireSession(request);
+      const configuration = await goalService.saveConfiguration(session, parsed.data);
       logger.info('GOAL_CONFIGURATION_SAVED', {
         goalId: configuration.id,
         requestId: request.requestId,
       });
+      realtimePublisher.publish(session.storeId, 'goal.configuration.changed');
       response.status(200).json(configuration);
     }),
   );

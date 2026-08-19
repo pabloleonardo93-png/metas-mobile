@@ -5,9 +5,8 @@ import { AuthContext, type AuthContextValue } from '@/features/auth/context/Auth
 import { googleSignInGateway } from '@/features/auth/google/googleSignIn';
 import { AuthSessionController } from '@/features/auth/services/authSessionController';
 import { sessionTokenStorage } from '@/features/auth/storage/sessionTokenStorage';
-import type { AuthStatus, AuthUser, DemoArea } from '@/features/auth/types/auth.types';
+import type { AuthStatus, AuthUser } from '@/features/auth/types/auth.types';
 import { getLoginErrorMessage } from '@/features/auth/utils/authErrorMessage';
-import { currentEmployeeMock, currentManagerMock } from '@/features/employees/mocks/employees.mock';
 import { setUnauthorizedHandler } from '@/shared/api/apiClient';
 
 const sessionController = new AuthSessionController(
@@ -15,18 +14,6 @@ const sessionController = new AuthSessionController(
   sessionTokenStorage,
   googleSignInGateway,
 );
-
-function toDemoUser(area: DemoArea): AuthUser {
-  const employee = area === 'manager' ? currentManagerMock : currentEmployeeMock;
-  return {
-    email: employee.email,
-    id: employee.id,
-    joinedOn: employee.joinedAt,
-    name: employee.name,
-    role: employee.role,
-    status: employee.status,
-  };
-}
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>('restoring');
@@ -123,19 +110,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return () => setUnauthorizedHandler(null);
   }, [clearLocalSession]);
 
-  const enterDemo = useCallback((area: DemoArea) => {
-    if (!__DEV__) {
-      return;
-    }
-    setUser(toDemoUser(area));
-    setStatus('authenticated');
-    setErrorMessage(null);
-  }, []);
-
   const value = useMemo<AuthContextValue>(
     () => ({
       clearLocalSession,
-      enterDemo,
       errorMessage,
       isAuthenticating,
       loginWithGoogle,
@@ -146,7 +123,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }),
     [
       clearLocalSession,
-      enterDemo,
       errorMessage,
       isAuthenticating,
       loginWithGoogle,

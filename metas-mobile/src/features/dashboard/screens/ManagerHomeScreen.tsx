@@ -17,8 +17,15 @@ import { ManagerQuickSummary } from '@/features/dashboard/components/ManagerQuic
 import { PriorityProducts } from '@/features/dashboard/components/PriorityProducts';
 import { StoreGoalCard } from '@/features/dashboard/components/StoreGoalCard';
 import { TeamPerformance } from '@/features/dashboard/components/TeamPerformance';
-import { managerDashboardMock } from '@/features/dashboard/mocks/managerDashboard.mock';
-import { calculateManagerDashboardMetrics } from '@/features/dashboard/utils/calculateManagerDashboard';
+import {
+  buildManagerTeamPerformance,
+  calculateManagerDashboardMetrics,
+} from '@/features/dashboard/utils/calculateManagerDashboard';
+import { useEmployees } from '@/features/employees/context/EmployeesContext';
+import {
+  countActiveEmployees,
+  summarizeTeamByRole,
+} from '@/features/employees/utils/employee.utils';
 import { useGoals } from '@/features/metas/context/GoalsContext';
 import { ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
@@ -35,20 +42,16 @@ export function ManagerHomeScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { campaigns } = useCampaigns();
-  const { currentGoal, teamDistribution } = useGoals();
+  const { employees } = useEmployees();
+  const { currentGoal } = useGoals();
   const activeCampaigns = useMemo(() => selectActiveCampaigns(campaigns), [campaigns]);
-  const teamPerformance = useMemo(
-    () =>
-      managerDashboardMock.team.map((item) => ({
-        ...item,
-        quantity: teamDistribution.find((role) => role.role === item.role)?.quantity ?? 0,
-      })),
-    [teamDistribution],
-  );
+  const activeEmployees = useMemo(() => countActiveEmployees(employees), [employees]);
+  const teamSummary = useMemo(() => summarizeTeamByRole(employees), [employees]);
+  const teamPerformance = useMemo(() => buildManagerTeamPerformance(teamSummary), [teamSummary]);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
   const metrics = calculateManagerDashboardMetrics(
     currentGoal,
-    teamPerformance,
+    activeEmployees,
     activeCampaigns.length,
   );
 
@@ -71,7 +74,7 @@ export function ManagerHomeScreen() {
           campaigns={activeCampaigns}
           onSeeAll={() => router.push(appRoutes.managerCampaigns)}
         />
-        <EmployeesNearGoal employees={managerDashboardMock.employeesNearGoal} />
+        <EmployeesNearGoal />
         <ManagementShortcuts onOpen={handleShortcutPress} />
       </ScrollView>
 

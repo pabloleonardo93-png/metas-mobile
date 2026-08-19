@@ -20,5 +20,3 @@ export interface GoogleLoginResponse {
 }
 
 export type AuthStatus = 'authenticated' | 'restore-error' | 'restoring' | 'unauthenticated';
-
-export type DemoArea = 'employee' | 'manager';

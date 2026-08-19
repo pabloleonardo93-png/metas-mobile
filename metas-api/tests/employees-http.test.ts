@@ -18,6 +18,7 @@ import type {
 } from '../src/modules/employees/employee.types.js';
 import { AppError } from '../src/shared/errors/AppError.js';
 import type { Logger } from '../src/shared/logging/logger.js';
+import type { RealtimeEventType, RealtimePublisher } from '../src/realtime/realtime.types.js';
 
 const managerSession: AuthenticatedSession = {
   employeeId: '018f47a1-3d11-7c14-a8bf-0242ac120003',
@@ -61,6 +62,10 @@ class FakeAuthenticationService implements AuthenticationService {
 
   logout(): Promise<void> {
     throw new Error('Not used');
+  }
+
+  refreshSession(session: AuthenticatedSession): Promise<AuthenticatedSession> {
+    return Promise.resolve(session);
   }
 }
 
@@ -120,6 +125,14 @@ class FakeEmployeeService implements EmployeeService {
 
 const silentLogger: Logger = { error: () => undefined, info: () => undefined };
 
+class RecordingRealtimePublisher implements RealtimePublisher {
+  readonly events: Array<{ storeId: string; type: RealtimeEventType }> = [];
+
+  publish(storeId: string, type: RealtimeEventType): void {
+    this.events.push({ storeId, type });
+  }
+}
+
 const parseJson = <Result extends object>(text: string): Result => {
   const value: unknown = JSON.parse(text);
   assert.equal(typeof value, 'object');
@@ -129,13 +142,16 @@ const parseJson = <Result extends object>(text: string): Result => {
 
 const createTestApp = () => {
   const employeeService = new FakeEmployeeService();
+  const realtimePublisher = new RecordingRealtimePublisher();
   return {
     app: createApp({
       authenticationService: new FakeAuthenticationService(),
       employeeService,
       logger: silentLogger,
+      realtimePublisher,
     }),
     employeeService,
+    realtimePublisher,
   };
 };
 
@@ -154,7 +170,7 @@ await test('manager lists employees and fetches details', async () => {
 });
 
 await test('manager creates, edits and changes employee status', async () => {
-  const { app } = createTestApp();
+  const { app, realtimePublisher } = createTestApp();
   const input: EmployeeMutationInput = {
     email: 'carlos@example.test',
     joinedOn: '2026-08-13',
@@ -184,6 +200,11 @@ await test('manager creates, edits and changes employee status', async () => {
     .send({ status: 'INATIVO' })
     .expect(200);
   assert.equal(parseJson<EmployeeDto>(inactive.text).status, 'INATIVO');
+  assert.deepEqual(realtimePublisher.events, [
+    { storeId: managerSession.storeId, type: 'employees.changed' },
+    { storeId: managerSession.storeId, type: 'employees.changed' },
+    { storeId: managerSession.storeId, type: 'employees.changed' },
+  ]);
 });
 
 await test('authentication and manager role are required', async () => {
@@ -196,7 +217,7 @@ await test('authentication and manager role are required', async () => {
 });
 
 await test('strict validation rejects invalid and unknown input', async () => {
-  const { app } = createTestApp();
+  const { app, realtimePublisher } = createTestApp();
   const response = await request(app)
     .post('/v1/manager/employees')
     .set(authorization)
@@ -210,4 +231,31 @@ await test('strict validation rejects invalid and unknown input', async () => {
     })
     .expect(422);
   assert.equal(parseJson<{ code: string }>(response.text).code, 'INVALID_INPUT');
+  assert.deepEqual(realtimePublisher.events, []);
+});
+
+await test('failed employee mutations do not publish realtime invalidations', async () => {
+  const employeeService = new FakeEmployeeService();
+  employeeService.create = () =>
+    Promise.reject(new AppError(409, 'EMPLOYEE_ALREADY_EXISTS', 'Employee already exists.'));
+  const realtimePublisher = new RecordingRealtimePublisher();
+  const app = createApp({
+    authenticationService: new FakeAuthenticationService(),
+    employeeService,
+    logger: silentLogger,
+    realtimePublisher,
+  });
+
+  await request(app)
+    .post('/v1/manager/employees')
+    .set(authorization)
+    .send({
+      email: 'duplicate@example.test',
+      joinedOn: '2026-08-13',
+      name: 'Duplicate Employee',
+      role: 'CAIXA',
+      status: 'ATIVO',
+    })
+    .expect(409);
+  assert.deepEqual(realtimePublisher.events, []);
 });

@@ -23,6 +23,13 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
       />
 
       <View style={styles.card}>
+        {campaigns.length === 0 ? (
+          <View style={styles.emptyState}>
+            <AppText color="textMuted" variant="bodyMedium">
+              Nenhuma campanha ativa
+            </AppText>
+          </View>
+        ) : null}
         {campaigns.map((campaign, index) => {
           const metrics = calculateCampaignMetrics(campaign);
 
@@ -67,6 +74,9 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.xs,
     minWidth: 0,
+  },
+  emptyState: {
+    padding: spacing.md,
   },
   row: {
     gap: spacing.md,

@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 
-import type { AuthStatus, AuthUser, DemoArea } from '@/features/auth/types/auth.types';
+import type { AuthStatus, AuthUser } from '@/features/auth/types/auth.types';
 import type { EmployeeRole } from '@/shared/types/userRole';
 
 export interface AuthContextValue {
@@ -9,7 +9,6 @@ export interface AuthContextValue {
   status: AuthStatus;
   user: AuthUser | null;
   clearLocalSession(): Promise<void>;
-  enterDemo(area: DemoArea): void;
   loginWithGoogle(): Promise<void>;
   logout(): Promise<void>;
   retryRestore(): Promise<void>;

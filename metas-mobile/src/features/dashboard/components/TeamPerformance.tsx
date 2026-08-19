@@ -1,10 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 
 import { DashboardSectionHeader } from '@/features/dashboard/components/DashboardSectionHeader';
-import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar';
 import type { ManagerTeamPerformance } from '@/features/dashboard/types/managerDashboard';
-import { calculateProgress } from '@/features/dashboard/utils/calculateProgress';
-import { formatPercentage } from '@/features/dashboard/utils/formatters';
 import { TEAM_ROLE_LABELS } from '@/features/metas/config/teamRoles';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
@@ -22,32 +19,29 @@ export function TeamPerformance({ team }: TeamPerformanceProps) {
     <View style={styles.section}>
       <DashboardSectionHeader title="Desempenho por equipe" />
 
-      <View style={styles.card}>
-        {team.map((item, index) => {
-          const progress = calculateProgress(item.progress, 100);
-
-          return (
+      {team.length > 0 ? (
+        <View style={styles.card}>
+          {team.map((item, index) => (
             <View key={item.role} style={[styles.row, index > 0 && styles.rowWithDivider]}>
-              <View style={styles.rowHeader}>
-                <View style={styles.copy}>
-                  <AppText variant="bodyMedium">{TEAM_ROLE_LABELS[item.role].plural}</AppText>
-                  <AppText color="textMuted" variant="caption">
-                    {formatEmployeeCount(item.quantity)}
-                  </AppText>
-                </View>
-                <AppText color="primary" variant="bodyMedium">
-                  {formatPercentage(progress, 0)}
+              <View style={styles.copy}>
+                <AppText variant="bodyMedium">{TEAM_ROLE_LABELS[item.role].plural}</AppText>
+                <AppText color="textMuted" variant="caption">
+                  {formatEmployeeCount(item.quantity)}
                 </AppText>
               </View>
-
-              <GoalProgressBar
-                label={`Desempenho de ${TEAM_ROLE_LABELS[item.role].plural}: ${formatPercentage(progress, 0)}`}
-                progress={progress}
-              />
+              <AppText color="textMuted" variant="caption">
+                Desempenho ainda nÃ£o disponÃ­vel.
+              </AppText>
             </View>
-          );
-        })}
-      </View>
+          ))}
+        </View>
+      ) : (
+        <View style={styles.emptyState}>
+          <AppText color="textMuted" variant="bodyMedium">
+            Nenhum dado de desempenho disponível
+          </AppText>
+        </View>
+      )}
     </View>
   );
 }
@@ -65,15 +59,17 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.xs,
   },
+  emptyState: {
+    ...shadows.panel,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
   row: {
     gap: spacing.md,
     padding: spacing.md,
-  },
-  rowHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'space-between',
   },
   rowWithDivider: {
     borderTopColor: colors.border,

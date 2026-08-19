@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
 } from 'react';
 
 import { useAuth } from '@/features/auth/context/AuthContext';
@@ -17,6 +18,7 @@ import type {
   EmployeeStatus,
 } from '@/features/employees/types/employee.types';
 import { getEmployeeApiErrorMessage } from '@/features/employees/utils/employeeApiError';
+import { useRealtime } from '@/realtime/RealtimeContext';
 
 interface EmployeesContextValue {
   addEmployee(input: EmployeeInput): Promise<Employee>;
@@ -32,22 +34,45 @@ const EmployeesContext = createContext<EmployeesContextValue | null>(null);
 
 export function EmployeesProvider({ children }: PropsWithChildren) {
   const { status: authStatus, user } = useAuth();
+  const { subscribe } = useRealtime();
   const [state, dispatch] = useReducer(employeesReducer, initialEmployeesState);
+  const loadPromiseRef = useRef<Promise<void> | null>(null);
 
-  const refreshEmployees = useCallback(async () => {
-    dispatch({ type: 'loadStarted' });
-    try {
-      dispatch({ type: 'loadSucceeded', employees: await employeesApi.list() });
-    } catch (error: unknown) {
-      dispatch({ type: 'loadFailed', errorMessage: getEmployeeApiErrorMessage(error) });
+  const loadEmployees = useCallback((showLoading: boolean): Promise<void> => {
+    if (loadPromiseRef.current) {
+      return loadPromiseRef.current;
     }
+
+    if (showLoading) {
+      dispatch({ type: 'loadStarted' });
+    }
+    const request = employeesApi
+      .list()
+      .then((employees) => dispatch({ type: 'loadSucceeded', employees }))
+      .catch((error: unknown) => {
+        dispatch({ type: 'loadFailed', errorMessage: getEmployeeApiErrorMessage(error) });
+      })
+      .finally(() => {
+        loadPromiseRef.current = null;
+      });
+    loadPromiseRef.current = request;
+    return request;
   }, []);
+
+  const refreshEmployees = useCallback(() => loadEmployees(true), [loadEmployees]);
 
   useEffect(() => {
     if (authStatus === 'authenticated' && user?.role === 'GESTOR') {
       void refreshEmployees();
     }
   }, [authStatus, refreshEmployees, user?.role]);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || user?.role !== 'GESTOR') {
+      return undefined;
+    }
+    return subscribe('employees.changed', () => loadEmployees(false));
+  }, [authStatus, loadEmployees, subscribe, user?.role]);
 
   const addEmployee = useCallback(async (input: EmployeeInput): Promise<Employee> => {
     const employee = await employeesApi.create(input);

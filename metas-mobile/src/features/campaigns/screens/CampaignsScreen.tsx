@@ -10,7 +10,7 @@ import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
 import type { CampaignFilter } from '@/features/campaigns/types/campaign.types';
 import { countActiveCampaigns, filterCampaigns } from '@/features/campaigns/utils/campaign.utils';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
-import { AppButton, AppIcon, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
+import { AppIcon, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 
 export function CampaignsScreen() {
@@ -46,15 +46,8 @@ export function CampaignsScreen() {
             <AppText color="textMuted" style={styles.emptyText} variant="caption">
               {hasCampaigns
                 ? 'Ajuste a busca ou selecione outro status.'
-                : 'Crie uma campanha para acompanhar os produtos que precisam de maior foco.'}
+                : 'As campanhas reais da loja aparecerão aqui quando a integração estiver disponível.'}
             </AppText>
-            {!hasCampaigns ? (
-              <AppButton
-                label="Criar campanha"
-                leftIcon={<AppIcon color={colors.onPrimary} name="plus" size={20} />}
-                onPress={() => router.push(appRoutes.managerNewCampaign)}
-              />
-            ) : null}
           </View>
         }
         ListHeaderComponent={
@@ -66,11 +59,6 @@ export function CampaignsScreen() {
             <AppText color="textMuted" variant="label">
               {activeCountLabel}
             </AppText>
-            <AppButton
-              label="Nova campanha"
-              leftIcon={<AppIcon color={colors.onPrimary} name="plus" size={22} />}
-              onPress={() => router.push(appRoutes.managerNewCampaign)}
-            />
             <CampaignSearch value={search} onChangeText={setSearch} />
             <CampaignFilters selectedFilter={statusFilter} onSelect={setStatusFilter} />
             <AppText accessibilityRole="header" style={styles.sectionTitle} variant="title">

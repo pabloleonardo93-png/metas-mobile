@@ -162,7 +162,14 @@ export class PostgresAuthenticationService implements AuthenticationService {
       throw unauthorized();
     }
 
-    const tokenHash = hashSessionToken(rawToken);
+    return this.resolveSession(hashSessionToken(rawToken));
+  }
+
+  public async refreshSession(session: AuthenticatedSession): Promise<AuthenticatedSession> {
+    return this.resolveSession(session.tokenHash);
+  }
+
+  private async resolveSession(tokenHash: Buffer): Promise<AuthenticatedSession> {
     const rows = await this.database.query<SessionDatabaseRow>(
       `SELECT
         user_id AS "userId",

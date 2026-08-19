@@ -7,6 +7,7 @@ import { PostgresAuthenticationService } from './modules/auth/authenticationServ
 import { OfficialGoogleIdTokenVerifier } from './modules/auth/googleIdTokenVerifier.js';
 import { PostgresEmployeeService } from './modules/employees/employeeService.js';
 import { PostgresGoalService } from './modules/goals/goalService.js';
+import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
 import { logger } from './shared/logging/logger.js';
 
 const listen = async (server: Server, host: string, port: number): Promise<void> =>
@@ -53,14 +54,17 @@ const bootstrap = async (): Promise<void> => {
     new OfficialGoogleIdTokenVerifier(env.googleAllowedClientIds),
     env.sessionTtlSeconds,
   );
+  const server = createServer();
+  const realtimeServer = new AuthenticatedRealtimeServer(server, authenticationService, logger);
   const app = createApp({
     authenticationService,
     corsOrigins: env.corsOrigins,
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),
+    realtimePublisher: realtimeServer,
     trustProxyHops: env.trustProxyHops,
   });
-  const server = createServer(app);
+  server.on('request', app);
   let shuttingDown = false;
 
   const shutdown = async (signal: 'SIGINT' | 'SIGTERM'): Promise<void> => {
@@ -72,6 +76,7 @@ const bootstrap = async (): Promise<void> => {
     logger.info('server_shutdown_started', { signal });
 
     try {
+      await realtimeServer.close();
       await closeServer(server);
       await disconnectDatabase(database);
       logger.info('server_shutdown_completed', { signal });
@@ -99,6 +104,7 @@ const bootstrap = async (): Promise<void> => {
       port: env.port,
     });
   } catch (error: unknown) {
+    await realtimeServer.close().catch(() => undefined);
     await disconnectDatabase(database).catch(() => undefined);
     throw error;
   }
