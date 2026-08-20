@@ -69,7 +69,7 @@ export function EmployeeFinancialGoalCard({
           {formatBrazilianCurrency(goal.dailyGoal)}
         </AppText>
         <AppText color="onPrimary" style={styles.roleLabel} variant="caption">
-          por funcionário / dia útil
+          por funcionário / dia
         </AppText>
       </View>
 
@@ -91,7 +91,7 @@ export function EmployeeFinancialGoalCard({
           </View>
           <View style={[styles.detailItem, styles.detailItemBorder]}>
             <AppText color="onPrimary" style={styles.detailLabel} variant="caption">
-              Dias úteis restantes
+              Dias restantes
             </AppText>
             <AppText color="onPrimary" variant="bodyMedium">
               {goal.remainingBusinessDays}
@@ -100,7 +100,7 @@ export function EmployeeFinancialGoalCard({
         </View>
       ) : (
         <AppText color="onPrimary" style={styles.compactSupportingText} variant="caption">
-          {goal.remainingBusinessDays} dias úteis restantes
+          {goal.remainingBusinessDays} dias restantes
         </AppText>
       )}
 

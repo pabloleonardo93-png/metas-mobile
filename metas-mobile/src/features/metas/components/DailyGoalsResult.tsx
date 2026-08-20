@@ -38,7 +38,7 @@ export function DailyGoalsResult({ result }: DailyGoalsResultProps) {
             {formatBrazilianCurrency(result.dailyStoreGoal)}
           </AppText>
           <AppText color="textMuted" variant="caption">
-            por dia útil restante
+            por dia restante
           </AppText>
         </View>
 

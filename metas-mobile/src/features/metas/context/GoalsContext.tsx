@@ -21,6 +21,7 @@ import type {
 import type { TeamDistribution } from '@/features/metas/types/teamDistribution.types';
 import { getGoalLoadErrorMessage } from '@/features/metas/utils/goalApiError';
 import { centsToReais } from '@/shared/utils/brlCurrency';
+import { calculateMonthDayCounts } from '@/shared/utils/datePeriods';
 import { useRealtime } from '@/realtime/RealtimeContext';
 
 interface GoalsContextValue {
@@ -53,14 +54,16 @@ const getCurrentMonth = (): string => {
 
 const createEmptyCurrentGoal = (): CurrentGoal => {
   const month = getCurrentMonth();
+  const dayCounts = calculateMonthDayCounts(month) ?? { remainingDays: 0, totalDays: 0 };
   return {
     id: `goal-draft-${month}`,
     month: formatMonth(month),
     monthlyTarget: 0,
-    remainingBusinessDays: 0,
+    periodMonth: month,
+    remainingBusinessDays: dayCounts.remainingDays,
     soldAmount: 0,
     status: 'EM_ANDAMENTO',
-    totalBusinessDays: 0,
+    totalBusinessDays: dayCounts.totalDays,
   };
 };
 
@@ -81,15 +84,20 @@ export function GoalsProvider({ children }: PropsWithChildren) {
   const loadPromiseRef = useRef<Promise<void> | null>(null);
 
   const applyConfiguration = useCallback((configuration: PersistedGoalConfiguration) => {
+    const dayCounts = calculateMonthDayCounts(configuration.month) ?? {
+      remainingDays: 0,
+      totalDays: 0,
+    };
     setLockVersion(configuration.lockVersion);
     setCurrentGoal({
       id: configuration.id ?? `goal-draft-${configuration.month}`,
       month: formatMonth(configuration.month),
       monthlyTarget: centsToReais(configuration.monthlyTargetCents),
-      remainingBusinessDays: configuration.remainingBusinessDays,
+      periodMonth: configuration.month,
+      remainingBusinessDays: dayCounts.remainingDays,
       soldAmount: centsToReais(configuration.soldAmountCents),
       status: 'EM_ANDAMENTO',
-      totalBusinessDays: configuration.totalBusinessDays,
+      totalBusinessDays: dayCounts.totalDays,
     });
     setTeamDistribution(configuration.teamDistribution.map((role) => ({ ...role })));
   }, []);

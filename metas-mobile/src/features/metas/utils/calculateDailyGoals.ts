@@ -83,8 +83,8 @@ export function calculateDailyGoals(
 
   if (settings.remainingBusinessDays === 0) {
     return createEmptyResult(
-      'no-business-days',
-      'Não há dias úteis restantes para calcular as metas.',
+      'no-days',
+      'Não há dias restantes para calcular as metas.',
       remainingAmount,
     );
   }

@@ -101,6 +101,7 @@ export function GeneralGoalSettingsScreen() {
                 <GeneralGoalSettingsForm
                   initialValues={currentGoal}
                   isSaving={isSaving}
+                  periodMonth={currentGoal.periodMonth}
                   onChange={handleSettingsChange}
                   onSave={handleSave}
                 />

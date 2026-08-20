@@ -1,3 +1,6 @@
+import type { LocalDateSource } from '@/shared/utils/localDate';
+import { calculatePeriodDayCounts } from '@/shared/utils/datePeriods';
+
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function buildIsoDate(day: number, month: number, year: number): string | null {
@@ -64,4 +67,23 @@ export function formatCampaignDate(value: string): string {
 
 export function formatCampaignPeriod(startDate: string, endDate: string): string {
   return `${formatCampaignDate(startDate)} - ${formatCampaignDate(endDate)}`;
+}
+
+function formatDayQuantity(value: number): string {
+  return `${value} ${value === 1 ? 'dia' : 'dias'}`;
+}
+
+function formatRemainingDays(value: number): string {
+  return value === 1 ? '1 dia restante' : `${value} dias restantes`;
+}
+
+export function formatCampaignDaySummary(
+  startDate: string,
+  endDate: string,
+  today: LocalDateSource = new Date(),
+): string | null {
+  const dayCounts = calculatePeriodDayCounts(startDate, endDate, today);
+  if (!dayCounts) return null;
+
+  return `${formatDayQuantity(dayCounts.totalDays)} no período · ${formatRemainingDays(dayCounts.remainingDays)}`;
 }

@@ -24,7 +24,7 @@ export function GoalQuickSummary({ metrics }: GoalQuickSummaryProps) {
     },
     {
       icon: 'calendar',
-      label: 'Dias úteis restantes',
+      label: 'Dias restantes',
       value: String(metrics.remainingBusinessDays),
     },
     {

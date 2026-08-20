@@ -28,7 +28,7 @@ export function ManagerQuickSummary({ metrics }: ManagerQuickSummaryProps) {
     },
     {
       icon: 'calendar',
-      label: 'Dias úteis restantes',
+      label: 'Dias restantes',
       value: String(metrics.remainingBusinessDays),
     },
     {

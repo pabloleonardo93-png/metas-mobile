@@ -11,11 +11,11 @@ export function validateGoalSettings(settings: GoalGeneralSettings): GoalGeneral
   }
 
   if (!Number.isInteger(settings.remainingBusinessDays) || settings.remainingBusinessDays < 0) {
-    errors.remainingBusinessDays = 'Informe os dias úteis restantes sem valores negativos.';
+    errors.remainingBusinessDays = 'Informe os dias restantes sem valores negativos.';
   }
 
   if (!Number.isInteger(settings.totalBusinessDays) || settings.totalBusinessDays <= 0) {
-    errors.totalBusinessDays = 'Informe o total de dias úteis.';
+    errors.totalBusinessDays = 'Informe o total de dias do mês.';
   }
 
   if (

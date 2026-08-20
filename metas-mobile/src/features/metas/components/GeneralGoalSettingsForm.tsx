@@ -1,7 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { BusinessDaysFields } from '@/features/metas/components/BusinessDaysFields';
 import type {
   GoalGeneralSettings,
   GoalGeneralSettingsErrors,
@@ -9,7 +8,7 @@ import type {
 } from '@/features/metas/types/goalSettings.types';
 import { saveGoalConfigurationWithFeedback } from '@/features/metas/utils/saveGoalConfigurationFeedback';
 import { validateGoalSettings } from '@/features/metas/utils/validateGoalSettings';
-import { AppButton, AppText, BrlCurrencyInput } from '@/shared/components';
+import { AppButton, AppText, AutomaticDaysFields, BrlCurrencyInput } from '@/shared/components';
 import { useToast } from '@/shared/toast/ToastContext';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
 import {
@@ -18,49 +17,58 @@ import {
   parseBrlCurrencyToCents,
   reaisToCents,
 } from '@/shared/utils/brlCurrency';
+import {
+  calculateMonthDayCounts,
+  type PeriodDayCounts,
+} from '@/shared/utils/datePeriods';
 
 interface GeneralGoalSettingsFormProps {
   initialValues: GoalGeneralSettings;
   isSaving: boolean;
+  periodMonth: string;
   onChange: (settings: GoalGeneralSettings) => void;
   onSave: (input: Omit<GoalConfigurationSaveInput, 'teamDistribution'>) => Promise<void>;
 }
 
 interface GoalGeneralSettingsFormValues {
   monthlyTarget: string;
-  remainingBusinessDays: string;
   soldAmount: string;
-  totalBusinessDays: string;
 }
 
 function toFormValues(settings: GoalGeneralSettings): GoalGeneralSettingsFormValues {
   return {
     monthlyTarget: formatCentsForBrlInput(reaisToCents(settings.monthlyTarget) ?? 0),
-    remainingBusinessDays: `${settings.remainingBusinessDays}`,
     soldAmount: formatCentsForBrlInput(reaisToCents(settings.soldAmount) ?? 0),
-    totalBusinessDays: `${settings.totalBusinessDays}`,
   };
 }
 
-function toSettings(values: GoalGeneralSettingsFormValues): GoalGeneralSettings {
+function toSettings(
+  values: GoalGeneralSettingsFormValues,
+  dayCounts: PeriodDayCounts,
+): GoalGeneralSettings {
   const monthlyTargetCents = parseBrlCurrencyToCents(values.monthlyTarget);
   const soldAmountCents = parseBrlCurrencyToCents(values.soldAmount);
 
   return {
     monthlyTarget: monthlyTargetCents === null ? Number.NaN : centsToReais(monthlyTargetCents),
-    remainingBusinessDays: Number(values.remainingBusinessDays),
+    remainingBusinessDays: dayCounts.remainingDays,
     soldAmount: soldAmountCents === null ? Number.NaN : centsToReais(soldAmountCents),
-    totalBusinessDays: Number(values.totalBusinessDays),
+    totalBusinessDays: dayCounts.totalDays,
   };
 }
 
 export function GeneralGoalSettingsForm({
   initialValues,
   isSaving,
+  periodMonth,
   onChange,
   onSave,
 }: GeneralGoalSettingsFormProps) {
   const { hideToast, showToast } = useToast();
+  const dayCounts = useMemo(
+    () => calculateMonthDayCounts(periodMonth) ?? { remainingDays: 0, totalDays: 0 },
+    [periodMonth],
+  );
   const [values, setValues] = useState<GoalGeneralSettingsFormValues>(() =>
     toFormValues(initialValues),
   );
@@ -75,11 +83,11 @@ export function GeneralGoalSettingsForm({
     setValues(nextValues);
     setErrors((currentErrors) => ({ ...currentErrors, [key]: undefined }));
     hideToast();
-    onChange(toSettings(nextValues));
+    onChange(toSettings(nextValues, dayCounts));
   }
 
   async function handleSubmit() {
-    const settings = toSettings(values);
+    const settings = toSettings(values, dayCounts);
     const validationErrors = validateGoalSettings(settings);
     const monthlyTargetCents = parseBrlCurrencyToCents(values.monthlyTarget);
     const soldAmountCents = parseBrlCurrencyToCents(values.soldAmount);
@@ -119,13 +127,11 @@ export function GeneralGoalSettingsForm({
         />
       </View>
 
-      <BusinessDaysFields
-        remainingError={errors.remainingBusinessDays}
-        remainingValue={values.remainingBusinessDays}
-        totalError={errors.totalBusinessDays}
-        totalValue={values.totalBusinessDays}
-        onRemainingChange={(value) => updateValue('remainingBusinessDays', value)}
-        onTotalChange={(value) => updateValue('totalBusinessDays', value)}
+      <AutomaticDaysFields
+        remainingDays={dayCounts.remainingDays}
+        title="Dias Restantes / Total do Mês"
+        totalDays={dayCounts.totalDays}
+        totalLabel="Total do mês"
       />
 
       <View style={styles.fieldGroup}>

@@ -29,6 +29,7 @@ import { colors, radius, shadows, spacing } from '@/shared/theme';
 import { useToast } from '@/shared/toast/ToastContext';
 import { formatCentsAsBrl } from '@/shared/utils/brlCurrency';
 import { formatPercentage } from '@/shared/utils/formatters';
+import { calculatePeriodDayCounts } from '@/shared/utils/datePeriods';
 
 function getCampaignId(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
@@ -81,6 +82,7 @@ export function CampaignDetailsScreen() {
   }
 
   const metrics = calculateCampaignMetrics(campaign);
+  const dayCounts = calculatePeriodDayCounts(campaign.startDate, campaign.endDate);
 
   function handleClose(campaignToClose: Campaign) {
     Alert.alert('Encerrar campanha', 'Esta ação encerra a campanha para toda a loja.', [
@@ -161,6 +163,18 @@ export function CampaignDetailsScreen() {
               <AppText color="primary" variant="bodyMedium">
                 {formatPercentage(metrics.progress, 0)}
               </AppText>
+            </View>
+            <View style={styles.metric}>
+              <AppText color="textMuted" variant="caption">
+                Dias da campanha
+              </AppText>
+              <AppText variant="bodyMedium">{dayCounts?.totalDays ?? '--'}</AppText>
+            </View>
+            <View style={styles.metric}>
+              <AppText color="textMuted" variant="caption">
+                Dias restantes
+              </AppText>
+              <AppText variant="bodyMedium">{dayCounts?.remainingDays ?? '--'}</AppText>
             </View>
           </View>
 

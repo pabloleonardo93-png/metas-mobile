@@ -36,6 +36,7 @@
     "src/shared/types/userRole.ts",
     "src/shared/utils/brlCurrency.ts",
     "src/shared/utils/calculateProgress.ts",
+    "src/shared/utils/datePeriods.ts",
     "src/shared/utils/goalCalculations.ts",
     "src/shared/utils/localDate.ts",
     "src/shared/toast/toastController.ts",

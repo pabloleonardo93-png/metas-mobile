@@ -2,6 +2,7 @@ import { StyleSheet, View } from 'react-native';
 
 import type { Campaign } from '@/features/campaigns/types/campaign.types';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
+import { formatCampaignDaySummary } from '@/features/campaigns/utils/campaignDates';
 import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar';
 import { formatPercentage } from '@/features/dashboard/utils/formatters';
 import { AppText } from '@/shared/components';
@@ -14,6 +15,7 @@ interface StoreCampaignCardProps {
 
 export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampaignCardProps) {
   const metrics = calculateCampaignMetrics(campaign);
+  const daySummary = formatCampaignDaySummary(campaign.startDate, campaign.endDate);
 
   return (
     <View style={styles.card}>
@@ -39,6 +41,11 @@ export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampai
       <AppText color="textMuted" variant="caption">
         Objetivo coletivo da loja
       </AppText>
+      {daySummary ? (
+        <AppText color="textMuted" variant="caption">
+          {daySummary}
+        </AppText>
+      ) : null}
 
       {contributedQuantity !== undefined ? (
         <View style={styles.contribution}>

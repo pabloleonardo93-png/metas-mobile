@@ -1,4 +1,5 @@
 export { AppButton } from '@/shared/components/AppButton';
+export { AutomaticDaysFields } from '@/shared/components/AutomaticDaysFields';
 export { BrlCurrencyInput } from '@/shared/components/BrlCurrencyInput';
 export { AppIcon, type AppIconName } from '@/shared/components/AppIcon';
 export { AppProgressBar } from '@/shared/components/AppProgressBar';

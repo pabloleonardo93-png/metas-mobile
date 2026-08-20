@@ -29,6 +29,7 @@ export type GoalStatus = 'CONCLUIDA' | 'EM_ANDAMENTO';
 export interface CurrentGoal extends GoalGeneralSettings {
   id: string;
   month: string;
+  periodMonth: string;
   status: Extract<GoalStatus, 'EM_ANDAMENTO'>;
 }
 

@@ -3,7 +3,10 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { CampaignStatusBadge } from '@/features/campaigns/components/CampaignStatusBadge';
 import type { Campaign } from '@/features/campaigns/types/campaign.types';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
-import { formatCampaignPeriod } from '@/features/campaigns/utils/campaignDates';
+import {
+  formatCampaignDaySummary,
+  formatCampaignPeriod,
+} from '@/features/campaigns/utils/campaignDates';
 import { AppIcon, AppProgressBar, AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
 import { formatPercentage } from '@/shared/utils/formatters';
@@ -15,6 +18,7 @@ interface CampaignCardProps {
 
 export function CampaignCard({ campaign, onPress }: CampaignCardProps) {
   const metrics = calculateCampaignMetrics(campaign);
+  const daySummary = formatCampaignDaySummary(campaign.startDate, campaign.endDate);
   const remainingLabel =
     metrics.remainingQuantity === 0
       ? 'Meta em unidades atingida'
@@ -59,6 +63,11 @@ export function CampaignCard({ campaign, onPress }: CampaignCardProps) {
               {formatCampaignPeriod(campaign.startDate, campaign.endDate)}
             </AppText>
           </View>
+          {daySummary ? (
+            <AppText color="textMuted" variant="caption">
+              {daySummary}
+            </AppText>
+          ) : null}
         </View>
         <AppIcon color={colors.textMuted} name="chevron-right" size={22} />
       </View>

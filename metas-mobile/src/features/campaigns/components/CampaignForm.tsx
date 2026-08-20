@@ -7,10 +7,18 @@ import {
   parseBrazilianDate,
 } from '@/features/campaigns/utils/campaignDates';
 import { validateCampaignForm } from '@/features/campaigns/utils/validateCampaignForm';
-import { AppButton, AppIcon, AppText, AppTextInput, BrlCurrencyInput } from '@/shared/components';
+import {
+  AppButton,
+  AppIcon,
+  AppText,
+  AppTextInput,
+  AutomaticDaysFields,
+  BrlCurrencyInput,
+} from '@/shared/components';
 import { useToast } from '@/shared/toast/ToastContext';
 import { colors, spacing } from '@/shared/theme';
 import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
+import { calculatePeriodDayCounts } from '@/shared/utils/datePeriods';
 
 interface CampaignFormProps {
   initialValues: CampaignFormValues;
@@ -24,6 +32,11 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const errors = useMemo(() => validateCampaignForm(values), [values]);
+  const dayCounts = useMemo(() => {
+    const startDate = parseBrazilianDate(values.startDate);
+    const endDate = parseBrazilianDate(values.endDate);
+    return startDate && endDate ? calculatePeriodDayCounts(startDate, endDate) : null;
+  }, [values.endDate, values.startDate]);
 
   function updateValue<Key extends keyof CampaignFormValues>(
     key: Key,
@@ -131,6 +144,13 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
           />
         </View>
       </View>
+
+      <AutomaticDaysFields
+        remainingDays={dayCounts?.remainingDays ?? null}
+        title="Dias da Campanha"
+        totalDays={dayCounts?.totalDays ?? null}
+        totalLabel="Total do período"
+      />
 
       <AppButton label={submitLabel} loading={isSubmitting} onPress={() => void handleSubmit()} />
     </View>

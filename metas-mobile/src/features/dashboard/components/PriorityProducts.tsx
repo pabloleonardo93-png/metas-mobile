@@ -2,6 +2,7 @@ import { StyleSheet, View } from 'react-native';
 
 import type { Campaign } from '@/features/campaigns/types/campaign.types';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
+import { formatCampaignDaySummary } from '@/features/campaigns/utils/campaignDates';
 import { DashboardSectionHeader } from '@/features/dashboard/components/DashboardSectionHeader';
 import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar';
 import { formatPercentage } from '@/features/dashboard/utils/formatters';
@@ -32,6 +33,7 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
         ) : null}
         {campaigns.map((campaign, index) => {
           const metrics = calculateCampaignMetrics(campaign);
+          const daySummary = formatCampaignDaySummary(campaign.startDate, campaign.endDate);
 
           return (
             <View key={campaign.id} style={[styles.row, index > 0 && styles.rowWithDivider]}>
@@ -43,6 +45,11 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
                   <AppText color="textMuted" variant="caption">
                     {metrics.soldQuantity} / {metrics.targetQuantity} unidades
                   </AppText>
+                  {daySummary ? (
+                    <AppText color="textMuted" variant="caption">
+                      {daySummary}
+                    </AppText>
+                  ) : null}
                 </View>
                 <AppText color="primary" variant="bodyMedium">
                   {formatPercentage(metrics.progress, 0)}

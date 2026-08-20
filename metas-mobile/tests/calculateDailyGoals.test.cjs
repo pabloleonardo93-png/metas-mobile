@@ -229,10 +229,10 @@ test('trata meta atingida sem valores negativos', () => {
   assert.equal(result.dailyStoreGoal, 0);
 });
 
-test('trata zero dias úteis restantes sem divisão por zero', () => {
+test('trata zero dias restantes sem divisão por zero', () => {
   const result = calculateDailyGoals({ ...settings, remainingBusinessDays: 0 }, defaultTeam);
 
-  assert.equal(result.status, 'no-business-days');
+  assert.equal(result.status, 'no-days');
   assert.equal(result.dailyStoreGoal, 0);
   assert.ok(Number.isFinite(result.remainingAmount));
 });

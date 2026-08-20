@@ -34,7 +34,7 @@ export type DailyGoalsStatus =
   | 'success'
   | 'goal-achieved'
   | 'invalid-settings'
-  | 'no-business-days'
+  | 'no-days'
   | 'empty-team'
   | 'zero-weight';
 

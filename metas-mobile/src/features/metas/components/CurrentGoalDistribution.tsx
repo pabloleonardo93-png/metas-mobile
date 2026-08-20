@@ -23,7 +23,7 @@ export function CurrentGoalDistribution({
           Distribuição atual
         </AppText>
         <AppText color="textMuted" variant="caption">
-          Meta individual necessária por cargo e dia útil
+          Meta individual necessária por cargo e dia
         </AppText>
       </View>
 
