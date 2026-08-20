@@ -1,7 +1,13 @@
-import type { Employee, EmployeeInput, EmployeeStatus } from '../types/employee.types';
+import type {
+  Employee,
+  EmployeeAccessEmailInput,
+  EmployeeInput,
+  EmployeeStatus,
+} from '../types/employee.types';
 
 interface EmployeeApiResponse {
   email: string;
+  googleLinked: boolean;
   id: string;
   joinedOn: string;
   name: string;
@@ -24,6 +30,7 @@ export interface EmployeeSessionStorage {
 }
 
 export interface EmployeeApiGateway {
+  changeAccessEmail(employeeId: string, input: EmployeeAccessEmailInput): Promise<Employee>;
   create(input: EmployeeInput): Promise<Employee>;
   getById(employeeId: string): Promise<Employee>;
   list(): Promise<Employee[]>;
@@ -40,6 +47,7 @@ export class EmployeeSessionUnavailableError extends Error {
 
 const toEmployee = (response: EmployeeApiResponse): Employee => ({
   email: response.email,
+  googleLinked: response.googleLinked,
   id: response.id,
   joinedAt: response.joinedOn,
   name: response.name,
@@ -67,6 +75,17 @@ export class EmployeeApiClient implements EmployeeApiGateway {
       sessionToken,
     });
     return employees.map(toEmployee);
+  }
+
+  async changeAccessEmail(employeeId: string, input: EmployeeAccessEmailInput): Promise<Employee> {
+    const sessionToken = await this.requireToken();
+    return toEmployee(
+      await this.request<EmployeeApiResponse>(`/v1/manager/employees/${employeeId}/access-email`, {
+        body: input,
+        method: 'PATCH',
+        sessionToken,
+      }),
+    );
   }
 
   async getById(employeeId: string): Promise<Employee> {

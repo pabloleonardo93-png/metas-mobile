@@ -31,6 +31,10 @@ const {
   summarizeTeamByRole,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employee.utils.js');
 const {
+  normalizeEmployeeEmail,
+  validateEmployeeEmail,
+} = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/validateEmployeeForm.js');
+const {
   buildManagerTeamPerformance,
   calculateManagerDashboardMetrics,
   formatActiveTeamComposition,
@@ -38,6 +42,7 @@ const {
 
 const responseEmployee = {
   email: 'ana@example.test',
+  googleLinked: false,
   id: '00000000-0000-4000-8000-000000000010',
   joinedOn: '2026-08-13',
   name: 'Ana Souza',
@@ -60,6 +65,12 @@ function createHarness(overrides = {}) {
   };
   return { calls, client: new EmployeeApiClient(request, storage) };
 }
+
+test('employee email normalization trims and lowercases without locale-specific rules', () => {
+  assert.equal(normalizeEmployeeEmail('  PedraMarcos78@GMAIL.COM  '), 'pedramarcos78@gmail.com');
+  assert.equal(validateEmployeeEmail('  NOVO@GMAIL.COM  '), undefined);
+  assert.match(validateEmployeeEmail('invalido'), /válido/u);
+});
 
 test('employee state represents loading, empty success, errors, and updates', () => {
   assert.equal(initialEmployeesState.status, 'loading');
@@ -117,6 +128,21 @@ test('create, edit, and status use authenticated API mutations', async () => {
   assert.match(harness.calls[2].path, /\/status$/);
 });
 
+test('explicit access email change uses its dedicated authenticated endpoint', async () => {
+  const harness = createHarness({
+    response: { email: 'novo@example.test', googleLinked: false },
+  });
+  const employee = await harness.client.changeAccessEmail(responseEmployee.id, {
+    email: 'novo@example.test',
+  });
+
+  assert.equal(employee.email, 'novo@example.test');
+  assert.equal(employee.googleLinked, false);
+  assert.equal(harness.calls[0].options.method, 'PATCH');
+  assert.deepEqual(harness.calls[0].options.body, { email: 'novo@example.test' });
+  assert.match(harness.calls[0].path, /\/access-email$/u);
+});
+
 test('missing local session prevents unauthenticated employee requests', async () => {
   const harness = createHarness({ withoutToken: true });
   await assert.rejects(() => harness.client.list(), EmployeeSessionUnavailableError);
@@ -165,6 +191,7 @@ test('upsert makes created and edited employees visible without reloading', () =
 test('manager dashboard follows shared employee role and status mutations', () => {
   const manager = {
     email: 'manager@example.test',
+    googleLinked: true,
     id: '00000000-0000-4000-8000-000000000001',
     joinedAt: '2026-08-01',
     name: 'Manager One',

@@ -88,6 +88,35 @@ test('cancelled Google login does not call the API or persist a session', async 
   assert.deepEqual(harness.calls.saved, []);
 });
 
+test('a denied login leaves no session and a new attempt can succeed', async () => {
+  let attempts = 0;
+  const denied = Object.assign(new Error('denied'), {
+    code: 'ACCESS_NOT_AUTHORIZED',
+    status: 403,
+  });
+  const harness = createHarness({
+    loginWithGoogle: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw denied;
+      }
+      return {
+        expiresAt: '2026-08-19T12:00:00.000Z',
+        sessionToken: 'opaque-session-token',
+        user: { id: employee.id, name: employee.name, role: employee.role },
+      };
+    },
+  });
+
+  await assert.rejects(() => harness.controller.loginWithGoogle(), denied);
+  assert.equal(harness.getToken(), null);
+  assert.deepEqual(harness.calls.saved, []);
+
+  assert.deepEqual(await harness.controller.loginWithGoogle(), employee);
+  assert.equal(attempts, 2);
+  assert.equal(harness.getToken(), 'opaque-session-token');
+});
+
 test('a stored session is restored through /me', async () => {
   const harness = createHarness({ initialToken: 'stored-token' });
 

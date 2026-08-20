@@ -14,12 +14,17 @@ export interface EmployeeSalesSnapshot {
 
 export interface Employee {
   email: string;
+  googleLinked: boolean;
   performance?: EmployeeSalesSnapshot;
   id: string;
   joinedAt: string;
   name: string;
   role: UserRole;
   status: EmployeeStatus;
+}
+
+export interface EmployeeAccessEmailInput {
+  email: string;
 }
 
 export type EmployeeInput = Pick<Employee, 'email' | 'joinedAt' | 'name' | 'role' | 'status'>;

@@ -1,9 +1,16 @@
-import { DatabaseError, QueryTypes, UniqueConstraintError, type Sequelize } from 'sequelize';
+import {
+  DatabaseError,
+  QueryTypes,
+  UniqueConstraintError,
+  type Sequelize,
+  type Transaction,
+} from 'sequelize';
 
 import { withDatabaseContext } from '../../shared/database/withDatabaseContext.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import type { AuthenticatedSession } from '../auth/auth.types.js';
 import type {
+  EmployeeAccessEmailInput,
   EmployeeDto,
   EmployeeMutationInput,
   EmployeeService,
@@ -12,11 +19,19 @@ import type {
 
 interface EmployeeDatabaseRow {
   email: string;
+  googleLinked: boolean;
   id: string;
   joinedOn: string;
   name: string;
   role: EmployeeDto['role'];
   status: EmployeeStatus;
+}
+
+type EmployeeBaseDatabaseRow = Omit<EmployeeDatabaseRow, 'googleLinked'>;
+
+interface EmployeeAccessStateRow {
+  email: string;
+  googleLinked: boolean;
 }
 
 const requireManager = (session: AuthenticatedSession): void => {
@@ -49,8 +64,30 @@ const mapEmployeeDatabaseError = (error: unknown): never => {
       'Seu próprio cargo ou status não pode ser alterado por esta operação.',
     );
   }
+  if (databaseErrorContains(error, 'EMPLOYEE_ACCESS_EMAIL_CHANGE_REQUIRES_EXPLICIT_RESET')) {
+    throw new AppError(
+      409,
+      'EMPLOYEE_ACCESS_EMAIL_CHANGE_REQUIRES_EXPLICIT_RESET',
+      'Use a alteração explícita do e-mail de acesso.',
+    );
+  }
+  if (databaseErrorContains(error, 'EMPLOYEE_ACCESS_EMAIL_MULTIPLE_STORES_FORBIDDEN')) {
+    throw new AppError(
+      409,
+      'EMPLOYEE_ACCESS_EMAIL_MULTIPLE_STORES_FORBIDDEN',
+      'O acesso de um colaborador vinculado a mais de uma loja exige administração global.',
+    );
+  }
+  if (databaseErrorContains(error, 'EMPLOYEE_ACCESS_EMAIL_UNCHANGED')) {
+    throw new AppError(
+      409,
+      'EMPLOYEE_ACCESS_EMAIL_UNCHANGED',
+      'O novo e-mail deve ser diferente do e-mail de acesso atual.',
+    );
+  }
   if (
     error instanceof UniqueConstraintError ||
+    databaseErrorContains(error, 'EMPLOYEE_ACCESS_EMAIL_ALREADY_EXISTS') ||
     databaseErrorContains(error, 'users_primary_email_unique') ||
     databaseErrorContains(error, 'employees_store_user_unique')
   ) {
@@ -66,6 +103,22 @@ const mapEmployeeDatabaseError = (error: unknown): never => {
 };
 
 const selectColumns = `
+  employee.id,
+  employee.full_name AS name,
+  access.access_email AS email,
+  access.google_linked AS "googleLinked",
+  employee.role,
+  employee.status,
+  employee.joined_on AS "joinedOn"`;
+
+const selectEmployeeWithAccessState = (employeeSource: string): string => `
+  WITH employee AS (${employeeSource})
+  SELECT ${selectColumns}
+  FROM employee
+  JOIN metas.manager_list_employee_access_states() access
+    ON access.employee_id = employee.id`;
+
+const baseSelectColumns = `
   id,
   full_name AS name,
   primary_email AS email,
@@ -80,7 +133,7 @@ export class PostgresEmployeeService implements EmployeeService {
     requireManager(session);
     return this.withContext(session, async (transaction) =>
       this.database.query<EmployeeDatabaseRow>(
-        `SELECT ${selectColumns} FROM metas.manager_list_employees()`,
+        selectEmployeeWithAccessState('SELECT * FROM metas.manager_list_employees()'),
         { transaction, type: QueryTypes.SELECT },
       ),
     );
@@ -90,7 +143,7 @@ export class PostgresEmployeeService implements EmployeeService {
     requireManager(session);
     const rows = await this.withContext(session, async (transaction) =>
       this.database.query<EmployeeDatabaseRow>(
-        `SELECT ${selectColumns} FROM metas.manager_get_employee(:employeeId)`,
+        selectEmployeeWithAccessState('SELECT * FROM metas.manager_get_employee(:employeeId)'),
         { replacements: { employeeId }, transaction, type: QueryTypes.SELECT },
       ),
     );
@@ -107,6 +160,37 @@ export class PostgresEmployeeService implements EmployeeService {
   ): Promise<EmployeeDto> {
     requireManager(session);
     return this.runMutation(session, 'manager_create_employee', input);
+  }
+
+  public async changeAccessEmail(
+    session: AuthenticatedSession,
+    employeeId: string,
+    input: EmployeeAccessEmailInput,
+  ): Promise<EmployeeDto> {
+    requireManager(session);
+    try {
+      return await this.withContext(session, async (transaction) => {
+        const rows = await this.database.query<EmployeeBaseDatabaseRow>(
+          `SELECT ${baseSelectColumns}
+           FROM metas.manager_change_employee_access_email(:employeeId, :email)`,
+          {
+            replacements: { email: input.email, employeeId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        );
+        const employee = rows[0];
+        if (!employee) {
+          throw new AppError(404, 'EMPLOYEE_NOT_FOUND', 'Funcionário não encontrado.');
+        }
+        return this.attachAccessState(transaction, employee);
+      });
+    } catch (error: unknown) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      return mapEmployeeDatabaseError(error);
+    }
   }
 
   public async update(
@@ -127,8 +211,9 @@ export class PostgresEmployeeService implements EmployeeService {
     try {
       const rows = await this.withContext(session, async (transaction) =>
         this.database.query<EmployeeDatabaseRow>(
-          `SELECT ${selectColumns}
-           FROM metas.manager_set_employee_status(:employeeId, :status)`,
+          selectEmployeeWithAccessState(
+            'SELECT * FROM metas.manager_set_employee_status(:employeeId, :status)',
+          ),
           {
             replacements: { employeeId, status },
             transaction,
@@ -156,9 +241,9 @@ export class PostgresEmployeeService implements EmployeeService {
     employeeId?: string,
   ): Promise<EmployeeDto> {
     try {
-      const rows = await this.withContext(session, async (transaction) =>
-        this.database.query<EmployeeDatabaseRow>(
-          `SELECT ${selectColumns}
+      return await this.withContext(session, async (transaction) => {
+        const rows = await this.database.query<EmployeeBaseDatabaseRow>(
+          `SELECT ${baseSelectColumns}
            FROM metas.${functionName}(
              ${employeeId ? ':employeeId, ' : ''}:name, :email, :role, :status, :joinedOn
            )`,
@@ -167,19 +252,42 @@ export class PostgresEmployeeService implements EmployeeService {
             transaction,
             type: QueryTypes.SELECT,
           },
-        ),
-      );
-      const employee = rows[0];
-      if (!employee) {
-        throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
-      }
-      return employee;
+        );
+        const employee = rows[0];
+        if (!employee) {
+          throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
+        }
+        return this.attachAccessState(transaction, employee);
+      });
     } catch (error: unknown) {
       if (error instanceof AppError) {
         throw error;
       }
       return mapEmployeeDatabaseError(error);
     }
+  }
+
+  private async attachAccessState(
+    transaction: Transaction,
+    employee: EmployeeBaseDatabaseRow,
+  ): Promise<EmployeeDto> {
+    const rows = await this.database.query<EmployeeAccessStateRow>(
+      `SELECT
+         access_email AS email,
+         google_linked AS "googleLinked"
+       FROM metas.manager_list_employee_access_states()
+       WHERE employee_id = :employeeId`,
+      {
+        replacements: { employeeId: employee.id },
+        transaction,
+        type: QueryTypes.SELECT,
+      },
+    );
+    const access = rows[0];
+    if (!access) {
+      throw new AppError(404, 'EMPLOYEE_NOT_FOUND', 'Funcionário não encontrado.');
+    }
+    return { ...employee, ...access };
   }
 
   private withContext<Result>(

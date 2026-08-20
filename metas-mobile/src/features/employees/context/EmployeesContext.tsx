@@ -14,6 +14,7 @@ import { employeesApi } from '@/features/employees/api/employeesApi';
 import { employeesReducer, initialEmployeesState } from '@/features/employees/state/employeesState';
 import type {
   Employee,
+  EmployeeAccessEmailInput,
   EmployeeInput,
   EmployeeStatus,
 } from '@/features/employees/types/employee.types';
@@ -22,6 +23,7 @@ import { useRealtime } from '@/realtime/RealtimeContext';
 
 interface EmployeesContextValue {
   addEmployee(input: EmployeeInput): Promise<Employee>;
+  changeEmployeeAccessEmail(employeeId: string, input: EmployeeAccessEmailInput): Promise<Employee>;
   employees: Employee[];
   errorMessage: string | null;
   isLoading: boolean;
@@ -80,6 +82,15 @@ export function EmployeesProvider({ children }: PropsWithChildren) {
     return employee;
   }, []);
 
+  const changeEmployeeAccessEmail = useCallback(
+    async (employeeId: string, input: EmployeeAccessEmailInput): Promise<Employee> => {
+      const employee = await employeesApi.changeAccessEmail(employeeId, input);
+      dispatch({ type: 'upserted', employee });
+      return employee;
+    },
+    [],
+  );
+
   const updateEmployee = useCallback(
     async (employeeId: string, input: EmployeeInput): Promise<Employee> => {
       const employee = await employeesApi.update(employeeId, input);
@@ -101,6 +112,7 @@ export function EmployeesProvider({ children }: PropsWithChildren) {
   const value = useMemo(
     () => ({
       addEmployee,
+      changeEmployeeAccessEmail,
       employees: state.employees,
       errorMessage: state.errorMessage,
       isLoading: state.status === 'loading',
@@ -108,7 +120,14 @@ export function EmployeesProvider({ children }: PropsWithChildren) {
       setEmployeeStatus,
       updateEmployee,
     }),
-    [addEmployee, refreshEmployees, setEmployeeStatus, state, updateEmployee],
+    [
+      addEmployee,
+      changeEmployeeAccessEmail,
+      refreshEmployees,
+      setEmployeeStatus,
+      state,
+      updateEmployee,
+    ],
   );
 
   return <EmployeesContext.Provider value={value}>{children}</EmployeesContext.Provider>;

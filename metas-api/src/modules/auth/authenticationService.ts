@@ -203,12 +203,16 @@ export class PostgresAuthenticationService implements AuthenticationService {
           `SELECT
           app_user.id,
           app_user.full_name AS name,
-          app_user.primary_email::TEXT AS email,
+          COALESCE(identity.provider_email::TEXT, app_user.primary_email::TEXT) AS email,
           employee.role::TEXT AS role,
           employee.status,
           employee.joined_on AS "joinedOn"
          FROM metas.users app_user
          JOIN metas.employees employee ON employee.user_id = app_user.id
+         LEFT JOIN metas.auth_identities identity
+           ON identity.user_id = app_user.id
+          AND identity.provider = 'GOOGLE'
+          AND identity.disabled_at IS NULL
          WHERE app_user.id = :userId
            AND employee.id = :employeeId`,
           {

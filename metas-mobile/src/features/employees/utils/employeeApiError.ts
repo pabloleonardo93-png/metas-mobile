@@ -21,6 +21,21 @@ export function getEmployeeApiErrorMessage(error: unknown): string {
   if (apiError.status === 409 && apiError.code === 'LAST_ACTIVE_MANAGER_REQUIRED') {
     return 'A loja deve permanecer com pelo menos um Gestor ativo.';
   }
+  if (
+    apiError.status === 409 &&
+    apiError.code === 'EMPLOYEE_ACCESS_EMAIL_CHANGE_REQUIRES_EXPLICIT_RESET'
+  ) {
+    return 'Use a ação Alterar e-mail de acesso para trocar uma conta Google vinculada.';
+  }
+  if (apiError.status === 409 && apiError.code === 'EMPLOYEE_ACCESS_EMAIL_UNCHANGED') {
+    return 'Informe um e-mail diferente do acesso atual.';
+  }
+  if (
+    apiError.status === 409 &&
+    apiError.code === 'EMPLOYEE_ACCESS_EMAIL_MULTIPLE_STORES_FORBIDDEN'
+  ) {
+    return 'Este acesso está vinculado a mais de uma loja e exige administração global.';
+  }
   if (apiError.status === null) {
     return 'Não foi possível conectar ao servidor. Tente novamente.';
   }

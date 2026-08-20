@@ -38,6 +38,7 @@ const employeeSession: AuthenticatedSession = {
 
 const initialEmployee: EmployeeDto = {
   email: 'ana@example.test',
+  googleLinked: false,
   id: '018f47a1-3d11-7c14-a8bf-0242ac120006',
   joinedOn: '2026-08-01',
   name: 'Ana Souza',
@@ -78,9 +79,26 @@ class FakeEmployeeService implements EmployeeService {
     }
   }
 
+  changeAccessEmail(
+    session: AuthenticatedSession,
+    employeeId: string,
+    input: { email: string },
+  ): Promise<EmployeeDto> {
+    this.requireManager(session);
+    const employee = this.employees.find((item) => item.id === employeeId);
+    if (!employee) throw new AppError(404, 'EMPLOYEE_NOT_FOUND', 'FuncionÃ¡rio nÃ£o encontrado.');
+    employee.email = input.email;
+    employee.googleLinked = false;
+    return Promise.resolve(employee);
+  }
+
   create(session: AuthenticatedSession, input: EmployeeMutationInput): Promise<EmployeeDto> {
     this.requireManager(session);
-    const employee = { ...input, id: '018f47a1-3d11-7c14-a8bf-0242ac120007' };
+    const employee = {
+      ...input,
+      googleLinked: false,
+      id: '018f47a1-3d11-7c14-a8bf-0242ac120007',
+    };
     this.employees.push(employee);
     return Promise.resolve(employee);
   }
@@ -117,7 +135,11 @@ class FakeEmployeeService implements EmployeeService {
     this.requireManager(session);
     const index = this.employees.findIndex((item) => item.id === employeeId);
     if (index < 0) throw new AppError(404, 'EMPLOYEE_NOT_FOUND', 'Funcionário não encontrado.');
-    const employee = { ...input, id: employeeId };
+    const employee = {
+      ...input,
+      googleLinked: this.employees[index]!.googleLinked,
+      id: employeeId,
+    };
     this.employees[index] = employee;
     return Promise.resolve(employee);
   }
@@ -207,12 +229,31 @@ await test('manager creates, edits and changes employee status', async () => {
   ]);
 });
 
+await test('manager changes access email only through the explicit endpoint', async () => {
+  const { app, realtimePublisher } = createTestApp();
+  const response = await request(app)
+    .patch(`/v1/manager/employees/${initialEmployee.id}/access-email`)
+    .set(authorization)
+    .send({ email: '  NOVO@EXAMPLE.TEST  ' })
+    .expect(200);
+
+  assert.equal(parseJson<EmployeeDto>(response.text).email, 'novo@example.test');
+  assert.deepEqual(realtimePublisher.events, [
+    { storeId: managerSession.storeId, type: 'employees.changed' },
+  ]);
+});
+
 await test('authentication and manager role are required', async () => {
   const { app } = createTestApp();
   await request(app).get('/v1/manager/employees').expect(401);
   await request(app)
     .get('/v1/manager/employees')
     .set({ Authorization: 'Bearer employee-token' })
+    .expect(403);
+  await request(app)
+    .patch(`/v1/manager/employees/${initialEmployee.id}/access-email`)
+    .set({ Authorization: 'Bearer employee-token' })
+    .send({ email: 'new@example.test' })
     .expect(403);
 });
 
@@ -232,6 +273,12 @@ await test('strict validation rejects invalid and unknown input', async () => {
     .expect(422);
   assert.equal(parseJson<{ code: string }>(response.text).code, 'INVALID_INPUT');
   assert.deepEqual(realtimePublisher.events, []);
+
+  await request(app)
+    .patch(`/v1/manager/employees/${initialEmployee.id}/access-email`)
+    .set(authorization)
+    .send({ email: 'invalid', storeId: managerSession.storeId })
+    .expect(422);
 });
 
 await test('failed employee mutations do not publish realtime invalidations', async () => {
@@ -256,6 +303,15 @@ await test('failed employee mutations do not publish realtime invalidations', as
       role: 'CAIXA',
       status: 'ATIVO',
     })
+    .expect(409);
+  assert.deepEqual(realtimePublisher.events, []);
+
+  employeeService.changeAccessEmail = () =>
+    Promise.reject(new AppError(409, 'EMPLOYEE_ALREADY_EXISTS', 'Employee already exists.'));
+  await request(app)
+    .patch(`/v1/manager/employees/${initialEmployee.id}/access-email`)
+    .set(authorization)
+    .send({ email: 'duplicate@example.test' })
     .expect(409);
   assert.deepEqual(realtimePublisher.events, []);
 });

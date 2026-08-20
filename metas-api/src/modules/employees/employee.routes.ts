@@ -16,10 +16,7 @@ const joinedOnSchema = z.iso
   .refine((value) => value <= new Date().toISOString().slice(0, 10));
 const employeeMutationSchema = z
   .object({
-    email: z
-      .email()
-      .max(320)
-      .transform((value) => value.trim().toLowerCase()),
+    email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
     joinedOn: joinedOnSchema,
     name: z.string().trim().min(3).max(120),
     role: employeeRoleSchema,
@@ -27,6 +24,9 @@ const employeeMutationSchema = z
   })
   .strict();
 const employeeStatusBodySchema = z.object({ status: employeeStatusSchema }).strict();
+const employeeAccessEmailBodySchema = z
+  .object({ email: z.string().trim().toLowerCase().pipe(z.email().max(320)) })
+  .strict();
 
 interface EmployeeRouterOptions {
   authenticationService: AuthenticationService;
@@ -97,6 +97,28 @@ export const createEmployeeRouter = ({
       response
         .status(200)
         .json(await employeeService.getById(requireSession(request), parseEmployeeId(request)));
+    }),
+  );
+
+  router.patch(
+    '/:employeeId/access-email',
+    asyncHandler(async (request, response) => {
+      const parsed = employeeAccessEmailBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError(422, 'INVALID_INPUT', 'O e-mail de acesso informado é inválido.');
+      }
+      const session = requireSession(request);
+      const employee = await employeeService.changeAccessEmail(
+        session,
+        parseEmployeeId(request),
+        parsed.data,
+      );
+      logger.info('EMPLOYEE_ACCESS_EMAIL_CHANGED', {
+        employeeId: employee.id,
+        requestId: request.requestId,
+      });
+      realtimePublisher.publish(session.storeId, 'employees.changed');
+      response.status(200).json(employee);
     }),
   );
 

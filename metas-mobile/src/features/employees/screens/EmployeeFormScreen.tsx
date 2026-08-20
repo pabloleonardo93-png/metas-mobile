@@ -42,8 +42,15 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ employeeId?: string | string[] }>();
-  const { addEmployee, employees, errorMessage, isLoading, refreshEmployees, updateEmployee } =
-    useEmployees();
+  const {
+    addEmployee,
+    changeEmployeeAccessEmail,
+    employees,
+    errorMessage,
+    isLoading,
+    refreshEmployees,
+    updateEmployee,
+  } = useEmployees();
   const employeeId = getEmployeeId(params.employeeId);
   const employee = employees.find((item) => item.id === employeeId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
@@ -126,6 +133,38 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
     }
   }
 
+  function confirmAccessEmailChange(): Promise<boolean> {
+    return new Promise((resolve) => {
+      Alert.alert(
+        'Alterar e-mail de acesso',
+        'A conta Google atual será desvinculada e todas as sessões desse colaborador serão encerradas.',
+        [
+          { onPress: () => resolve(false), style: 'cancel', text: 'Cancelar' },
+          { onPress: () => resolve(true), style: 'destructive', text: 'Continuar' },
+        ],
+        { cancelable: false },
+      );
+    });
+  }
+
+  async function handleChangeAccessEmail(email: string) {
+    if (!employee || !(await confirmAccessEmailChange())) {
+      return null;
+    }
+
+    try {
+      const updatedEmployee = await changeEmployeeAccessEmail(employee.id, { email });
+      Alert.alert(
+        'E-mail de acesso atualizado',
+        'As sessões anteriores foram encerradas. O novo e-mail poderá vincular a conta Google no próximo login.',
+      );
+      return updatedEmployee;
+    } catch (error: unknown) {
+      Alert.alert('Não foi possível alterar o acesso', getEmployeeApiErrorMessage(error));
+      return null;
+    }
+  }
+
   const title = mode === 'create' ? 'Adicionar funcionário' : 'Editar funcionário';
   const subtitle =
     mode === 'create'
@@ -147,8 +186,10 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
         >
           <EmployeeScreenHeader title={title} subtitle={subtitle} onBack={() => router.back()} />
           <EmployeeForm
+            googleLinked={mode === 'edit' ? employee?.googleLinked : false}
             initialValues={initialValues}
             submitLabel={mode === 'create' ? 'Adicionar funcionário' : 'Salvar alterações'}
+            onChangeAccessEmail={mode === 'edit' ? handleChangeAccessEmail : undefined}
             onSubmit={handleSubmit}
           />
         </ScrollView>

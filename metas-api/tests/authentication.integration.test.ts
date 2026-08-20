@@ -17,6 +17,8 @@ import type {
   VerifiedGoogleIdentity,
 } from '../src/modules/auth/auth.types.js';
 import { hashSessionToken } from '../src/modules/auth/sessionToken.js';
+import { PostgresEmployeeService } from '../src/modules/employees/employeeService.js';
+import type { EmployeeDto } from '../src/modules/employees/employee.types.js';
 import type { Logger } from '../src/shared/logging/logger.js';
 import { createIntegrationDatabases } from './integrationDatabase.js';
 
@@ -60,9 +62,10 @@ const withMigrationOwner = async <Result>(
 const createStoreWithManager = async (
   database: Sequelize,
   label: string,
-): Promise<{ managerUserId: string; storeId: string }> => {
+): Promise<{ managerEmail: string; managerUserId: string; storeId: string }> => {
   const storeId = randomUUID();
   const managerUserId = randomUUID();
+  const managerEmail = `manager-${label}-${managerUserId}@example.test`;
   await withMigrationOwner(database, async (transaction) => {
     await database.query(
       `INSERT INTO metas.stores (id, name, slug)
@@ -77,7 +80,7 @@ const createStoreWithManager = async (
        VALUES (:userId, :name, :email, 'ACTIVE')`,
       {
         replacements: {
-          email: `manager-${label}-${managerUserId}@example.test`,
+          email: managerEmail,
           name: `Manager ${label}`,
           userId: managerUserId,
         },
@@ -89,7 +92,7 @@ const createStoreWithManager = async (
       transaction,
     });
   });
-  return { managerUserId, storeId };
+  return { managerEmail, managerUserId, storeId };
 };
 
 const createEmployeeFixture = async (
@@ -213,6 +216,355 @@ if (testDatabases === null) {
       assert.notEqual(stored.sessions[0]?.tokenHash.toString('utf8'), body.sessionToken);
     });
 
+    await test('manager-created employees of every active role can log in from an independent client', async () => {
+      const roles: readonly UserRole[] = ['GESTOR', 'BALCONISTA', 'CAIXA', 'FARMACEUTICO'];
+
+      for (const role of roles) {
+        const label = `cross-client-${role.toLowerCase()}`;
+        const manager = await createStoreWithManager(migrationDatabase, label);
+        const managerAuthentication = new PostgresAuthenticationService(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: manager.managerEmail,
+            subject: `manager-subject-${randomUUID()}`,
+          }),
+          3600,
+        );
+        const managerApp = createApp({
+          authenticationService: managerAuthentication,
+          employeeService: new PostgresEmployeeService(runtimeDatabase),
+          logger: silentLogger,
+        });
+        const managerLogin = await request(managerApp)
+          .post('/v1/auth/google')
+          .send({ idToken: `valid-manager-token-${role.toLowerCase()}` })
+          .expect(200);
+        const managerAuthorization = `Bearer ${parseJson<LoginResult>(managerLogin.text).sessionToken}`;
+        const employeeEmail = `created-${role.toLowerCase()}-${randomUUID()}@example.test`;
+        const created = await request(managerApp)
+          .post('/v1/manager/employees')
+          .set('Authorization', managerAuthorization)
+          .send({
+            email: `  ${employeeEmail.toUpperCase()}  `,
+            joinedOn: new Date().toISOString().slice(0, 10),
+            name: `Cross Client ${role}`,
+            role,
+            status: 'ATIVO',
+          })
+          .expect(201);
+        const createdBody = parseJson<{ email: string; id: string; role: UserRole }>(created.text);
+        assert.equal(createdBody.email, employeeEmail);
+        assert.equal(createdBody.role, role);
+
+        const independentApp = createTestApp(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: employeeEmail,
+            subject: `employee-subject-${randomUUID()}`,
+          }),
+        );
+        const employeeLogin = await request(independentApp)
+          .post('/v1/auth/google')
+          .send({ idToken: `valid-independent-token-${role.toLowerCase()}` })
+          .expect(200);
+        const employeeLoginBody = parseJson<LoginResult>(employeeLogin.text);
+        assert.equal(employeeLoginBody.user.role, role);
+
+        const persisted = await withMigrationOwner(migrationDatabase, async (transaction) =>
+          migrationDatabase.query<{
+            accountStatus: string;
+            activeEmployee: boolean;
+            correctStore: boolean;
+            identities: string;
+            sessions: string;
+          }>(
+            `SELECT
+              app_user.account_status AS "accountStatus",
+              employee.status = 'ATIVO' AS "activeEmployee",
+              employee.store_id = :storeId AS "correctStore",
+              count(DISTINCT identity.id)::TEXT AS identities,
+              count(DISTINCT session.id)::TEXT AS sessions
+             FROM metas.users app_user
+             JOIN metas.employees employee ON employee.user_id = app_user.id
+             LEFT JOIN metas.auth_identities identity ON identity.user_id = app_user.id
+             LEFT JOIN metas.sessions session ON session.user_id = app_user.id
+             WHERE employee.id = :employeeId
+             GROUP BY app_user.id, employee.id`,
+            {
+              replacements: { employeeId: createdBody.id, storeId: manager.storeId },
+              transaction,
+              type: QueryTypes.SELECT,
+            },
+          ),
+        );
+        assert.deepEqual(persisted[0], {
+          accountStatus: 'ACTIVE',
+          activeEmployee: true,
+          correctStore: true,
+          identities: '1',
+          sessions: '1',
+        });
+      }
+    });
+
+    await test('an unlinked employee email can be changed before the first Google login', async () => {
+      const manager = await createStoreWithManager(migrationDatabase, 'unlinked-email-manager');
+      const managerApp = createApp({
+        authenticationService: new PostgresAuthenticationService(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: manager.managerEmail,
+            subject: `unlinked-manager-${randomUUID()}`,
+          }),
+          3600,
+        ),
+        employeeService: new PostgresEmployeeService(runtimeDatabase),
+        logger: silentLogger,
+      });
+      const managerLogin = await request(managerApp)
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-unlinked-manager-token' })
+        .expect(200);
+      const managerAuthorization = `Bearer ${
+        parseJson<LoginResult>(managerLogin.text).sessionToken
+      }`;
+      const originalEmail = `unlinked-original-${randomUUID()}@example.test`;
+      const created = await request(managerApp)
+        .post('/v1/manager/employees')
+        .set('Authorization', managerAuthorization)
+        .send({
+          email: originalEmail,
+          joinedOn: new Date().toISOString().slice(0, 10),
+          name: 'Unlinked Employee',
+          role: 'CAIXA',
+          status: 'ATIVO',
+        })
+        .expect(201);
+      const employee = parseJson<EmployeeDto>(created.text);
+      const newEmail = `unlinked-new-${randomUUID()}@example.test`;
+      const updated = await request(managerApp)
+        .patch(`/v1/manager/employees/${employee.id}`)
+        .set('Authorization', managerAuthorization)
+        .send({
+          email: `  ${newEmail.toUpperCase()}  `,
+          joinedOn: employee.joinedOn,
+          name: employee.name,
+          role: employee.role,
+          status: employee.status,
+        })
+        .expect(200);
+      assert.deepEqual(
+        {
+          email: parseJson<EmployeeDto>(updated.text).email,
+          googleLinked: parseJson<EmployeeDto>(updated.text).googleLinked,
+        },
+        { email: newEmail, googleLinked: false },
+      );
+
+      await request(
+        createTestApp(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: originalEmail,
+            subject: `unlinked-old-${randomUUID()}`,
+          }),
+        ),
+      )
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-unlinked-old-email-token' })
+        .expect(403);
+      const login = await request(
+        createTestApp(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: newEmail,
+            subject: `unlinked-new-${randomUUID()}`,
+          }),
+        ),
+      )
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-unlinked-new-email-token' })
+        .expect(200);
+      assert.equal(parseJson<LoginResult>(login.text).user.role, 'CAIXA');
+    });
+
+    await test('explicit access email change revokes the old Google access and permits the new account', async () => {
+      const manager = await createStoreWithManager(migrationDatabase, 'access-email-manager');
+      const managerApp = createTestApp(
+        runtimeDatabase,
+        new FakeGoogleVerifier({
+          email: manager.managerEmail,
+          subject: `manager-access-email-${randomUUID()}`,
+        }),
+      );
+      const managerLogin = await request(managerApp)
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-access-email-manager-token' })
+        .expect(200);
+      const managerAuthorization = `Bearer ${
+        parseJson<LoginResult>(managerLogin.text).sessionToken
+      }`;
+      const employeeServiceApp = createApp({
+        authenticationService: new PostgresAuthenticationService(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: manager.managerEmail,
+            subject: `unused-${randomUUID()}`,
+          }),
+          3600,
+        ),
+        employeeService: new PostgresEmployeeService(runtimeDatabase),
+        logger: silentLogger,
+      });
+      const originalEmail = `linked-manager-${randomUUID()}@example.test`;
+      const created = await request(employeeServiceApp)
+        .post('/v1/manager/employees')
+        .set('Authorization', managerAuthorization)
+        .send({
+          email: originalEmail,
+          joinedOn: new Date().toISOString().slice(0, 10),
+          name: 'Linked Manager',
+          role: 'GESTOR',
+          status: 'ATIVO',
+        })
+        .expect(201);
+      const employee = parseJson<EmployeeDto>(created.text);
+      assert.equal(employee.googleLinked, false);
+
+      const originalSubject = `linked-subject-${randomUUID()}`;
+      const originalVerifier = new FakeGoogleVerifier({
+        email: originalEmail,
+        subject: originalSubject,
+      });
+      const originalApp = createTestApp(runtimeDatabase, originalVerifier);
+      const originalLogin = await request(originalApp)
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-linked-manager-token' })
+        .expect(200);
+      const originalLoginBody = parseJson<LoginResult>(originalLogin.text);
+      const originalAuthorization = `Bearer ${originalLoginBody.sessionToken}`;
+
+      const linkedEmployee = await request(employeeServiceApp)
+        .get(`/v1/manager/employees/${employee.id}`)
+        .set('Authorization', managerAuthorization)
+        .expect(200);
+      assert.deepEqual(
+        {
+          email: parseJson<EmployeeDto>(linkedEmployee.text).email,
+          googleLinked: parseJson<EmployeeDto>(linkedEmployee.text).googleLinked,
+        },
+        { email: originalEmail, googleLinked: true },
+      );
+
+      const profileUpdated = await request(employeeServiceApp)
+        .patch(`/v1/manager/employees/${employee.id}`)
+        .set('Authorization', managerAuthorization)
+        .send({
+          email: originalEmail,
+          joinedOn: employee.joinedOn,
+          name: 'Linked Manager Updated',
+          role: employee.role,
+          status: employee.status,
+        })
+        .expect(200);
+      const profile = parseJson<EmployeeDto>(profileUpdated.text);
+      assert.equal(profile.name, 'Linked Manager Updated');
+      assert.equal(profile.email, originalEmail);
+      assert.equal(profile.googleLinked, true);
+
+      const newEmail = `new-linked-manager-${randomUUID()}@example.test`;
+      const silentEdit = await request(employeeServiceApp)
+        .patch(`/v1/manager/employees/${employee.id}`)
+        .set('Authorization', managerAuthorization)
+        .send({
+          email: newEmail,
+          joinedOn: employee.joinedOn,
+          name: profile.name,
+          role: employee.role,
+          status: employee.status,
+        })
+        .expect(409);
+      assert.equal(
+        parseJson<{ code: string }>(silentEdit.text).code,
+        'EMPLOYEE_ACCESS_EMAIL_CHANGE_REQUIRES_EXPLICIT_RESET',
+      );
+
+      const changed = await request(employeeServiceApp)
+        .patch(`/v1/manager/employees/${employee.id}/access-email`)
+        .set('Authorization', managerAuthorization)
+        .send({ email: `  ${newEmail.toUpperCase()}  ` })
+        .expect(200);
+      assert.deepEqual(
+        {
+          email: parseJson<EmployeeDto>(changed.text).email,
+          googleLinked: parseJson<EmployeeDto>(changed.text).googleLinked,
+        },
+        { email: newEmail, googleLinked: false },
+      );
+
+      await request(originalApp)
+        .get('/v1/me')
+        .set('Authorization', originalAuthorization)
+        .expect(401);
+      await request(originalApp)
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-old-account-after-reset-token' })
+        .expect(403);
+
+      const replacementLogin = await request(
+        createTestApp(
+          runtimeDatabase,
+          new FakeGoogleVerifier({
+            email: newEmail,
+            subject: `replacement-subject-${randomUUID()}`,
+          }),
+        ),
+      )
+        .post('/v1/auth/google')
+        .send({ idToken: 'valid-replacement-account-token' })
+        .expect(200);
+      assert.equal(parseJson<LoginResult>(replacementLogin.text).user.role, 'GESTOR');
+
+      const stored = await withMigrationOwner(migrationDatabase, async (transaction) => {
+        const rows = await migrationDatabase.query<{
+          activeIdentities: string;
+          disabledIdentities: string;
+          oldSessionRevoked: boolean;
+          primaryEmail: string;
+        }>(
+          `SELECT
+             app_user.primary_email::TEXT AS "primaryEmail",
+             count(DISTINCT identity.id) FILTER (WHERE identity.disabled_at IS NULL)::TEXT
+               AS "activeIdentities",
+             count(DISTINCT identity.id) FILTER (WHERE identity.disabled_at IS NOT NULL)::TEXT
+               AS "disabledIdentities",
+             bool_and(session.revoked_at IS NOT NULL) FILTER (
+               WHERE session.token_hash = :oldTokenHash
+             ) AS "oldSessionRevoked"
+           FROM metas.users app_user
+           LEFT JOIN metas.auth_identities identity ON identity.user_id = app_user.id
+           LEFT JOIN metas.sessions session ON session.user_id = app_user.id
+           WHERE app_user.id = :userId
+           GROUP BY app_user.id`,
+          {
+            replacements: {
+              oldTokenHash: hashSessionToken(originalLoginBody.sessionToken),
+              userId: originalLoginBody.user.id,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        );
+        return rows[0];
+      });
+      assert.deepEqual(stored, {
+        activeIdentities: '1',
+        disabledIdentities: '1',
+        oldSessionRevoked: true,
+        primaryEmail: newEmail,
+      });
+    });
+
     await test('recurring login uses provider subject instead of a changed email', async () => {
       const fixture = await createEmployeeFixture(migrationDatabase, 'recurring-login');
       const subject = `subject-${randomUUID()}`;
@@ -241,6 +593,16 @@ if (testDatabases === null) {
     });
 
     await test('valid but unauthorized, disabled, inactive and conflicting accounts are denied generically', async () => {
+      const sessionsBeforeUnknown = await withMigrationOwner(
+        migrationDatabase,
+        async (transaction) => {
+          const rows = await migrationDatabase.query<{ count: string }>(
+            'SELECT count(*)::TEXT AS count FROM metas.sessions',
+            { transaction, type: QueryTypes.SELECT },
+          );
+          return rows[0]?.count;
+        },
+      );
       const unknownApp = createTestApp(
         runtimeDatabase,
         new FakeGoogleVerifier({
@@ -253,6 +615,17 @@ if (testDatabases === null) {
         .send({ idToken: 'valid-unknown-account-token' })
         .expect(403);
       assert.equal(parseJson<{ code: string }>(unknown.text).code, 'ACCESS_NOT_AUTHORIZED');
+      const sessionsAfterUnknown = await withMigrationOwner(
+        migrationDatabase,
+        async (transaction) => {
+          const rows = await migrationDatabase.query<{ count: string }>(
+            'SELECT count(*)::TEXT AS count FROM metas.sessions',
+            { transaction, type: QueryTypes.SELECT },
+          );
+          return rows[0]?.count;
+        },
+      );
+      assert.equal(sessionsAfterUnknown, sessionsBeforeUnknown);
 
       const disabled = await createEmployeeFixture(migrationDatabase, 'disabled-user', {
         accountStatus: 'DISABLED',
@@ -308,6 +681,24 @@ if (testDatabases === null) {
         .post('/v1/auth/google')
         .send({ idToken: 'valid-conflicting-subject-token' })
         .expect(403);
+
+      const deniedSessions = await withMigrationOwner(migrationDatabase, async (transaction) =>
+        migrationDatabase.query<{ count: string }>(
+          `SELECT count(*)::TEXT AS count
+           FROM metas.sessions
+           WHERE user_id IN (:disabledUserId, :inactiveUserId, :conflictUserId)`,
+          {
+            replacements: {
+              conflictUserId: conflict.userId,
+              disabledUserId: disabled.userId,
+              inactiveUserId: inactive.userId,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.equal(deniedSessions[0]?.count, '0');
     });
 
     await test('multiple active employee memberships require explicit future selection', async () => {

@@ -4,11 +4,16 @@ export type EmployeeStatus = 'ATIVO' | 'INATIVO';
 
 export interface EmployeeDto {
   email: string;
+  googleLinked: boolean;
   id: string;
   joinedOn: string;
   name: string;
   role: UserRole;
   status: EmployeeStatus;
+}
+
+export interface EmployeeAccessEmailInput {
+  email: string;
 }
 
 export interface EmployeeMutationInput {
@@ -20,6 +25,11 @@ export interface EmployeeMutationInput {
 }
 
 export interface EmployeeService {
+  changeAccessEmail(
+    session: AuthenticatedSession,
+    employeeId: string,
+    input: EmployeeAccessEmailInput,
+  ): Promise<EmployeeDto>;
   create(session: AuthenticatedSession, input: EmployeeMutationInput): Promise<EmployeeDto>;
   getById(session: AuthenticatedSession, employeeId: string): Promise<EmployeeDto>;
   list(session: AuthenticatedSession): Promise<EmployeeDto[]>;

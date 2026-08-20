@@ -1,15 +1,25 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import type { EmployeeFormValues, EmployeeStatus } from '@/features/employees/types/employee.types';
-import { validateEmployeeForm } from '@/features/employees/utils/validateEmployeeForm';
+import type {
+  Employee,
+  EmployeeFormValues,
+  EmployeeStatus,
+} from '@/features/employees/types/employee.types';
+import {
+  normalizeEmployeeEmail,
+  validateEmployeeEmail,
+  validateEmployeeForm,
+} from '@/features/employees/utils/validateEmployeeForm';
 import { USER_ROLE_LABELS, USER_ROLES } from '@/shared/config/userRoles';
 import { AppButton, AppText, AppTextInput } from '@/shared/components';
 import { colors, radius, spacing } from '@/shared/theme';
 import type { UserRole } from '@/shared/types/userRole';
 
 interface EmployeeFormProps {
+  googleLinked?: boolean;
   initialValues: EmployeeFormValues;
+  onChangeAccessEmail?: (email: string) => Promise<Employee | null>;
   submitLabel: string;
   onSubmit: (values: EmployeeFormValues & { role: UserRole }) => Promise<void> | void;
 }
@@ -19,11 +29,23 @@ const STATUS_OPTIONS: readonly { label: string; value: EmployeeStatus }[] = [
   { label: 'Inativo', value: 'INATIVO' },
 ];
 
-export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeFormProps) {
+export function EmployeeForm({
+  googleLinked = false,
+  initialValues,
+  onChangeAccessEmail,
+  onSubmit,
+  submitLabel,
+}: EmployeeFormProps) {
   const [values, setValues] = useState<EmployeeFormValues>(initialValues);
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleLinked, setIsGoogleLinked] = useState(googleLinked);
+  const [isChangingAccessEmail, setIsChangingAccessEmail] = useState(false);
+  const [showAccessEmailChange, setShowAccessEmailChange] = useState(false);
+  const [newAccessEmail, setNewAccessEmail] = useState('');
+  const [accessEmailSubmitted, setAccessEmailSubmitted] = useState(false);
   const errors = useMemo(() => validateEmployeeForm(values), [values]);
+  const accessEmailError = validateEmployeeEmail(newAccessEmail);
 
   function updateValue<Key extends keyof EmployeeFormValues>(
     key: Key,
@@ -43,12 +65,34 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
     try {
       await onSubmit({
         ...values,
-        email: values.email.trim().toLocaleLowerCase('pt-BR'),
+        email: normalizeEmployeeEmail(values.email),
         name: values.name.trim(),
         role: values.role,
       });
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleAccessEmailChange() {
+    setAccessEmailSubmitted(true);
+    if (accessEmailError || !onChangeAccessEmail) {
+      return;
+    }
+
+    setIsChangingAccessEmail(true);
+    try {
+      const employee = await onChangeAccessEmail(normalizeEmployeeEmail(newAccessEmail));
+      if (!employee) {
+        return;
+      }
+      setValues((currentValues) => ({ ...currentValues, email: employee.email }));
+      setIsGoogleLinked(employee.googleLinked);
+      setNewAccessEmail('');
+      setAccessEmailSubmitted(false);
+      setShowAccessEmailChange(false);
+    } finally {
+      setIsChangingAccessEmail(false);
     }
   }
 
@@ -70,12 +114,13 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
       </View>
 
       <View style={styles.fieldGroup}>
-        <AppText variant="label">E-mail</AppText>
+        <AppText variant="label">E-mail de acesso</AppText>
         <AppTextInput
           accessibilityLabel="E-mail do funcionário"
           autoCapitalize="none"
           autoComplete="email"
           autoCorrect={false}
+          editable={!isGoogleLinked}
           error={submitted ? errors.email : undefined}
           inputMode="email"
           keyboardType="email-address"
@@ -85,6 +130,52 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
           value={values.email}
           onChangeText={(value) => updateValue('email', value)}
         />
+        {isGoogleLinked ? (
+          <>
+            <AppText color="textMuted" variant="caption">
+              Esta conta Google já está vinculada. Use a ação abaixo para trocar o acesso.
+            </AppText>
+            <AppButton
+              label="Alterar e-mail de acesso"
+              variant="secondary"
+              onPress={() => setShowAccessEmailChange(true)}
+            />
+          </>
+        ) : null}
+        {showAccessEmailChange ? (
+          <View style={styles.accessEmailChange}>
+            <AppText variant="label">Novo e-mail de acesso</AppText>
+            <AppTextInput
+              accessibilityLabel="Novo e-mail de acesso"
+              autoCapitalize="none"
+              autoComplete="email"
+              autoCorrect={false}
+              error={accessEmailSubmitted ? accessEmailError : undefined}
+              inputMode="email"
+              keyboardType="email-address"
+              placeholder="novo@gmail.com"
+              textContentType="emailAddress"
+              value={newAccessEmail}
+              onChangeText={setNewAccessEmail}
+            />
+            <View style={styles.accessEmailActions}>
+              <AppButton
+                label="Cancelar"
+                variant="secondary"
+                onPress={() => {
+                  setAccessEmailSubmitted(false);
+                  setNewAccessEmail('');
+                  setShowAccessEmailChange(false);
+                }}
+              />
+              <AppButton
+                label="Confirmar troca"
+                loading={isChangingAccessEmail}
+                onPress={() => void handleAccessEmailChange()}
+              />
+            </View>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.fieldGroup}>
@@ -168,6 +259,13 @@ export function EmployeeForm({ initialValues, onSubmit, submitLabel }: EmployeeF
 }
 
 const styles = StyleSheet.create({
+  accessEmailActions: {
+    gap: spacing.sm,
+  },
+  accessEmailChange: {
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
   error: {
     marginLeft: spacing.xs,
   },

@@ -32,7 +32,6 @@ const expectedRlsTables = [
 
 const requiredConstraints = [
   'auth_identities_provider_subject_unique',
-  'auth_identities_user_provider_unique',
   'campaigns_period_valid',
   'campaigns_store_fk',
   'employees_creation_actor_valid',
@@ -48,6 +47,7 @@ const requiredConstraints = [
 ] as const;
 
 const requiredIndexes = [
+  'auth_identities_active_user_provider_unique_idx',
   'auth_identities_provider_email_idx',
   'campaigns_store_closed_idx',
   'campaigns_store_period_idx',
@@ -65,11 +65,13 @@ const expectedSecurityDefinerFunctions = [
   'enforce_employee_manager_invariants',
   'has_active_database_context',
   'manager_close_campaign',
+  'manager_change_employee_access_email',
   'manager_create_campaign',
   'manager_create_employee',
   'manager_get_employee',
   'manager_get_goal_configuration',
   'manager_list_employees',
+  'manager_list_employee_access_states',
   'manager_save_goal_configuration',
   'manager_set_employee_status',
   'manager_update_campaign',

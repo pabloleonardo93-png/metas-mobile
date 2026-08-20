@@ -132,9 +132,12 @@ if (testDatabases === null) {
 
       const updated = await service.update(manager.session, created.id, {
         ...input,
+        email: `updated-${input.email}`,
         name: 'Employee Updated',
         role: 'FARMACEUTICO',
       });
+      assert.equal(updated.email, `updated-${input.email}`);
+      assert.equal(updated.googleLinked, false);
       assert.equal(updated.name, 'Employee Updated');
       assert.equal(updated.role, 'FARMACEUTICO');
 
@@ -157,6 +160,134 @@ if (testDatabases === null) {
         service.getById(storeA.session, employeeB.id),
         (error: unknown) => error instanceof AppError && error.statusCode === 404,
       );
+    });
+
+    await test('linked access email requires the explicit same-store operation', async () => {
+      const storeA = await createManagerFixture(migrationDatabase, 'access-store-a');
+      const storeB = await createManagerFixture(migrationDatabase, 'access-store-b');
+      const target = await service.create(storeA.session, employeeInput('linked-access', 'GESTOR'));
+      const targetUser = await withMigrationOwner(migrationDatabase, async (transaction) => {
+        const rows = await migrationDatabase.query<{ userId: string }>(
+          'SELECT user_id AS "userId" FROM metas.employees WHERE id = :employeeId',
+          {
+            replacements: { employeeId: target.id },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        );
+        assert.ok(rows[0]?.userId);
+        await migrationDatabase.query(
+          `INSERT INTO metas.auth_identities (
+            user_id, provider, provider_subject, provider_email, provider_verified_at
+          ) VALUES (:userId, 'GOOGLE', :subject, :email, now())`,
+          {
+            replacements: {
+              email: target.email,
+              subject: `linked-${randomUUID()}`,
+              userId: rows[0].userId,
+            },
+            transaction,
+          },
+        );
+        return rows[0].userId;
+      });
+
+      const linked = await service.getById(storeA.session, target.id);
+      assert.equal(linked.googleLinked, true);
+      await assert.rejects(
+        service.update(storeA.session, target.id, {
+          ...target,
+          email: `silent-${target.email}`,
+        }),
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.code === 'EMPLOYEE_ACCESS_EMAIL_CHANGE_REQUIRES_EXPLICIT_RESET',
+      );
+      await assert.rejects(
+        service.changeAccessEmail(storeB.session, target.id, {
+          email: `cross-store-${randomUUID()}@example.test`,
+        }),
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.statusCode === 404 &&
+          error.code === 'EMPLOYEE_NOT_FOUND',
+      );
+
+      const duplicateEmail = await withMigrationOwner(migrationDatabase, async (transaction) => {
+        const rows = await migrationDatabase.query<{ email: string }>(
+          'SELECT primary_email::TEXT AS email FROM metas.users WHERE id = :userId',
+          {
+            replacements: { userId: storeA.userId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        );
+        return rows[0]!.email;
+      });
+      await assert.rejects(
+        service.changeAccessEmail(storeA.session, target.id, { email: duplicateEmail }),
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.statusCode === 409 &&
+          error.code === 'EMPLOYEE_ALREADY_EXISTS',
+      );
+
+      const linkedEmailOfAnotherUser = `other-linked-${randomUUID()}@example.test`;
+      await withMigrationOwner(migrationDatabase, async (transaction) => {
+        await migrationDatabase.query(
+          `INSERT INTO metas.auth_identities (
+            user_id, provider, provider_subject, provider_email, provider_verified_at
+          ) VALUES (:userId, 'GOOGLE', :subject, :email, now())`,
+          {
+            replacements: {
+              email: linkedEmailOfAnotherUser,
+              subject: `other-linked-${randomUUID()}`,
+              userId: storeB.userId,
+            },
+            transaction,
+          },
+        );
+      });
+      await assert.rejects(
+        service.changeAccessEmail(storeA.session, target.id, {
+          email: linkedEmailOfAnotherUser,
+        }),
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.statusCode === 409 &&
+          error.code === 'EMPLOYEE_ALREADY_EXISTS',
+      );
+
+      const replacementEmail = `replacement-${randomUUID()}@example.test`;
+      const changed = await service.changeAccessEmail(storeA.session, target.id, {
+        email: `  ${replacementEmail.toUpperCase()}  `,
+      });
+      assert.equal(changed.email, replacementEmail);
+      assert.equal(changed.googleLinked, false);
+
+      const identityState = await withMigrationOwner(migrationDatabase, async (transaction) => {
+        const rows = await migrationDatabase.query<{
+          active: string;
+          disabled: string;
+          primaryEmail: string;
+        }>(
+          `SELECT
+             app_user.primary_email::TEXT AS "primaryEmail",
+             count(identity.id) FILTER (WHERE identity.disabled_at IS NULL)::TEXT AS active,
+             count(identity.id) FILTER (WHERE identity.disabled_at IS NOT NULL)::TEXT AS disabled
+           FROM metas.users app_user
+           LEFT JOIN metas.auth_identities identity ON identity.user_id = app_user.id
+           WHERE app_user.id = :userId
+           GROUP BY app_user.id`,
+          { replacements: { userId: targetUser }, transaction, type: QueryTypes.SELECT },
+        );
+        return rows[0];
+      });
+      assert.deepEqual(identityState, {
+        active: '0',
+        disabled: '1',
+        primaryEmail: replacementEmail,
+      });
     });
 
     await test('non-manager and duplicate email are rejected', async () => {
@@ -197,6 +328,80 @@ if (testDatabases === null) {
         ),
       );
       assert.equal(activeManagers[0]?.count, '1');
+    });
+
+    await test('access email functions and active identity uniqueness remain hardened', async () => {
+      const result = await withMigrationOwner(migrationDatabase, async (transaction) => {
+        const functions = await migrationDatabase.query<{
+          fixedSearchPath: boolean;
+          name: string;
+          owner: string;
+          publicExecute: boolean;
+          runtimeExecute: boolean;
+          securityDefiner: boolean;
+        }>(
+          `SELECT
+             procedure.proname AS name,
+             owner.rolname AS owner,
+             procedure.prosecdef AS "securityDefiner",
+             procedure.proconfig @> ARRAY['search_path=pg_catalog']::TEXT[]
+               AS "fixedSearchPath",
+             has_function_privilege('public', procedure.oid, 'EXECUTE') AS "publicExecute",
+             has_function_privilege(
+               'metas_app_runtime',
+               procedure.oid,
+               'EXECUTE'
+             ) AS "runtimeExecute"
+           FROM pg_proc procedure
+           JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+           JOIN pg_roles owner ON owner.oid = procedure.proowner
+           WHERE namespace.nspname = 'metas'
+             AND procedure.proname IN (
+               'authenticate_google_identity',
+               'manager_change_employee_access_email',
+               'manager_list_employee_access_states'
+             )
+           ORDER BY procedure.proname`,
+          { transaction, type: QueryTypes.SELECT },
+        );
+        const indexes = await migrationDatabase.query<{ definition: string }>(
+          `SELECT indexdef AS definition
+           FROM pg_indexes
+           WHERE schemaname = 'metas'
+             AND indexname = 'auth_identities_active_user_provider_unique_idx'`,
+          { transaction, type: QueryTypes.SELECT },
+        );
+        const constraints = await migrationDatabase.query<{ count: string }>(
+          `SELECT count(*)::TEXT AS count
+           FROM pg_constraint
+           WHERE conname = 'auth_identities_user_provider_unique'`,
+          { transaction, type: QueryTypes.SELECT },
+        );
+        return { constraints, functions, indexes };
+      });
+
+      assert.equal(result.functions.length, 3);
+      for (const functionSecurity of result.functions) {
+        assert.deepEqual(
+          {
+            fixedSearchPath: functionSecurity.fixedSearchPath,
+            owner: functionSecurity.owner,
+            publicExecute: functionSecurity.publicExecute,
+            runtimeExecute: functionSecurity.runtimeExecute,
+            securityDefiner: functionSecurity.securityDefiner,
+          },
+          {
+            fixedSearchPath: true,
+            owner: 'metas_migration_owner',
+            publicExecute: false,
+            runtimeExecute: true,
+            securityDefiner: true,
+          },
+        );
+      }
+      assert.equal(result.constraints[0]?.count, '0');
+      assert.match(result.indexes[0]?.definition ?? '', /UNIQUE/u);
+      assert.match(result.indexes[0]?.definition ?? '', /disabled_at IS NULL/u);
     });
   } finally {
     await Promise.all([migrationDatabase.close(), runtimeDatabase.close()]);

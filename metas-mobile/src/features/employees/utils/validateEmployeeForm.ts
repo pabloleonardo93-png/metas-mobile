@@ -7,10 +7,22 @@ import { USER_ROLES } from '@/shared/config/userRoles';
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
+export const normalizeEmployeeEmail = (value: string): string => value.trim().toLowerCase();
+
+export function validateEmployeeEmail(value: string): string | undefined {
+  const normalizedEmail = normalizeEmployeeEmail(value);
+  if (!normalizedEmail) {
+    return 'Informe o e-mail.';
+  }
+  if (!emailPattern.test(normalizedEmail)) {
+    return 'Informe um e-mail válido.';
+  }
+  return undefined;
+}
+
 export function validateEmployeeForm(values: EmployeeFormValues): EmployeeFormErrors {
   const errors: EmployeeFormErrors = {};
   const normalizedName = values.name.trim();
-  const normalizedEmail = values.email.trim();
 
   if (!normalizedName) {
     errors.name = 'Informe o nome.';
@@ -18,11 +30,7 @@ export function validateEmployeeForm(values: EmployeeFormValues): EmployeeFormEr
     errors.name = 'Use pelo menos 3 caracteres.';
   }
 
-  if (!normalizedEmail) {
-    errors.email = 'Informe o e-mail.';
-  } else if (!emailPattern.test(normalizedEmail)) {
-    errors.email = 'Informe um e-mail válido.';
-  }
+  errors.email = validateEmployeeEmail(values.email);
 
   if (!datePattern.test(values.joinedAt)) {
     errors.joinedAt = 'Use o formato AAAA-MM-DD.';
