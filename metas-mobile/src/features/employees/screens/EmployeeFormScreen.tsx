@@ -128,12 +128,7 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
   }
 
   function handleCreateSuccess() {
-    Alert.alert(
-      'Cadastro concluído',
-      'Funcionário adicionado com sucesso.',
-      [{ onPress: () => router.replace(appRoutes.managerTeam), text: 'Voltar para Equipe' }],
-      { cancelable: false },
-    );
+    router.replace(appRoutes.managerTeam);
   }
 
   function confirmAccessEmailChange(): Promise<boolean> {

@@ -1,4 +1,4 @@
-import { useMemo, useReducer, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type {
@@ -6,14 +6,8 @@ import type {
   EmployeeFormValues,
   EmployeeStatus,
 } from '@/features/employees/types/employee.types';
-import {
-  createEmployeeMutationRunner,
-  type EmployeeMutationFeedback,
-} from '@/features/employees/utils/employeeMutationFeedback';
-import {
-  employeeFormFeedbackReducer,
-  submitEmployeeForm,
-} from '@/features/employees/utils/employeeFormSubmission';
+import { createEmployeeMutationRunner } from '@/features/employees/utils/employeeMutationFeedback';
+import { submitEmployeeForm } from '@/features/employees/utils/employeeFormSubmission';
 import {
   normalizeEmployeeEmail,
   validateEmployeeEmail,
@@ -21,6 +15,7 @@ import {
 } from '@/features/employees/utils/validateEmployeeForm';
 import { USER_ROLE_LABELS, USER_ROLES } from '@/shared/config/userRoles';
 import { AppButton, AppText, AppTextInput } from '@/shared/components';
+import { useToast } from '@/shared/toast/ToastContext';
 import { colors, radius, spacing } from '@/shared/theme';
 import type { UserRole } from '@/shared/types/userRole';
 
@@ -40,32 +35,6 @@ const STATUS_OPTIONS: readonly { label: string; value: EmployeeStatus }[] = [
   { label: 'Inativo', value: 'INATIVO' },
 ];
 
-function FeedbackMessage({ feedback }: { feedback: EmployeeMutationFeedback }) {
-  return (
-    <View
-      accessibilityLiveRegion="polite"
-      style={[
-        styles.feedback,
-        feedback.type === 'error' ? styles.errorFeedback : styles.successFeedback,
-      ]}
-    >
-      <View
-        style={[
-          styles.feedbackDot,
-          feedback.type === 'error' ? styles.errorDot : styles.successDot,
-        ]}
-      />
-      <AppText
-        color={feedback.type === 'error' ? 'error' : 'success'}
-        style={styles.feedbackText}
-        variant="caption"
-      >
-        {feedback.message}
-      </AppText>
-    </View>
-  );
-}
-
 export function EmployeeForm({
   googleLinked = false,
   initialValues,
@@ -76,6 +45,7 @@ export function EmployeeForm({
   submitLabel,
   submitSuccessMessage,
 }: EmployeeFormProps) {
+  const { hideToast, showToast } = useToast();
   const [values, setValues] = useState<EmployeeFormValues>(initialValues);
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -84,10 +54,6 @@ export function EmployeeForm({
   const [showAccessEmailChange, setShowAccessEmailChange] = useState(false);
   const [newAccessEmail, setNewAccessEmail] = useState('');
   const [accessEmailSubmitted, setAccessEmailSubmitted] = useState(false);
-  const [submitFeedback, dispatchSubmitFeedback] = useReducer(employeeFormFeedbackReducer, null);
-  const [accessEmailFeedback, setAccessEmailFeedback] = useState<EmployeeMutationFeedback | null>(
-    null,
-  );
   const submitRunner = useMemo(() => createEmployeeMutationRunner(), []);
   const accessEmailRunner = useMemo(() => createEmployeeMutationRunner(), []);
   const errors = useMemo(() => validateEmployeeForm(values), [values]);
@@ -98,7 +64,7 @@ export function EmployeeForm({
     value: EmployeeFormValues[Key],
   ) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
-    dispatchSubmitFeedback({ type: 'cleared' });
+    hideToast();
   }
 
   async function handleSubmit() {
@@ -111,9 +77,11 @@ export function EmployeeForm({
         success: submitSuccessMessage,
       },
       onFeedback: (feedback) => {
-        dispatchSubmitFeedback(
-          feedback ? { feedback, type: 'shown' } : { type: 'cleared' },
-        );
+        if (feedback) {
+          showToast(feedback);
+        } else {
+          hideToast();
+        }
       },
       onFinished: () => setIsSubmitting(false),
       onStarted: () => setIsSubmitting(true),
@@ -139,14 +107,14 @@ export function EmployeeForm({
       {
         onFinished: () => setIsChangingAccessEmail(false),
         onStarted: () => {
-          setAccessEmailFeedback(null);
+          hideToast();
           setIsChangingAccessEmail(true);
         },
       },
     );
     if (!outcome) return;
     if (!outcome.ok) {
-      setAccessEmailFeedback(outcome.feedback);
+      showToast(outcome.feedback);
       return;
     }
 
@@ -157,7 +125,7 @@ export function EmployeeForm({
       setNewAccessEmail('');
       setAccessEmailSubmitted(false);
       setShowAccessEmailChange(false);
-      setAccessEmailFeedback(outcome.feedback);
+      showToast(outcome.feedback);
     }
   }
 
@@ -204,7 +172,7 @@ export function EmployeeForm({
               label="Alterar e-mail de acesso"
               variant="secondary"
               onPress={() => {
-                setAccessEmailFeedback(null);
+                hideToast();
                 setShowAccessEmailChange(true);
               }}
             />
@@ -225,7 +193,7 @@ export function EmployeeForm({
               textContentType="emailAddress"
               value={newAccessEmail}
               onChangeText={(value) => {
-                setAccessEmailFeedback(null);
+                hideToast();
                 setNewAccessEmail(value);
               }}
             />
@@ -235,7 +203,7 @@ export function EmployeeForm({
                 variant="secondary"
                 onPress={() => {
                   setAccessEmailSubmitted(false);
-                  setAccessEmailFeedback(null);
+                  hideToast();
                   setNewAccessEmail('');
                   setShowAccessEmailChange(false);
                 }}
@@ -248,7 +216,6 @@ export function EmployeeForm({
             </View>
           </View>
         ) : null}
-        {accessEmailFeedback ? <FeedbackMessage feedback={accessEmailFeedback} /> : null}
       </View>
 
       <View style={styles.fieldGroup}>
@@ -327,7 +294,6 @@ export function EmployeeForm({
       </View>
 
       <AppButton label={submitLabel} loading={isSubmitting} onPress={() => void handleSubmit()} />
-      {submitFeedback ? <FeedbackMessage feedback={submitFeedback} /> : null}
     </View>
   );
 }
@@ -342,27 +308,6 @@ const styles = StyleSheet.create({
   },
   error: {
     marginLeft: spacing.xs,
-  },
-  errorDot: {
-    backgroundColor: colors.error,
-  },
-  errorFeedback: {
-    backgroundColor: colors.primarySubtle,
-  },
-  feedback: {
-    alignItems: 'center',
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-  feedbackDot: {
-    borderRadius: radius.pill,
-    height: 8,
-    width: 8,
-  },
-  feedbackText: {
-    flex: 1,
   },
   fieldGroup: {
     gap: spacing.sm,
@@ -408,11 +353,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     padding: spacing.xs,
-  },
-  successDot: {
-    backgroundColor: colors.success,
-  },
-  successFeedback: {
-    backgroundColor: colors.successSubtle,
   },
 });

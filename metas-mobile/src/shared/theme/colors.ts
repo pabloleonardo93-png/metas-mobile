@@ -9,6 +9,7 @@ export const colors = {
   textMuted: '#796968',
   border: '#E8D8D6',
   error: '#B42318',
+  errorSubtle: '#FDECEA',
   disabled: '#D8CECC',
   focus: '#F21F26',
   success: '#147D64',

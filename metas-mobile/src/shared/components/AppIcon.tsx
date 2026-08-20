@@ -1,12 +1,15 @@
 import Svg, { Path } from 'react-native-svg';
 
 export type AppIconName =
+  | 'alert-circle'
   | 'arrow-left'
   | 'calendar'
   | 'chart'
   | 'chevron-right'
+  | 'check-circle'
   | 'edit'
   | 'home'
+  | 'info'
   | 'mail'
   | 'package'
   | 'plus'
@@ -24,13 +27,16 @@ interface AppIconProps {
 }
 
 const ICON_PATHS: Record<AppIconName, string> = {
+  'alert-circle': 'M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
   'arrow-left': 'M19 12H5m6-6-6 6 6 6',
   calendar:
     'M7 2v3m10-3v3M4 9h16M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z',
   chart: 'M4 20V10m6 10V4m6 16v-7m5 7H2',
+  'check-circle': 'm8 12 3 3 5-6m5 3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
   'chevron-right': 'm9 18 6-6-6-6',
   edit: 'M13.5 6.5 17.5 10.5M4 20h4l11.5-11.5a2.8 2.8 0 0 0-4-4L4 16v4Z',
   home: 'M3 10.8 12 3l9 7.8V21h-6v-6H9v6H3V10.8Z',
+  info: 'M12 11v6m0-10h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
   mail: 'M3 6.5A3.5 3.5 0 0 1 6.5 3h11A3.5 3.5 0 0 1 21 6.5v11a3.5 3.5 0 0 1-3.5 3.5h-11A3.5 3.5 0 0 1 3 17.5v-11Zm1 0 8 6 8-6',
   package: 'm4 7 8-4 8 4-8 4-8-4Zm0 0v10l8 4 8-4V7M12 11v10M8 5l8 4',
   plus: 'M12 5v14M5 12h14',

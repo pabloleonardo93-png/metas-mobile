@@ -19,7 +19,7 @@ function GoogleMark() {
 }
 
 export function LoginForm() {
-  const { errorMessage, isAuthenticating, loginWithGoogle } = useAuth();
+  const { isAuthenticating, loginWithGoogle } = useAuth();
   const isWeb = Platform.OS === 'web';
 
   return (
@@ -33,17 +33,6 @@ export function LoginForm() {
         variant="secondary"
         onPress={() => void loginWithGoogle()}
       />
-
-      {errorMessage ? (
-        <AppText
-          accessibilityLiveRegion="polite"
-          color="error"
-          style={styles.message}
-          variant="caption"
-        >
-          {errorMessage}
-        </AppText>
-      ) : null}
     </View>
   );
 }
@@ -67,8 +56,5 @@ const styles = StyleSheet.create({
     height: 28,
     justifyContent: 'center',
     width: 28,
-  },
-  message: {
-    textAlign: 'center',
   },
 });

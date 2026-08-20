@@ -239,8 +239,10 @@ test('prevents protected routes from reopening for an unauthenticated user', () 
 test('maps authorization, rate limit, and network errors without exposing internals', () => {
   assert.equal(
     getLoginErrorMessage({ code: 'ACCESS_NOT_AUTHORIZED', status: 403 }),
-    'Não foi possível autorizar o acesso desta conta.',
+    'Esta conta não possui acesso ao aplicativo.',
   );
   assert.match(getLoginErrorMessage({ status: 429 }), /Muitas tentativas/u);
-  assert.match(getLoginErrorMessage({ code: 'NETWORK_ERROR', status: null }), /conectar/u);
+  const networkMessage = getLoginErrorMessage({ code: 'NETWORK_ERROR', status: null });
+  assert.match(networkMessage, /conectar/u);
+  assert.notEqual(networkMessage, 'Esta conta não possui acesso ao aplicativo.');
 });

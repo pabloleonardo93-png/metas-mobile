@@ -30,7 +30,6 @@ const {
   createEmployeeMutationRunner,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeMutationFeedback.js');
 const {
-  employeeFormFeedbackReducer,
   submitEmployeeForm,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeFormSubmission.js');
 const {
@@ -269,10 +268,7 @@ test('invalid employee submit is visible, skips the API, and clears globally on 
   let feedback = null;
   let submitCalls = 0;
   const setFeedback = (nextFeedback) => {
-    feedback = employeeFormFeedbackReducer(
-      feedback,
-      nextFeedback ? { feedback: nextFeedback, type: 'shown' } : { type: 'cleared' },
-    );
+    feedback = nextFeedback;
   };
 
   const result = await submitEmployeeForm({
@@ -295,7 +291,7 @@ test('invalid employee submit is visible, skips the API, and clears globally on 
   assert.match(validateEmployeeForm(invalidValues).name, /3 caracteres/u);
   assert.match(validateEmployeeForm(invalidValues).email, /e-mail válido/u);
 
-  feedback = employeeFormFeedbackReducer(feedback, { type: 'cleared' });
+  feedback = null;
   assert.equal(feedback, null);
   const nameCorrectedErrors = validateEmployeeForm({ ...invalidValues, name: 'Junior' });
   assert.equal(nameCorrectedErrors.name, undefined);
@@ -433,7 +429,7 @@ test('access email mutation feedback is independent and preserves safe API error
   assert.equal(conflict.feedback.type, 'error');
 });
 
-test('employee edit feedback stays local until a field is edited again', () => {
+test('employee operation feedback uses the global toast and keeps field errors inline', () => {
   const formSource = fs.readFileSync(
     path.resolve('src/features/employees/components/EmployeeForm.tsx'),
     'utf8',
@@ -447,12 +443,15 @@ test('employee edit feedback stays local until a field is edited again', () => {
     'utf8',
   );
 
-  assert.match(formSource, /dispatchSubmitFeedback\(\{ type: 'cleared' \}\);/u);
+  assert.match(formSource, /const \{ hideToast, showToast \} = useToast\(\);/u);
+  assert.match(formSource, /setValues[\s\S]*hideToast\(\);/u);
   assert.match(formSource, /submitEmployeeForm\(\{/u);
   assert.match(submissionSource, /Revise os campos destacados\./u);
   assert.match(screenSource, /Funcionário adicionado com sucesso\./u);
   assert.match(screenSource, /Funcionário atualizado com sucesso\./u);
   assert.match(formSource, /E-mail de acesso alterado com sucesso\./u);
+  assert.doesNotMatch(formSource, /function FeedbackMessage/u);
+  assert.doesNotMatch(screenSource, /Cadastro concluído/u);
   assert.doesNotMatch(screenSource, /managerEmployeeDetails\(newEmployee/u);
   assert.doesNotMatch(
     screenSource,

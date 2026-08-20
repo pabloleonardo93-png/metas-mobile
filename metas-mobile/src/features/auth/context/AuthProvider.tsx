@@ -8,6 +8,7 @@ import { sessionTokenStorage } from '@/features/auth/storage/sessionTokenStorage
 import type { AuthStatus, AuthUser } from '@/features/auth/types/auth.types';
 import { getLoginErrorMessage } from '@/features/auth/utils/authErrorMessage';
 import { setUnauthorizedHandler } from '@/shared/api/apiClient';
+import { useToast } from '@/shared/toast/ToastContext';
 
 const sessionController = new AuthSessionController(
   authApi,
@@ -16,6 +17,7 @@ const sessionController = new AuthSessionController(
 );
 
 export function AuthProvider({ children }: PropsWithChildren) {
+  const { hideToast, showToast } = useToast();
   const [status, setStatus] = useState<AuthStatus>('restoring');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -71,6 +73,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     setIsAuthenticating(true);
     setErrorMessage(null);
+    hideToast();
     try {
       const authenticatedUser = await sessionController.loginWithGoogle();
       if (authenticatedUser) {
@@ -78,13 +81,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setStatus('authenticated');
       }
     } catch (error: unknown) {
-      setErrorMessage(getLoginErrorMessage(error));
+      showToast({ message: getLoginErrorMessage(error), type: 'error' });
     } finally {
       setIsAuthenticating(false);
     }
-  }, [isAuthenticating]);
+  }, [hideToast, isAuthenticating, showToast]);
 
   const logout = useCallback(async () => {
+    hideToast();
     setIsAuthenticating(true);
     setUser(null);
     setStatus('unauthenticated');
@@ -96,14 +100,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } finally {
       setIsAuthenticating(false);
     }
-  }, []);
+  }, [hideToast]);
 
   const clearLocalSession = useCallback(async () => {
+    hideToast();
     setUser(null);
     setStatus('unauthenticated');
     setErrorMessage(null);
     await sessionController.clearLocalSession();
-  }, []);
+  }, [hideToast]);
 
   useEffect(() => {
     setUnauthorizedHandler(clearLocalSession);

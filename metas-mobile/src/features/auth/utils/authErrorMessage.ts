@@ -9,7 +9,7 @@ export function getLoginErrorMessage(error: unknown): string {
     typeof error === 'object' && error !== null ? (error as AuthErrorLike) : undefined;
 
   if (errorLike?.status === 403 || errorLike?.code === 'ACCESS_NOT_AUTHORIZED') {
-    return 'Não foi possível autorizar o acesso desta conta.';
+    return 'Esta conta não possui acesso ao aplicativo.';
   }
   if (errorLike?.status === 429) {
     return 'Muitas tentativas. Aguarde um momento e tente novamente.';

@@ -14,10 +14,6 @@ export const EMPLOYEE_FORM_VALIDATION_FEEDBACK: EmployeeMutationFeedback = {
   type: 'error',
 };
 
-export type EmployeeFormFeedbackAction =
-  | { type: 'cleared' }
-  | { feedback: EmployeeMutationFeedback; type: 'shown' };
-
 export type EmployeeFormSubmissionResult = 'duplicate' | 'failed' | 'invalid' | 'succeeded';
 
 interface EmployeeFormSubmissionOptions {
@@ -33,13 +29,6 @@ interface EmployeeFormSubmissionOptions {
   onSuccess(): void;
   runner: EmployeeMutationRunner;
   values: EmployeeFormValues;
-}
-
-export function employeeFormFeedbackReducer(
-  _state: EmployeeMutationFeedback | null,
-  action: EmployeeFormFeedbackAction,
-): EmployeeMutationFeedback | null {
-  return action.type === 'shown' ? action.feedback : null;
 }
 
 export async function submitEmployeeForm({
