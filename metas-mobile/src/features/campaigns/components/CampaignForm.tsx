@@ -8,6 +8,7 @@ import {
 } from '@/features/campaigns/utils/campaignDates';
 import { validateCampaignForm } from '@/features/campaigns/utils/validateCampaignForm';
 import { AppButton, AppIcon, AppText, AppTextInput, BrlCurrencyInput } from '@/shared/components';
+import { useToast } from '@/shared/toast/ToastContext';
 import { colors, spacing } from '@/shared/theme';
 import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
 
@@ -18,6 +19,7 @@ interface CampaignFormProps {
 }
 
 export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignFormProps) {
+  const { hideToast } = useToast();
   const [values, setValues] = useState<CampaignFormValues>(initialValues);
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,6 +30,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
     value: CampaignFormValues[Key],
   ) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
+    hideToast();
   }
 
   async function handleSubmit() {

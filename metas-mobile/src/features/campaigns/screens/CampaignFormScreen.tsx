@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -19,6 +18,7 @@ import { formatCampaignDate } from '@/features/campaigns/utils/campaignDates';
 import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
 import { AppButton, AppScreenHeader, AppText, ScreenContainer } from '@/shared/components';
+import { useToast } from '@/shared/toast/ToastContext';
 import { colors, spacing } from '@/shared/theme';
 import { formatCentsForBrlInput } from '@/shared/utils/brlCurrency';
 
@@ -39,6 +39,7 @@ function getCampaignId(value: string | string[] | undefined): string {
 }
 
 export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
+  const { hideToast, showToast } = useToast();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
@@ -95,14 +96,22 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
   }
 
   async function handleSubmit(input: CampaignInput) {
+    hideToast();
     try {
       const savedCampaign =
         mode === 'edit' && campaign
           ? await updateCampaign(campaign, input)
           : await createCampaign(input);
+      showToast({
+        message:
+          mode === 'create'
+            ? 'Campanha criada com sucesso.'
+            : 'Campanha atualizada com sucesso.',
+        type: 'success',
+      });
       router.replace(appRoutes.managerCampaignDetails(savedCampaign.id));
     } catch (error: unknown) {
-      Alert.alert('Não foi possível salvar', getCampaignApiErrorMessage(error));
+      showToast({ message: getCampaignApiErrorMessage(error), type: 'error' });
     }
   }
 

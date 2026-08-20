@@ -7,12 +7,10 @@ import type {
   GoalGeneralSettingsErrors,
   GoalConfigurationSaveInput,
 } from '@/features/metas/types/goalSettings.types';
-import {
-  type GoalSaveFeedback,
-  saveGoalConfigurationWithFeedback,
-} from '@/features/metas/utils/saveGoalConfigurationFeedback';
+import { saveGoalConfigurationWithFeedback } from '@/features/metas/utils/saveGoalConfigurationFeedback';
 import { validateGoalSettings } from '@/features/metas/utils/validateGoalSettings';
 import { AppButton, AppText, BrlCurrencyInput } from '@/shared/components';
+import { useToast } from '@/shared/toast/ToastContext';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
 import {
   centsToReais,
@@ -62,11 +60,11 @@ export function GeneralGoalSettingsForm({
   onChange,
   onSave,
 }: GeneralGoalSettingsFormProps) {
+  const { hideToast, showToast } = useToast();
   const [values, setValues] = useState<GoalGeneralSettingsFormValues>(() =>
     toFormValues(initialValues),
   );
   const [errors, setErrors] = useState<GoalGeneralSettingsErrors>({});
-  const [feedback, setFeedback] = useState<GoalSaveFeedback | null>(null);
 
   function updateValue<Key extends keyof GoalGeneralSettingsFormValues>(
     key: Key,
@@ -76,7 +74,7 @@ export function GeneralGoalSettingsForm({
 
     setValues(nextValues);
     setErrors((currentErrors) => ({ ...currentErrors, [key]: undefined }));
-    setFeedback(null);
+    hideToast();
     onChange(toSettings(nextValues));
   }
 
@@ -89,13 +87,13 @@ export function GeneralGoalSettingsForm({
     setErrors(validationErrors);
 
     if (Object.keys(validationErrors).length > 0) {
-      setFeedback(null);
+      hideToast();
       return;
     }
 
     if (monthlyTargetCents === null || soldAmountCents === null) return;
 
-    setFeedback(
+    showToast(
       await saveGoalConfigurationWithFeedback(() =>
         onSave({
           monthlyTargetCents,
@@ -148,30 +146,6 @@ export function GeneralGoalSettingsForm({
         loading={isSaving}
         onPress={() => void handleSubmit()}
       />
-
-      {feedback ? (
-        <View
-          accessibilityLiveRegion="polite"
-          style={[
-            styles.confirmation,
-            feedback.type === 'error' ? styles.errorFeedback : styles.successFeedback,
-          ]}
-        >
-          <View
-            style={[
-              styles.confirmationDot,
-              feedback.type === 'error' ? styles.errorDot : styles.successDot,
-            ]}
-          />
-          <AppText
-            color={feedback.type === 'error' ? 'error' : 'success'}
-            style={styles.confirmationText}
-            variant="caption"
-          >
-            {feedback.message}
-          </AppText>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -186,35 +160,7 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     padding: spacing.md,
   },
-  confirmation: {
-    alignItems: 'center',
-    backgroundColor: colors.primarySubtle,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-  confirmationDot: {
-    borderRadius: radius.pill,
-    height: 8,
-    width: 8,
-  },
-  confirmationText: {
-    flex: 1,
-  },
-  errorDot: {
-    backgroundColor: colors.error,
-  },
-  errorFeedback: {
-    backgroundColor: colors.primarySubtle,
-  },
   fieldGroup: {
     gap: spacing.sm,
-  },
-  successDot: {
-    backgroundColor: colors.success,
-  },
-  successFeedback: {
-    backgroundColor: colors.successSubtle,
   },
 });

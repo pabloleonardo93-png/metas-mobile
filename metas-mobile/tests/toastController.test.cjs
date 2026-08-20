@@ -110,3 +110,65 @@ test('global host survives routes and inline login feedback is removed', () => {
   assert.doesNotMatch(loginSource, /errorMessage/u);
   assert.doesNotMatch(loginSource, /accessibilityLiveRegion/u);
 });
+
+test('goal, campaign, and profile action results use the existing global toast', () => {
+  const goalFormSource = fs.readFileSync(
+    path.resolve('src/features/metas/components/GeneralGoalSettingsForm.tsx'),
+    'utf8',
+  );
+  const campaignFormSource = fs.readFileSync(
+    path.resolve('src/features/campaigns/screens/CampaignFormScreen.tsx'),
+    'utf8',
+  );
+  const campaignDetailsSource = fs.readFileSync(
+    path.resolve('src/features/campaigns/screens/CampaignDetailsScreen.tsx'),
+    'utf8',
+  );
+  const profileSource = fs.readFileSync(
+    path.resolve('src/features/profile/screens/ProfileScreen.tsx'),
+    'utf8',
+  );
+
+  assert.match(goalFormSource, /showToast\([\s\S]*saveGoalConfigurationWithFeedback/u);
+  assert.doesNotMatch(goalFormSource, /styles\.confirmation/u);
+  assert.match(campaignFormSource, /Campanha criada com sucesso\./u);
+  assert.match(campaignFormSource, /Campanha atualizada com sucesso\./u);
+  assert.doesNotMatch(campaignFormSource, /Alert\.alert/u);
+  assert.match(campaignDetailsSource, /Campanha encerrada com sucesso\./u);
+  assert.match(profileSource, /type: 'info'/u);
+  assert.doesNotMatch(profileSource, /Alert\.alert\(title/u);
+});
+
+test('field errors, load states, and destructive confirmations remain in their proper UI', () => {
+  const authGateSource = fs.readFileSync(
+    path.resolve('src/features/auth/components/AuthGate.tsx'),
+    'utf8',
+  );
+  const campaignDetailsSource = fs.readFileSync(
+    path.resolve('src/features/campaigns/screens/CampaignDetailsScreen.tsx'),
+    'utf8',
+  );
+  const employeeFormSource = fs.readFileSync(
+    path.resolve('src/features/employees/components/EmployeeForm.tsx'),
+    'utf8',
+  );
+  const employeeScreenSource = fs.readFileSync(
+    path.resolve('src/features/employees/screens/EmployeeFormScreen.tsx'),
+    'utf8',
+  );
+  const profileSource = fs.readFileSync(
+    path.resolve('src/features/profile/screens/ProfileScreen.tsx'),
+    'utf8',
+  );
+  const weightHelpSource = fs.readFileSync(
+    path.resolve('src/features/metas/components/TeamDistributionSection.tsx'),
+    'utf8',
+  );
+
+  assert.match(authGateSource, /retryRestore/u);
+  assert.match(employeeFormSource, /error=\{submitted \? errors\.email/u);
+  assert.match(employeeScreenSource, /Alert\.alert\([\s\S]*Alterar e-mail de acesso/u);
+  assert.match(campaignDetailsSource, /Alert\.alert\([\s\S]*Encerrar campanha/u);
+  assert.match(profileSource, /Alert\.alert\([\s\S]*Deseja sair\?/u);
+  assert.match(weightHelpSource, /Como funcionam os pesos/u);
+});

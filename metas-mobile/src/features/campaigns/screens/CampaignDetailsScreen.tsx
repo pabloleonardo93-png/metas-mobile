@@ -26,6 +26,7 @@ import {
   ScreenContainer,
 } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import { useToast } from '@/shared/toast/ToastContext';
 import { formatCentsAsBrl } from '@/shared/utils/brlCurrency';
 import { formatPercentage } from '@/shared/utils/formatters';
 
@@ -34,6 +35,7 @@ function getCampaignId(value: string | string[] | undefined): string {
 }
 
 export function CampaignDetailsScreen() {
+  const { hideToast, showToast } = useToast();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
@@ -87,10 +89,14 @@ export function CampaignDetailsScreen() {
         style: 'destructive',
         text: 'Encerrar',
         onPress: () => {
+          hideToast();
           setIsClosing(true);
           void closeCampaign(campaignToClose)
+            .then(() => {
+              showToast({ message: 'Campanha encerrada com sucesso.', type: 'success' });
+            })
             .catch((error: unknown) => {
-              Alert.alert('Não foi possível encerrar', getCampaignApiErrorMessage(error));
+              showToast({ message: getCampaignApiErrorMessage(error), type: 'error' });
             })
             .finally(() => setIsClosing(false));
         },

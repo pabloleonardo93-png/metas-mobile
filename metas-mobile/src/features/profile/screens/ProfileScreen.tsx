@@ -7,6 +7,7 @@ import { ProfileAccountSection } from '@/features/profile/components/ProfileAcco
 import { ProfileIdentity } from '@/features/profile/components/ProfileIdentity';
 import { ProfileInfoSection } from '@/features/profile/components/ProfileInfoSection';
 import { ScreenContainer } from '@/shared/components';
+import { useToast } from '@/shared/toast/ToastContext';
 import { colors, spacing } from '@/shared/theme';
 
 type ProfileUser = Pick<AuthUser, 'email' | 'joinedOn' | 'name' | 'status'>;
@@ -18,11 +19,15 @@ interface ProfileScreenProps {
 
 export function ProfileScreen({ bottomNavigation, user }: ProfileScreenProps) {
   const { logout } = useAuth();
+  const { showToast } = useToast();
   const { width } = useWindowDimensions();
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
 
   function showComingSoon(title: string) {
-    Alert.alert(title, 'Esta opção será disponibilizada em uma próxima etapa.');
+    showToast({
+      message: `${title}: esta opção será disponibilizada em uma próxima etapa.`,
+      type: 'info',
+    });
   }
 
   function confirmLogout() {
