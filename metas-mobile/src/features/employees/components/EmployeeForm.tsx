@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useReducer, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type {
@@ -10,6 +10,10 @@ import {
   createEmployeeMutationRunner,
   type EmployeeMutationFeedback,
 } from '@/features/employees/utils/employeeMutationFeedback';
+import {
+  employeeFormFeedbackReducer,
+  submitEmployeeForm,
+} from '@/features/employees/utils/employeeFormSubmission';
 import {
   normalizeEmployeeEmail,
   validateEmployeeEmail,
@@ -80,7 +84,7 @@ export function EmployeeForm({
   const [showAccessEmailChange, setShowAccessEmailChange] = useState(false);
   const [newAccessEmail, setNewAccessEmail] = useState('');
   const [accessEmailSubmitted, setAccessEmailSubmitted] = useState(false);
-  const [submitFeedback, setSubmitFeedback] = useState<EmployeeMutationFeedback | null>(null);
+  const [submitFeedback, dispatchSubmitFeedback] = useReducer(employeeFormFeedbackReducer, null);
   const [accessEmailFeedback, setAccessEmailFeedback] = useState<EmployeeMutationFeedback | null>(
     null,
   );
@@ -94,44 +98,30 @@ export function EmployeeForm({
     value: EmployeeFormValues[Key],
   ) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
-    setSubmitFeedback(null);
+    dispatchSubmitFeedback({ type: 'cleared' });
   }
 
   async function handleSubmit() {
     setSubmitted(true);
 
-    if (Object.keys(errors).length > 0 || !values.role) {
-      setSubmitFeedback({ message: 'Revise os campos destacados.', type: 'error' });
-      return;
-    }
-    const role = values.role;
-
-    const outcome = await submitRunner.run(
-      () =>
-        Promise.resolve(
-          onSubmit({
-            ...values,
-            email: normalizeEmployeeEmail(values.email),
-            name: values.name.trim(),
-            role,
-          }),
-        ),
-      {
+    await submitEmployeeForm({
+      errors,
+      messages: {
         error: submitErrorMessage,
         success: submitSuccessMessage,
       },
-      {
-        onFinished: () => setIsSubmitting(false),
-        onStarted: () => {
-          setIsSubmitting(true);
-          setSubmitFeedback(null);
-        },
+      onFeedback: (feedback) => {
+        dispatchSubmitFeedback(
+          feedback ? { feedback, type: 'shown' } : { type: 'cleared' },
+        );
       },
-    );
-    if (!outcome) return;
-
-    setSubmitFeedback(outcome.feedback);
-    if (outcome.ok) onSubmitSuccess?.();
+      onFinished: () => setIsSubmitting(false),
+      onStarted: () => setIsSubmitting(true),
+      onSubmit,
+      onSuccess: () => onSubmitSuccess?.(),
+      runner: submitRunner,
+      values,
+    });
   }
 
   async function handleAccessEmailChange() {

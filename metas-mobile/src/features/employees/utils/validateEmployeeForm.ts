@@ -37,7 +37,10 @@ export function validateEmployeeForm(
     errors.name = 'Use pelo menos 3 caracteres.';
   }
 
-  errors.email = validateEmployeeEmail(values.email);
+  const emailError = validateEmployeeEmail(values.email);
+  if (emailError) {
+    errors.email = emailError;
+  }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(values.joinedAt)) {
     errors.joinedAt = 'Use o formato AAAA-MM-DD.';

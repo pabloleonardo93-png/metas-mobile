@@ -30,6 +30,10 @@ const {
   createEmployeeMutationRunner,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeMutationFeedback.js');
 const {
+  employeeFormFeedbackReducer,
+  submitEmployeeForm,
+} = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeFormSubmission.js');
+const {
   countActiveEmployees,
   summarizeTeamByRole,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employee.utils.js');
@@ -247,6 +251,169 @@ test('employee creation uses its own success and error feedback', async () => {
     failure.feedback.message,
     'Não foi possível adicionar o funcionário. Tente novamente.',
   );
+
+  const conflict = await runner.run(async () => {
+    throw { code: 'EMPLOYEE_ALREADY_EXISTS', status: 409 };
+  }, messages);
+  assert.equal(conflict.feedback.message, 'Já existe um cadastro com este e-mail.');
+});
+
+test('invalid employee submit is visible, skips the API, and clears globally on field edit', async () => {
+  const invalidValues = {
+    email: 'email-invalido',
+    joinedAt: '2026-08-19',
+    name: 'Ju',
+    role: '',
+    status: 'ATIVO',
+  };
+  let feedback = null;
+  let submitCalls = 0;
+  const setFeedback = (nextFeedback) => {
+    feedback = employeeFormFeedbackReducer(
+      feedback,
+      nextFeedback ? { feedback: nextFeedback, type: 'shown' } : { type: 'cleared' },
+    );
+  };
+
+  const result = await submitEmployeeForm({
+    errors: validateEmployeeForm(invalidValues),
+    messages: { error: 'erro', success: 'sucesso' },
+    onFeedback: setFeedback,
+    onFinished: () => {},
+    onStarted: () => {},
+    onSubmit: async () => {
+      submitCalls += 1;
+    },
+    onSuccess: () => {},
+    runner: createEmployeeMutationRunner(),
+    values: invalidValues,
+  });
+
+  assert.equal(result, 'invalid');
+  assert.equal(submitCalls, 0);
+  assert.equal(feedback.message, 'Revise os campos destacados.');
+  assert.match(validateEmployeeForm(invalidValues).name, /3 caracteres/u);
+  assert.match(validateEmployeeForm(invalidValues).email, /e-mail válido/u);
+
+  feedback = employeeFormFeedbackReducer(feedback, { type: 'cleared' });
+  assert.equal(feedback, null);
+  const nameCorrectedErrors = validateEmployeeForm({ ...invalidValues, name: 'Junior' });
+  assert.equal(nameCorrectedErrors.name, undefined);
+  assert.match(nameCorrectedErrors.email, /e-mail válido/u);
+  assert.equal(
+    validateEmployeeForm({ ...invalidValues, email: 'junior@example.test' }).email,
+    undefined,
+  );
+});
+
+test('valid employee submit posts once, updates shared state, and confirms only after success', async () => {
+  const calls = [];
+  let releaseRequest;
+  const requestGate = new Promise((resolve) => {
+    releaseRequest = resolve;
+  });
+  const client = new EmployeeApiClient(
+    async (path, options) => {
+      calls.push({ options, path });
+      await requestGate;
+      return responseEmployee;
+    },
+    { getToken: async () => 'session-token' },
+  );
+  const values = {
+    email: 'ana@example.test',
+    joinedAt: '2026-08-19',
+    name: 'Ana Souza',
+    role: 'BALCONISTA',
+    status: 'ATIVO',
+  };
+  const runner = createEmployeeMutationRunner();
+  let employeesState = initialEmployeesState;
+  let feedback = null;
+  let isLoading = false;
+  let confirmations = 0;
+  const options = {
+    errors: validateEmployeeForm(values),
+    messages: {
+      error: 'Não foi possível adicionar o funcionário. Tente novamente.',
+      success: 'Funcionário adicionado com sucesso.',
+    },
+    onFeedback: (nextFeedback) => {
+      feedback = nextFeedback;
+    },
+    onFinished: () => {
+      isLoading = false;
+    },
+    onStarted: () => {
+      isLoading = true;
+    },
+    onSubmit: async (input) => {
+      const employee = await client.create(input);
+      employeesState = employeesReducer(employeesState, { employee, type: 'upserted' });
+    },
+    onSuccess: () => {
+      confirmations += 1;
+    },
+    runner,
+    values,
+  };
+
+  assert.deepEqual(options.errors, {});
+
+  const firstSubmit = submitEmployeeForm(options);
+  const duplicateSubmit = await submitEmployeeForm(options);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(isLoading, true);
+  assert.equal(duplicateSubmit, 'duplicate');
+  assert.equal(calls.filter((call) => call.options.method === 'POST').length, 1);
+  assert.equal(confirmations, 0);
+
+  releaseRequest();
+  assert.equal(await firstSubmit, 'succeeded');
+  assert.equal(isLoading, false);
+  assert.equal(employeesState.employees.length, 1);
+  assert.equal(feedback.message, 'Funcionário adicionado com sucesso.');
+  assert.equal(confirmations, 1);
+});
+
+test('failed employee submit keeps confirmation and navigation blocked', async () => {
+  let feedback = null;
+  let confirmations = 0;
+  const values = {
+    email: 'mateus@example.test',
+    joinedAt: '2026-08-19',
+    name: 'Mateus Silva',
+    role: 'CAIXA',
+    status: 'ATIVO',
+  };
+  const originalValues = { ...values };
+
+  const result = await submitEmployeeForm({
+    errors: validateEmployeeForm(values),
+    messages: {
+      error: 'Não foi possível adicionar o funcionário. Tente novamente.',
+      success: 'Funcionário adicionado com sucesso.',
+    },
+    onFeedback: (nextFeedback) => {
+      feedback = nextFeedback;
+    },
+    onFinished: () => {},
+    onStarted: () => {},
+    onSubmit: async () => {
+      throw { status: 500 };
+    },
+    onSuccess: () => {
+      confirmations += 1;
+    },
+    runner: createEmployeeMutationRunner(),
+    values,
+  });
+
+  assert.equal(result, 'failed');
+  assert.equal(confirmations, 0);
+  assert.deepEqual(values, originalValues);
+  assert.equal(feedback.message, 'Não foi possível adicionar o funcionário. Tente novamente.');
 });
 
 test('access email mutation feedback is independent and preserves safe API errors', async () => {
@@ -275,9 +442,14 @@ test('employee edit feedback stays local until a field is edited again', () => {
     path.resolve('src/features/employees/screens/EmployeeFormScreen.tsx'),
     'utf8',
   );
+  const submissionSource = fs.readFileSync(
+    path.resolve('src/features/employees/utils/employeeFormSubmission.ts'),
+    'utf8',
+  );
 
-  assert.match(formSource, /setSubmitFeedback\(null\);/u);
-  assert.match(formSource, /Revise os campos destacados\./u);
+  assert.match(formSource, /dispatchSubmitFeedback\(\{ type: 'cleared' \}\);/u);
+  assert.match(formSource, /submitEmployeeForm\(\{/u);
+  assert.match(submissionSource, /Revise os campos destacados\./u);
   assert.match(screenSource, /Funcionário adicionado com sucesso\./u);
   assert.match(screenSource, /Funcionário atualizado com sucesso\./u);
   assert.match(formSource, /E-mail de acesso alterado com sucesso\./u);
@@ -316,7 +488,7 @@ test('upsert makes created and edited employees visible without reloading', () =
 });
 
 test('employee joined date uses the device local civil day instead of UTC', () => {
-  const brazilNight = {
+  const brazilNightAt2355WhileUtcIsNextDay = {
     getDate: () => 19,
     getFullYear: () => 2026,
     getMonth: () => 7,
@@ -329,14 +501,23 @@ test('employee joined date uses the device local civil day instead of UTC', () =
     status: 'ATIVO',
   };
 
-  assert.equal(formatLocalDateIso(brazilNight), '2026-08-19');
-  assert.equal(validateEmployeeForm(validValues, brazilNight).joinedAt, undefined);
+  assert.equal(formatLocalDateIso(brazilNightAt2355WhileUtcIsNextDay), '2026-08-19');
   assert.equal(
-    validateEmployeeForm({ ...validValues, joinedAt: '2026-08-20' }, brazilNight).joinedAt,
+    validateEmployeeForm(validValues, brazilNightAt2355WhileUtcIsNextDay).joinedAt,
+    undefined,
+  );
+  assert.equal(
+    validateEmployeeForm(
+      { ...validValues, joinedAt: '2026-08-20' },
+      brazilNightAt2355WhileUtcIsNextDay,
+    ).joinedAt,
     'Informe uma data válida que não esteja no futuro.',
   );
   assert.equal(
-    validateEmployeeForm({ ...validValues, joinedAt: '2026-02-31' }, brazilNight).joinedAt,
+    validateEmployeeForm(
+      { ...validValues, joinedAt: '2026-02-31' },
+      brazilNightAt2355WhileUtcIsNextDay,
+    ).joinedAt,
     'Informe uma data válida que não esteja no futuro.',
   );
 });
