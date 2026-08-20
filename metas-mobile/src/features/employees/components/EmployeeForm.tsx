@@ -24,6 +24,8 @@ interface EmployeeFormProps {
   googleLinked?: boolean;
   initialValues: EmployeeFormValues;
   onChangeAccessEmail?: (email: string) => Promise<Employee | null>;
+  onSubmitSuccess?: () => void;
+  submitErrorMessage: string;
   submitSuccessMessage: string;
   submitLabel: string;
   onSubmit: (values: EmployeeFormValues & { role: UserRole }) => Promise<void> | void;
@@ -65,6 +67,8 @@ export function EmployeeForm({
   initialValues,
   onChangeAccessEmail,
   onSubmit,
+  onSubmitSuccess,
+  submitErrorMessage,
   submitLabel,
   submitSuccessMessage,
 }: EmployeeFormProps) {
@@ -97,6 +101,7 @@ export function EmployeeForm({
     setSubmitted(true);
 
     if (Object.keys(errors).length > 0 || !values.role) {
+      setSubmitFeedback({ message: 'Revise os campos destacados.', type: 'error' });
       return;
     }
     const role = values.role;
@@ -112,7 +117,7 @@ export function EmployeeForm({
           }),
         ),
       {
-        error: 'Não foi possível salvar as alterações. Tente novamente.',
+        error: submitErrorMessage,
         success: submitSuccessMessage,
       },
       {
@@ -123,7 +128,10 @@ export function EmployeeForm({
         },
       },
     );
-    if (outcome) setSubmitFeedback(outcome.feedback);
+    if (!outcome) return;
+
+    setSubmitFeedback(outcome.feedback);
+    if (outcome.ok) onSubmitSuccess?.();
   }
 
   async function handleAccessEmailChange() {

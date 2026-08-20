@@ -3,9 +3,13 @@ import type {
   EmployeeFormValues,
 } from '@/features/employees/types/employee.types';
 import { USER_ROLES } from '@/shared/config/userRoles';
+import {
+  formatLocalDateIso,
+  isValidCivilDateIso,
+  type LocalDateSource,
+} from '@/shared/utils/localDate';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export const normalizeEmployeeEmail = (value: string): string => value.trim().toLowerCase();
 
@@ -20,7 +24,10 @@ export function validateEmployeeEmail(value: string): string | undefined {
   return undefined;
 }
 
-export function validateEmployeeForm(values: EmployeeFormValues): EmployeeFormErrors {
+export function validateEmployeeForm(
+  values: EmployeeFormValues,
+  today: LocalDateSource = new Date(),
+): EmployeeFormErrors {
   const errors: EmployeeFormErrors = {};
   const normalizedName = values.name.trim();
 
@@ -32,15 +39,10 @@ export function validateEmployeeForm(values: EmployeeFormValues): EmployeeFormEr
 
   errors.email = validateEmployeeEmail(values.email);
 
-  if (!datePattern.test(values.joinedAt)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(values.joinedAt)) {
     errors.joinedAt = 'Use o formato AAAA-MM-DD.';
-  } else {
-    const joinedAt = new Date(`${values.joinedAt}T00:00:00`);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    if (Number.isNaN(joinedAt.getTime()) || joinedAt > today) {
-      errors.joinedAt = 'Informe uma data válida que não esteja no futuro.';
-    }
+  } else if (!isValidCivilDateIso(values.joinedAt) || values.joinedAt > formatLocalDateIso(today)) {
+    errors.joinedAt = 'Informe uma data válida que não esteja no futuro.';
   }
 
   if (!values.role || !USER_ROLES.some((role) => role === values.role)) {

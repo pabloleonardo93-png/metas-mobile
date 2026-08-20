@@ -20,18 +20,21 @@ import { ManagerBottomNavigation } from '@/features/dashboard/components/Manager
 import { AppButton, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 import type { UserRole } from '@/shared/types/userRole';
+import { formatLocalDateIso } from '@/shared/utils/localDate';
 
 interface EmployeeFormScreenProps {
   mode: 'create' | 'edit';
 }
 
-const newEmployeeInitialValues: EmployeeFormValues = {
-  email: '',
-  joinedAt: new Date().toISOString().slice(0, 10),
-  name: '',
-  role: '',
-  status: 'ATIVO',
-};
+function createNewEmployeeInitialValues(): EmployeeFormValues {
+  return {
+    email: '',
+    joinedAt: formatLocalDateIso(),
+    name: '',
+    role: '',
+    status: 'ATIVO',
+  };
+}
 
 function getEmployeeId(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
@@ -64,7 +67,7 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
       };
     }
 
-    return newEmployeeInitialValues;
+    return createNewEmployeeInitialValues();
   }, [employee, mode]);
 
   if (mode === 'edit' && (isLoading || errorMessage)) {
@@ -121,9 +124,16 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
       return;
     }
 
-    const newEmployee = await addEmployee(input);
-    Alert.alert('Funcionário adicionado', 'O cadastro foi salvo.');
-    router.replace(appRoutes.managerEmployeeDetails(newEmployee.id));
+    await addEmployee(input);
+  }
+
+  function handleCreateSuccess() {
+    Alert.alert(
+      'Cadastro concluído',
+      'Funcionário adicionado com sucesso.',
+      [{ onPress: () => router.replace(appRoutes.managerTeam), text: 'Voltar para Equipe' }],
+      { cancelable: false },
+    );
   }
 
   function confirmAccessEmailChange(): Promise<boolean> {
@@ -172,6 +182,11 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
             googleLinked={mode === 'edit' ? employee?.googleLinked : false}
             initialValues={initialValues}
             submitLabel={mode === 'create' ? 'Adicionar funcionário' : 'Salvar alterações'}
+            submitErrorMessage={
+              mode === 'create'
+                ? 'Não foi possível adicionar o funcionário. Tente novamente.'
+                : 'Não foi possível salvar as alterações. Tente novamente.'
+            }
             submitSuccessMessage={
               mode === 'create'
                 ? 'Funcionário adicionado com sucesso.'
@@ -179,6 +194,7 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
             }
             onChangeAccessEmail={mode === 'edit' ? handleChangeAccessEmail : undefined}
             onSubmit={handleSubmit}
+            onSubmitSuccess={mode === 'create' ? handleCreateSuccess : undefined}
           />
         </ScrollView>
       </KeyboardAvoidingView>

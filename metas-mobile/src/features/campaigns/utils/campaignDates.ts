@@ -65,7 +65,3 @@ export function formatCampaignDate(value: string): string {
 export function formatCampaignPeriod(startDate: string, endDate: string): string {
   return `${formatCampaignDate(startDate)} - ${formatCampaignDate(endDate)}`;
 }
-
-export function getTodayIso(date = new Date()): string {
-  return `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}

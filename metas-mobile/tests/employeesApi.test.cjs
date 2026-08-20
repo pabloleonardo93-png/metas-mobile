@@ -36,7 +36,11 @@ const {
 const {
   normalizeEmployeeEmail,
   validateEmployeeEmail,
+  validateEmployeeForm,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/validateEmployeeForm.js');
+const {
+  formatLocalDateIso,
+} = require('../node_modules/.cache/calculation-tests/src/shared/utils/localDate.js');
 const {
   buildManagerTeamPerformance,
   calculateManagerDashboardMetrics,
@@ -224,6 +228,27 @@ test('employee form mutation reports success, failure, loading, and blocks dupli
   );
 });
 
+test('employee creation uses its own success and error feedback', async () => {
+  const runner = createEmployeeMutationRunner();
+  const messages = {
+    error: 'Não foi possível adicionar o funcionário. Tente novamente.',
+    success: 'Funcionário adicionado com sucesso.',
+  };
+
+  const success = await runner.run(async () => responseEmployee, messages);
+  assert.equal(success.ok, true);
+  assert.equal(success.feedback.message, 'Funcionário adicionado com sucesso.');
+
+  const failure = await runner.run(async () => {
+    throw { status: 500 };
+  }, messages);
+  assert.equal(failure.ok, false);
+  assert.equal(
+    failure.feedback.message,
+    'Não foi possível adicionar o funcionário. Tente novamente.',
+  );
+});
+
 test('access email mutation feedback is independent and preserves safe API errors', async () => {
   const runner = createEmployeeMutationRunner();
   const messages = {
@@ -252,8 +277,11 @@ test('employee edit feedback stays local until a field is edited again', () => {
   );
 
   assert.match(formSource, /setSubmitFeedback\(null\);/u);
+  assert.match(formSource, /Revise os campos destacados\./u);
+  assert.match(screenSource, /Funcionário adicionado com sucesso\./u);
   assert.match(screenSource, /Funcionário atualizado com sucesso\./u);
   assert.match(formSource, /E-mail de acesso alterado com sucesso\./u);
+  assert.doesNotMatch(screenSource, /managerEmployeeDetails\(newEmployee/u);
   assert.doesNotMatch(
     screenSource,
     /router\.replace\(appRoutes\.managerEmployeeDetails\(updatedEmployee/u,
@@ -279,6 +307,38 @@ test('upsert makes created and edited employees visible without reloading', () =
   assert.equal(updated.employees.length, 1);
   assert.equal(updated.employees[0].name, 'Ana Lima');
   assert.equal(updated.employees[0].status, 'INATIVO');
+
+  const realtimeReplay = employeesReducer(updated, {
+    employee: { ...employee, name: 'Ana Lima', status: 'INATIVO' },
+    type: 'upserted',
+  });
+  assert.equal(realtimeReplay.employees.length, 1);
+});
+
+test('employee joined date uses the device local civil day instead of UTC', () => {
+  const brazilNight = {
+    getDate: () => 19,
+    getFullYear: () => 2026,
+    getMonth: () => 7,
+  };
+  const validValues = {
+    email: 'junior@example.test',
+    joinedAt: '2026-08-19',
+    name: 'Junior Silva',
+    role: 'BALCONISTA',
+    status: 'ATIVO',
+  };
+
+  assert.equal(formatLocalDateIso(brazilNight), '2026-08-19');
+  assert.equal(validateEmployeeForm(validValues, brazilNight).joinedAt, undefined);
+  assert.equal(
+    validateEmployeeForm({ ...validValues, joinedAt: '2026-08-20' }, brazilNight).joinedAt,
+    'Informe uma data válida que não esteja no futuro.',
+  );
+  assert.equal(
+    validateEmployeeForm({ ...validValues, joinedAt: '2026-02-31' }, brazilNight).joinedAt,
+    'Informe uma data válida que não esteja no futuro.',
+  );
 });
 
 test('manager dashboard follows shared employee role and status mutations', () => {
