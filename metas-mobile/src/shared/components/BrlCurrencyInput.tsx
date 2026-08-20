@@ -1,12 +1,11 @@
-import { type ComponentProps, type ComponentRef, useRef } from 'react';
+import type { ComponentProps } from 'react';
 
 import { AppText } from '@/shared/components/AppText';
 import { AppTextInput } from '@/shared/components/AppTextInput';
 import {
-  formatCentsForBrlInput,
-  parseBrlCurrencyToCents,
+  isEditableBrlCurrencyInput,
+  normalizeBrlCurrencyInput,
   sanitizeBrlCurrencyInput,
-  shouldPreserveBrlZeroDuringDeletion,
 } from '@/shared/utils/brlCurrency';
 
 interface BrlCurrencyInputProps extends Omit<
@@ -19,40 +18,29 @@ interface BrlCurrencyInputProps extends Omit<
 
 export function BrlCurrencyInput({
   leftAdornment = <AppText color="textMuted">R$</AppText>,
+  onBlur,
   onChangeText,
-  onKeyPress,
   value,
   ...props
 }: BrlCurrencyInputProps) {
-  const inputRef = useRef<ComponentRef<typeof AppTextInput>>(null);
-  const zeroValue = formatCentsForBrlInput(0);
-
-  const restoreZeroText = () => {
-    inputRef.current?.setNativeProps({ text: zeroValue });
-  };
-
   return (
     <AppTextInput
-      ref={inputRef}
       {...props}
-      inputMode="numeric"
-      keyboardType="number-pad"
+      inputMode="decimal"
+      keyboardType="numeric"
       leftAdornment={leftAdornment}
       value={value}
-      onChangeText={(nextValue) => {
-        if (shouldPreserveBrlZeroDuringDeletion(value, nextValue)) {
-          restoreZeroText();
-          return;
+      onBlur={(event) => {
+        const formattedValue = normalizeBrlCurrencyInput(value);
+        if (formattedValue && formattedValue !== value) {
+          onChangeText(formattedValue);
         }
-
-        const formattedValue = sanitizeBrlCurrencyInput(nextValue);
-        if (formattedValue) onChangeText(formattedValue);
+        onBlur?.(event);
       }}
-      onKeyPress={(event) => {
-        onKeyPress?.(event);
-        if (event.nativeEvent.key === 'Backspace' && parseBrlCurrencyToCents(value) === 0) {
-          event.preventDefault();
-          restoreZeroText();
+      onChangeText={(nextValue) => {
+        const sanitizedValue = sanitizeBrlCurrencyInput(nextValue);
+        if (isEditableBrlCurrencyInput(sanitizedValue)) {
+          onChangeText(sanitizedValue);
         }
       }}
     />

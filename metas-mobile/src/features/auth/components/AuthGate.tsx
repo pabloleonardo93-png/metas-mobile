@@ -1,10 +1,10 @@
-import { useEffect, type PropsWithChildren } from 'react';
-import { useRouter, useSegments } from 'expo-router';
+import type { PropsWithChildren } from 'react';
+import { Redirect, useSegments } from 'expo-router';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { appRoutes } from '@/config/routes';
 import { useAuth } from '@/features/auth/context/AuthContext';
-import { getAuthenticatedArea } from '@/features/auth/utils/authRouting';
+import { getAuthRedirect } from '@/features/auth/utils/authRouting';
 import { AppButton, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
 
@@ -42,44 +42,25 @@ function RestoreError() {
 }
 
 export function AuthGate({ children }: PropsWithChildren) {
-  const router = useRouter();
   const segments = useSegments();
   const { status, user } = useAuth();
-
-  useEffect(() => {
-    if (status === 'restoring' || status === 'restore-error') {
-      return;
-    }
-
-    const routeGroup = segments[0];
-    const isAuthRoute = routeGroup === '(auth)';
-    const isEmployeeRoute = routeGroup === '(funcionario)';
-    const isManagerRoute = routeGroup === '(gestor)';
-
-    if (status === 'unauthenticated') {
-      if (!isAuthRoute) {
-        router.replace(appRoutes.login);
-      }
-      return;
-    }
-
-    if (user && getAuthenticatedArea(user.role) === 'manager') {
-      if (!isManagerRoute) {
-        router.replace(appRoutes.managerHome);
-      }
-      return;
-    }
-
-    if (!isEmployeeRoute) {
-      router.replace(appRoutes.employeeHome);
-    }
-  }, [router, segments, status, user]);
 
   if (status === 'restoring') {
     return <RestoringSession />;
   }
   if (status === 'restore-error') {
     return <RestoreError />;
+  }
+
+  const redirect = getAuthRedirect(status, user?.role ?? null, segments[0]);
+  if (redirect) {
+    const href =
+      redirect === 'login'
+        ? appRoutes.login
+        : redirect === 'manager-home'
+          ? appRoutes.managerHome
+          : appRoutes.employeeHome;
+    return <Redirect href={href} />;
   }
 
   return children;

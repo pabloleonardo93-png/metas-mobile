@@ -86,23 +86,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const logout = useCallback(async () => {
     setIsAuthenticating(true);
+    setUser(null);
+    setStatus('unauthenticated');
+    setErrorMessage(null);
     try {
       await sessionController.logout();
     } catch {
       // Local logout is authoritative on the device even when the API is unavailable.
     } finally {
-      setUser(null);
-      setStatus('unauthenticated');
-      setErrorMessage(null);
       setIsAuthenticating(false);
     }
   }, []);
 
   const clearLocalSession = useCallback(async () => {
-    await sessionController.clearLocalSession();
     setUser(null);
     setStatus('unauthenticated');
     setErrorMessage(null);
+    await sessionController.clearLocalSession();
   }, []);
 
   useEffect(() => {

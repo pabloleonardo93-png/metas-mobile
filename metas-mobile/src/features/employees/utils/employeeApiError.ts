@@ -3,9 +3,12 @@ interface ApiErrorLike {
   status?: unknown;
 }
 
-export function getEmployeeApiErrorMessage(error: unknown): string {
+export function getEmployeeApiErrorMessage(
+  error: unknown,
+  fallbackMessage = 'Não foi possível carregar a equipe.',
+): string {
   if (typeof error !== 'object' || error === null) {
-    return 'Não foi possível carregar a equipe.';
+    return fallbackMessage;
   }
 
   const apiError = error as ApiErrorLike;
@@ -39,5 +42,5 @@ export function getEmployeeApiErrorMessage(error: unknown): string {
   if (apiError.status === null) {
     return 'Não foi possível conectar ao servidor. Tente novamente.';
   }
-  return 'Não foi possível concluir a operação com o funcionário.';
+  return fallbackMessage;
 }

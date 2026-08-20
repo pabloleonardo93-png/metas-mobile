@@ -27,6 +27,9 @@ const {
   getEmployeeApiErrorMessage,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeApiError.js');
 const {
+  createEmployeeMutationRunner,
+} = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employeeMutationFeedback.js');
+const {
   countActiveEmployees,
   summarizeTeamByRole,
 } = require('../node_modules/.cache/calculation-tests/src/features/employees/utils/employee.utils.js');
@@ -37,7 +40,6 @@ const {
 const {
   buildManagerTeamPerformance,
   calculateManagerDashboardMetrics,
-  formatActiveTeamComposition,
 } = require('../node_modules/.cache/calculation-tests/src/features/dashboard/utils/calculateManagerDashboard.js');
 
 const responseEmployee = {
@@ -167,6 +169,97 @@ test('network, 401, and 403 failures remain controlled for the UI', async () => 
   assert.match(getEmployeeApiErrorMessage({ status: 403 }), /permissão/u);
 });
 
+test('employee form mutation reports success, failure, loading, and blocks duplicate submits', async () => {
+  const runner = createEmployeeMutationRunner();
+  const lifecycle = [];
+  let releaseMutation;
+  let mutationCalls = 0;
+  const mutation = new Promise((resolve) => {
+    releaseMutation = resolve;
+  });
+  const messages = {
+    error: 'Não foi possível salvar as alterações. Tente novamente.',
+    success: 'Funcionário atualizado com sucesso.',
+  };
+
+  const first = runner.run(
+    async () => {
+      mutationCalls += 1;
+      await mutation;
+      return 'updated';
+    },
+    messages,
+    {
+      onFinished: () => lifecycle.push('finished'),
+      onStarted: () => lifecycle.push('started'),
+    },
+  );
+  const duplicate = await runner.run(async () => 'duplicate', messages);
+
+  assert.equal(runner.isRunning(), true);
+  assert.equal(duplicate, null);
+  assert.equal(mutationCalls, 1);
+  assert.deepEqual(lifecycle, ['started']);
+
+  releaseMutation();
+  assert.deepEqual(await first, {
+    feedback: { message: 'Funcionário atualizado com sucesso.', type: 'success' },
+    ok: true,
+    value: 'updated',
+  });
+  assert.equal(runner.isRunning(), false);
+  assert.deepEqual(lifecycle, ['started', 'finished']);
+
+  assert.deepEqual(
+    await runner.run(async () => {
+      throw { status: 500 };
+    }, messages),
+    {
+      feedback: {
+        message: 'Não foi possível salvar as alterações. Tente novamente.',
+        type: 'error',
+      },
+      ok: false,
+    },
+  );
+});
+
+test('access email mutation feedback is independent and preserves safe API errors', async () => {
+  const runner = createEmployeeMutationRunner();
+  const messages = {
+    error: 'Não foi possível alterar o e-mail de acesso. Tente novamente.',
+    success: 'E-mail de acesso alterado com sucesso.',
+  };
+
+  const success = await runner.run(async () => ({ email: 'novo@example.test' }), messages);
+  assert.equal(success.feedback.message, 'E-mail de acesso alterado com sucesso.');
+
+  const conflict = await runner.run(async () => {
+    throw { code: 'EMPLOYEE_ALREADY_EXISTS', status: 409 };
+  }, messages);
+  assert.equal(conflict.feedback.message, 'Já existe um cadastro com este e-mail.');
+  assert.equal(conflict.feedback.type, 'error');
+});
+
+test('employee edit feedback stays local until a field is edited again', () => {
+  const formSource = fs.readFileSync(
+    path.resolve('src/features/employees/components/EmployeeForm.tsx'),
+    'utf8',
+  );
+  const screenSource = fs.readFileSync(
+    path.resolve('src/features/employees/screens/EmployeeFormScreen.tsx'),
+    'utf8',
+  );
+
+  assert.match(formSource, /setSubmitFeedback\(null\);/u);
+  assert.match(screenSource, /Funcionário atualizado com sucesso\./u);
+  assert.match(formSource, /E-mail de acesso alterado com sucesso\./u);
+  assert.doesNotMatch(
+    screenSource,
+    /router\.replace\(appRoutes\.managerEmployeeDetails\(updatedEmployee/u,
+  );
+});
+
 test('upsert makes created and edited employees visible without reloading', () => {
   const employee = {
     ...responseEmployee,
@@ -225,7 +318,6 @@ test('manager dashboard follows shared employee role and status mutations', () =
   assert.equal(promotedSummary.GESTOR, 2);
   assert.equal(promotedSummary.BALCONISTA, 0);
   assert.deepEqual(buildManagerTeamPerformance(promotedSummary), []);
-  assert.equal(formatActiveTeamComposition(promotedSummary), '2 gestores • 0 funcionários');
 
   const inactive = employeesReducer(promoted, {
     employee: { ...attendant, role: 'GESTOR', status: 'INATIVO' },
@@ -246,21 +338,15 @@ test('manager dashboard follows shared employee role and status mutations', () =
     ).activeEmployees,
     1,
   );
-});
 
-test('active team composition pluralizes managers and operational employees', () => {
-  assert.equal(
-    formatActiveTeamComposition({ BALCONISTA: 1, CAIXA: 0, FARMACEUTICO: 0, GESTOR: 1 }),
-    '1 gestor • 1 funcionário',
-  );
-  assert.equal(
-    formatActiveTeamComposition({ BALCONISTA: 1, CAIXA: 1, FARMACEUTICO: 1, GESTOR: 2 }),
-    '2 gestores • 3 funcionários',
-  );
-  assert.equal(
-    formatActiveTeamComposition({ BALCONISTA: 0, CAIXA: 0, FARMACEUTICO: 0, GESTOR: 0 }),
-    '0 gestores • 0 funcionários',
-  );
+  const reactivatedAsAttendant = employeesReducer(inactive, {
+    employee: { ...attendant, role: 'BALCONISTA', status: 'ATIVO' },
+    type: 'upserted',
+  });
+  const reactivatedSummary = summarizeTeamByRole(reactivatedAsAttendant.employees);
+  assert.equal(countActiveEmployees(reactivatedAsAttendant.employees), 2);
+  assert.equal(reactivatedSummary.GESTOR, 1);
+  assert.equal(reactivatedSummary.BALCONISTA, 1);
 });
 
 test('runtime source does not contain the removed demonstration catalogs', () => {

@@ -68,7 +68,7 @@ export function ManagerHomeScreen() {
       >
         <ManagerHeader name={currentManager.name} />
         <StoreGoalCard metrics={metrics} />
-        <ManagerQuickSummary metrics={metrics} teamSummary={teamSummary} />
+        <ManagerQuickSummary metrics={metrics} />
         <TeamPerformance team={teamPerformance} />
         <PriorityProducts
           campaigns={activeCampaigns}

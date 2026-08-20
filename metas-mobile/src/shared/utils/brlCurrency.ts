@@ -9,47 +9,37 @@ export function sanitizeBrlCurrencyInput(value: string): string {
     return '';
   }
 
-  const digits = value.replace(/\D/g, '');
-  const cents = BigInt(digits || '0');
-
-  if (cents > MAX_SAFE_CENTS) {
-    return '';
-  }
-
-  return formatCentsForBrlInput(Number(cents));
+  return value.replace(/[^\d.,]/g, '');
 }
 
-export function getBrlCurrencyValueAfterBackspace(value: string): string {
-  const cents = parseBrlCurrencyToCents(value);
-  if (cents === null || cents === 0) {
-    return formatCentsForBrlInput(0);
+export function isEditableBrlCurrencyInput(value: string): boolean {
+  if (value === '') {
+    return true;
   }
 
-  return formatCentsForBrlInput(Math.floor(cents / 10));
-}
+  const parts = value.split(',');
+  if (parts.length > 2) {
+    return false;
+  }
 
-export function shouldPreserveBrlZeroDuringDeletion(
-  currentValue: string,
-  nextValue: string,
-): boolean {
-  return (
-    nextValue.length < currentValue.length &&
-    parseBrlCurrencyToCents(currentValue) === 0 &&
-    (nextValue.length === 0 || parseBrlCurrencyToCents(nextValue) === 0)
-  );
+  const [integerPart, decimalPart] = parts;
+  if (!integerPart || (decimalPart !== undefined && !/^\d{0,2}$/.test(decimalPart))) {
+    return false;
+  }
+
+  return /^\d+$/.test(integerPart) || /^\d{1,3}(?:\.\d{3})*(?:\.\d{0,3})?$/.test(integerPart);
 }
 
 export function parseBrlCurrencyToCents(value: string): number | null {
-  if (value.includes('-')) {
+  const normalizedValue = value.trim();
+  const match = /^(\d+|\d{1,3}(?:\.\d{3})+)(?:,(\d{1,2}))?$/.exec(normalizedValue);
+  if (!match) {
     return null;
   }
 
-  const digits = value.replace(/\D/g, '');
-  if (!digits) {
-    return null;
-  }
-
-  const cents = BigInt(digits);
+  const integerDigits = match[1].replace(/\./g, '');
+  const decimalDigits = (match[2] ?? '').padEnd(2, '0');
+  const cents = BigInt(`${integerDigits}${decimalDigits}`);
 
   if (cents > MAX_SAFE_CENTS) {
     return null;
@@ -67,6 +57,11 @@ export function formatCentsForBrlInput(cents: number, group = true): string {
   const decimalPart = (cents % 100).toString().padStart(2, '0');
 
   return `${group ? groupThousands(integerPart) : integerPart},${decimalPart}`;
+}
+
+export function normalizeBrlCurrencyInput(value: string): string | null {
+  const cents = parseBrlCurrencyToCents(value);
+  return cents === null ? null : formatCentsForBrlInput(cents);
 }
 
 export function formatCentsAsBrl(cents: number): string {

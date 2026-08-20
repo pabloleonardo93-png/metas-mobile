@@ -7,6 +7,10 @@ import type {
   EmployeeStatus,
 } from '@/features/employees/types/employee.types';
 import {
+  createEmployeeMutationRunner,
+  type EmployeeMutationFeedback,
+} from '@/features/employees/utils/employeeMutationFeedback';
+import {
   normalizeEmployeeEmail,
   validateEmployeeEmail,
   validateEmployeeForm,
@@ -20,6 +24,7 @@ interface EmployeeFormProps {
   googleLinked?: boolean;
   initialValues: EmployeeFormValues;
   onChangeAccessEmail?: (email: string) => Promise<Employee | null>;
+  submitSuccessMessage: string;
   submitLabel: string;
   onSubmit: (values: EmployeeFormValues & { role: UserRole }) => Promise<void> | void;
 }
@@ -29,12 +34,39 @@ const STATUS_OPTIONS: readonly { label: string; value: EmployeeStatus }[] = [
   { label: 'Inativo', value: 'INATIVO' },
 ];
 
+function FeedbackMessage({ feedback }: { feedback: EmployeeMutationFeedback }) {
+  return (
+    <View
+      accessibilityLiveRegion="polite"
+      style={[
+        styles.feedback,
+        feedback.type === 'error' ? styles.errorFeedback : styles.successFeedback,
+      ]}
+    >
+      <View
+        style={[
+          styles.feedbackDot,
+          feedback.type === 'error' ? styles.errorDot : styles.successDot,
+        ]}
+      />
+      <AppText
+        color={feedback.type === 'error' ? 'error' : 'success'}
+        style={styles.feedbackText}
+        variant="caption"
+      >
+        {feedback.message}
+      </AppText>
+    </View>
+  );
+}
+
 export function EmployeeForm({
   googleLinked = false,
   initialValues,
   onChangeAccessEmail,
   onSubmit,
   submitLabel,
+  submitSuccessMessage,
 }: EmployeeFormProps) {
   const [values, setValues] = useState<EmployeeFormValues>(initialValues);
   const [submitted, setSubmitted] = useState(false);
@@ -44,6 +76,12 @@ export function EmployeeForm({
   const [showAccessEmailChange, setShowAccessEmailChange] = useState(false);
   const [newAccessEmail, setNewAccessEmail] = useState('');
   const [accessEmailSubmitted, setAccessEmailSubmitted] = useState(false);
+  const [submitFeedback, setSubmitFeedback] = useState<EmployeeMutationFeedback | null>(null);
+  const [accessEmailFeedback, setAccessEmailFeedback] = useState<EmployeeMutationFeedback | null>(
+    null,
+  );
+  const submitRunner = useMemo(() => createEmployeeMutationRunner(), []);
+  const accessEmailRunner = useMemo(() => createEmployeeMutationRunner(), []);
   const errors = useMemo(() => validateEmployeeForm(values), [values]);
   const accessEmailError = validateEmployeeEmail(newAccessEmail);
 
@@ -52,6 +90,7 @@ export function EmployeeForm({
     value: EmployeeFormValues[Key],
   ) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
+    setSubmitFeedback(null);
   }
 
   async function handleSubmit() {
@@ -60,18 +99,31 @@ export function EmployeeForm({
     if (Object.keys(errors).length > 0 || !values.role) {
       return;
     }
+    const role = values.role;
 
-    setIsSubmitting(true);
-    try {
-      await onSubmit({
-        ...values,
-        email: normalizeEmployeeEmail(values.email),
-        name: values.name.trim(),
-        role: values.role,
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
+    const outcome = await submitRunner.run(
+      () =>
+        Promise.resolve(
+          onSubmit({
+            ...values,
+            email: normalizeEmployeeEmail(values.email),
+            name: values.name.trim(),
+            role,
+          }),
+        ),
+      {
+        error: 'Não foi possível salvar as alterações. Tente novamente.',
+        success: submitSuccessMessage,
+      },
+      {
+        onFinished: () => setIsSubmitting(false),
+        onStarted: () => {
+          setIsSubmitting(true);
+          setSubmitFeedback(null);
+        },
+      },
+    );
+    if (outcome) setSubmitFeedback(outcome.feedback);
   }
 
   async function handleAccessEmailChange() {
@@ -80,19 +132,34 @@ export function EmployeeForm({
       return;
     }
 
-    setIsChangingAccessEmail(true);
-    try {
-      const employee = await onChangeAccessEmail(normalizeEmployeeEmail(newAccessEmail));
-      if (!employee) {
-        return;
-      }
+    const outcome = await accessEmailRunner.run(
+      () => onChangeAccessEmail(normalizeEmployeeEmail(newAccessEmail)),
+      {
+        error: 'Não foi possível alterar o e-mail de acesso. Tente novamente.',
+        success: 'E-mail de acesso alterado com sucesso.',
+      },
+      {
+        onFinished: () => setIsChangingAccessEmail(false),
+        onStarted: () => {
+          setAccessEmailFeedback(null);
+          setIsChangingAccessEmail(true);
+        },
+      },
+    );
+    if (!outcome) return;
+    if (!outcome.ok) {
+      setAccessEmailFeedback(outcome.feedback);
+      return;
+    }
+
+    const employee = outcome.value;
+    if (employee) {
       setValues((currentValues) => ({ ...currentValues, email: employee.email }));
       setIsGoogleLinked(employee.googleLinked);
       setNewAccessEmail('');
       setAccessEmailSubmitted(false);
       setShowAccessEmailChange(false);
-    } finally {
-      setIsChangingAccessEmail(false);
+      setAccessEmailFeedback(outcome.feedback);
     }
   }
 
@@ -138,7 +205,10 @@ export function EmployeeForm({
             <AppButton
               label="Alterar e-mail de acesso"
               variant="secondary"
-              onPress={() => setShowAccessEmailChange(true)}
+              onPress={() => {
+                setAccessEmailFeedback(null);
+                setShowAccessEmailChange(true);
+              }}
             />
           </>
         ) : null}
@@ -156,7 +226,10 @@ export function EmployeeForm({
               placeholder="novo@gmail.com"
               textContentType="emailAddress"
               value={newAccessEmail}
-              onChangeText={setNewAccessEmail}
+              onChangeText={(value) => {
+                setAccessEmailFeedback(null);
+                setNewAccessEmail(value);
+              }}
             />
             <View style={styles.accessEmailActions}>
               <AppButton
@@ -164,6 +237,7 @@ export function EmployeeForm({
                 variant="secondary"
                 onPress={() => {
                   setAccessEmailSubmitted(false);
+                  setAccessEmailFeedback(null);
                   setNewAccessEmail('');
                   setShowAccessEmailChange(false);
                 }}
@@ -176,6 +250,7 @@ export function EmployeeForm({
             </View>
           </View>
         ) : null}
+        {accessEmailFeedback ? <FeedbackMessage feedback={accessEmailFeedback} /> : null}
       </View>
 
       <View style={styles.fieldGroup}>
@@ -254,6 +329,7 @@ export function EmployeeForm({
       </View>
 
       <AppButton label={submitLabel} loading={isSubmitting} onPress={() => void handleSubmit()} />
+      {submitFeedback ? <FeedbackMessage feedback={submitFeedback} /> : null}
     </View>
   );
 }
@@ -268,6 +344,27 @@ const styles = StyleSheet.create({
   },
   error: {
     marginLeft: spacing.xs,
+  },
+  errorDot: {
+    backgroundColor: colors.error,
+  },
+  errorFeedback: {
+    backgroundColor: colors.primarySubtle,
+  },
+  feedback: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  feedbackDot: {
+    borderRadius: radius.pill,
+    height: 8,
+    width: 8,
+  },
+  feedbackText: {
+    flex: 1,
   },
   fieldGroup: {
     gap: spacing.sm,
@@ -313,5 +410,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flexDirection: 'row',
     padding: spacing.xs,
+  },
+  successDot: {
+    backgroundColor: colors.success,
+  },
+  successFeedback: {
+    backgroundColor: colors.successSubtle,
   },
 });

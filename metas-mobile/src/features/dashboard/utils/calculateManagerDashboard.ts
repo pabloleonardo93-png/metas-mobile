@@ -14,15 +14,6 @@ export function buildManagerTeamPerformance(summary: TeamRoleSummary): ManagerTe
   }));
 }
 
-export function formatActiveTeamComposition(summary: TeamRoleSummary): string {
-  const managers = summary.GESTOR;
-  const operationalEmployees = summary.BALCONISTA + summary.FARMACEUTICO + summary.CAIXA;
-  const managerLabel = managers === 1 ? 'gestor' : 'gestores';
-  const employeeLabel = operationalEmployees === 1 ? 'funcionário' : 'funcionários';
-
-  return `${managers} ${managerLabel} • ${operationalEmployees} ${employeeLabel}`;
-}
-
 export function calculateManagerDashboardMetrics(
   goal: GoalGeneralSettings,
   activeEmployees: number,

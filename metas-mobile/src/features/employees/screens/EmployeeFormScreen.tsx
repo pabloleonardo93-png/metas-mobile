@@ -16,7 +16,6 @@ import { EmployeeForm } from '@/features/employees/components/EmployeeForm';
 import { EmployeeScreenHeader } from '@/features/employees/components/EmployeeScreenHeader';
 import { useEmployees } from '@/features/employees/context/EmployeesContext';
 import type { EmployeeFormValues } from '@/features/employees/types/employee.types';
-import { getEmployeeApiErrorMessage } from '@/features/employees/utils/employeeApiError';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
 import { AppButton, AppText, ScreenContainer } from '@/shared/components';
 import { colors, spacing } from '@/shared/theme';
@@ -117,20 +116,14 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
       status: values.status,
     };
 
-    try {
-      if (mode === 'edit' && employee) {
-        const updatedEmployee = await updateEmployee(employee.id, input);
-        Alert.alert('Funcionário atualizado', 'As alterações foram salvas.');
-        router.replace(appRoutes.managerEmployeeDetails(updatedEmployee.id));
-        return;
-      }
-
-      const newEmployee = await addEmployee(input);
-      Alert.alert('Funcionário adicionado', 'O cadastro foi salvo.');
-      router.replace(appRoutes.managerEmployeeDetails(newEmployee.id));
-    } catch (error: unknown) {
-      Alert.alert('Não foi possível salvar', getEmployeeApiErrorMessage(error));
+    if (mode === 'edit' && employee) {
+      await updateEmployee(employee.id, input);
+      return;
     }
+
+    const newEmployee = await addEmployee(input);
+    Alert.alert('Funcionário adicionado', 'O cadastro foi salvo.');
+    router.replace(appRoutes.managerEmployeeDetails(newEmployee.id));
   }
 
   function confirmAccessEmailChange(): Promise<boolean> {
@@ -152,17 +145,7 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
       return null;
     }
 
-    try {
-      const updatedEmployee = await changeEmployeeAccessEmail(employee.id, { email });
-      Alert.alert(
-        'E-mail de acesso atualizado',
-        'As sessões anteriores foram encerradas. O novo e-mail poderá vincular a conta Google no próximo login.',
-      );
-      return updatedEmployee;
-    } catch (error: unknown) {
-      Alert.alert('Não foi possível alterar o acesso', getEmployeeApiErrorMessage(error));
-      return null;
-    }
+    return changeEmployeeAccessEmail(employee.id, { email });
   }
 
   const title = mode === 'create' ? 'Adicionar funcionário' : 'Editar funcionário';
@@ -189,6 +172,11 @@ export function EmployeeFormScreen({ mode }: EmployeeFormScreenProps) {
             googleLinked={mode === 'edit' ? employee?.googleLinked : false}
             initialValues={initialValues}
             submitLabel={mode === 'create' ? 'Adicionar funcionário' : 'Salvar alterações'}
+            submitSuccessMessage={
+              mode === 'create'
+                ? 'Funcionário adicionado com sucesso.'
+                : 'Funcionário atualizado com sucesso.'
+            }
             onChangeAccessEmail={mode === 'edit' ? handleChangeAccessEmail : undefined}
             onSubmit={handleSubmit}
           />

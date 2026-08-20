@@ -69,18 +69,25 @@ export class AuthSessionController {
 
   async logout(): Promise<void> {
     const sessionToken = await this.storage.getToken();
+    await this.storage.deleteToken();
+    let logoutError: unknown;
 
     try {
       if (sessionToken) {
         await this.api.logout(sessionToken);
       }
-    } finally {
-      await this.storage.deleteToken();
-      try {
-        await this.google.signOut();
-      } catch {
-        // Google state must not prevent local logout from completing.
-      }
+    } catch (error: unknown) {
+      logoutError = error;
+    }
+
+    try {
+      await this.google.signOut();
+    } catch {
+      // Google state must not prevent local logout from completing.
+    }
+
+    if (logoutError) {
+      throw logoutError;
     }
   }
 

@@ -17,18 +17,20 @@ Module._resolveFilename = function resolveProjectAlias(request, parent, isMain, 
 const {
   formatCentsAsBrl,
   formatCentsForBrlInput,
-  getBrlCurrencyValueAfterBackspace,
+  isEditableBrlCurrencyInput,
+  normalizeBrlCurrencyInput,
   parseBrlCurrencyToCents,
   sanitizeBrlCurrencyInput,
-  shouldPreserveBrlZeroDuringDeletion,
 } = require(path.join(buildRoot, 'src/shared/utils/brlCurrency.js'));
 const { validateCampaignForm } = require(
   path.join(buildRoot, 'src/features/campaigns/utils/validateCampaignForm.js'),
 );
 
-test('interpreta todos os digitos como centavos inteiros exatos', () => {
-  assert.equal(parseBrlCurrencyToCents('2'), 2);
-  assert.equal(parseBrlCurrencyToCents('50050500'), 50050500);
+test('interpreta a parte inteira digitada como reais e preserva centavos exatos', () => {
+  assert.equal(parseBrlCurrencyToCents('223'), 22300);
+  assert.equal(parseBrlCurrencyToCents('223,50'), 22350);
+  assert.equal(parseBrlCurrencyToCents('2.500,75'), 250075);
+  assert.equal(parseBrlCurrencyToCents('1.250.000,99'), 125000099);
   assert.equal(parseBrlCurrencyToCents('500.505,56'), 50050556);
   assert.equal(parseBrlCurrencyToCents('2.505.065,56'), 250506556);
 });
@@ -38,65 +40,78 @@ test('formata centavos como BRL com duas casas decimais', () => {
   assert.equal(formatCentsAsBrl(125099), 'R$ 1.250,99');
 });
 
-test('aplica mascara automatica de centavos durante a digitacao', () => {
+test('normaliza a exibicao manual ao concluir a edicao', () => {
+  assert.equal(normalizeBrlCurrencyInput('223'), '223,00');
+  assert.equal(normalizeBrlCurrencyInput('223,5'), '223,50');
+  assert.equal(normalizeBrlCurrencyInput('223,50'), '223,50');
+  assert.equal(normalizeBrlCurrencyInput('2.500'), '2.500,00');
+  assert.equal(normalizeBrlCurrencyInput('2.500,75'), '2.500,75');
+});
+
+test('aceita digitacao monetaria brasileira manual sem deslocar centavos', () => {
   const examples = [
-    ['2', '0,02'],
-    ['22', '0,22'],
-    ['223', '2,23'],
-    ['22300', '223,00'],
-    ['223456', '2.234,56'],
-    ['50050500', '500.505,00'],
-    ['250506556', '2.505.065,56'],
+    ['100', 10000],
+    ['100,5', 10050],
+    ['100,50', 10050],
+    ['1.000', 100000],
+    ['1.000,50', 100050],
+    ['25.000.000,99', 2500000099],
   ];
 
-  for (const [input, expected] of examples) {
-    assert.equal(sanitizeBrlCurrencyInput(input), expected);
+  for (const [input, expectedCents] of examples) {
+    assert.equal(isEditableBrlCurrencyInput(input), true);
+    assert.equal(parseBrlCurrencyToCents(input), expectedCents);
   }
 });
 
-test('backspace desloca os centavos no sentido inverso', () => {
-  const expectedValues = ['223,45', '22,34', '2,23', '0,22', '0,02', '0,00'];
-  let currentValue = '2.234,56';
+test('aceita estados intermediarios validos durante a digitacao de milhares e centavos', () => {
+  for (const value of ['2', '2.', '2.5', '2.50', '2.500', '2.500,', '2.500,7', '2.500,75']) {
+    assert.equal(isEditableBrlCurrencyInput(value), true, value);
+  }
+});
+
+test('backspace edita o texto normalmente sem deslocamento automatico', () => {
+  const expectedValues = ['2,2', '2,', '2', ''];
+  let currentValue = '2,23';
 
   for (const expectedValue of expectedValues) {
-    currentValue = getBrlCurrencyValueAfterBackspace(currentValue);
+    currentValue = currentValue.slice(0, -1);
     assert.equal(currentValue, expectedValue);
+    assert.equal(isEditableBrlCurrencyInput(currentValue), true);
   }
 });
 
-test('backspace em zero e um no-op visual estavel', () => {
-  assert.equal(getBrlCurrencyValueAfterBackspace('0,05'), '0,00');
-
-  let currentValue = '0,00';
-  for (let index = 0; index < 10; index += 1) {
-    currentValue = getBrlCurrencyValueAfterBackspace(currentValue);
-    assert.equal(currentValue, '0,00');
-  }
-
-  assert.equal(shouldPreserveBrlZeroDuringDeletion('0,00', '0,0'), true);
-  assert.equal(shouldPreserveBrlZeroDuringDeletion('0,00', '0,'), true);
-  assert.equal(shouldPreserveBrlZeroDuringDeletion('0,00', ''), true);
+test('zero pode ser apagado e digitado novamente sem tratamento especial', () => {
+  assert.equal(isEditableBrlCurrencyInput('0,00'), true);
+  assert.equal(isEditableBrlCurrencyInput('0,0'), true);
+  assert.equal(isEditableBrlCurrencyInput('0,'), true);
+  assert.equal(isEditableBrlCurrencyInput('0'), true);
+  assert.equal(isEditableBrlCurrencyInput(''), true);
+  assert.equal(parseBrlCurrencyToCents('223'), 22300);
 });
 
-test('permite digitar novamente depois de apagar ate zero', () => {
-  const zeroValue = getBrlCurrencyValueAfterBackspace('0,05');
-  assert.equal(sanitizeBrlCurrencyInput(`${zeroValue}2`), '0,02');
-  assert.equal(sanitizeBrlCurrencyInput(`${zeroValue}22`), '0,22');
-  assert.equal(sanitizeBrlCurrencyInput(`${zeroValue}223`), '2,23');
-});
-
-test('aceita colagem brasileira e sanitiza caracteres extras', () => {
-  assert.equal(sanitizeBrlCurrencyInput('500.505,56'), '500.505,56');
-  assert.equal(sanitizeBrlCurrencyInput('abc 250506556 xyz'), '2.505.065,56');
-  assert.equal(sanitizeBrlCurrencyInput('0'), '0,00');
-  assert.equal(sanitizeBrlCurrencyInput(''), '0,00');
+test('aceita colagem brasileira e remove caracteres que nao pertencem ao valor', () => {
+  assert.equal(sanitizeBrlCurrencyInput('R$ 500.505,56'), '500.505,56');
+  assert.equal(sanitizeBrlCurrencyInput('abc 2.500,75 xyz'), '2.500,75');
+  assert.equal(sanitizeBrlCurrencyInput('abc'), '');
   assert.equal(parseBrlCurrencyToCents(''), null);
 });
 
-test('rejeita negativos e valores acima do limite seguro', () => {
+test('rejeita pontuacao invalida, negativos e valores acima do limite seguro', () => {
   assert.equal(sanitizeBrlCurrencyInput('-10,00'), '');
   assert.equal(parseBrlCurrencyToCents('-10,00'), null);
+  assert.equal(parseBrlCurrencyToCents('100,555'), null);
+  assert.equal(parseBrlCurrencyToCents('100,,50'), null);
+  assert.equal(parseBrlCurrencyToCents('1.000,50,20'), null);
+  assert.equal(parseBrlCurrencyToCents('abc'), null);
+  assert.equal(isEditableBrlCurrencyInput('100,555'), false);
+  assert.equal(isEditableBrlCurrencyInput('100,,50'), false);
   assert.equal(parseBrlCurrencyToCents('999999999999999,99'), null);
+});
+
+test('formata centavos vindos da API para edicao sem perda', () => {
+  assert.equal(formatCentsForBrlInput(50699392), '506.993,92');
+  assert.equal(parseBrlCurrencyToCents(formatCentsForBrlInput(50699392)), 50699392);
 });
 
 test('valida separadamente quantidade e valor financeiro da campanha', () => {

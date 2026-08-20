@@ -5,6 +5,7 @@ const {
   AuthSessionController,
 } = require('../node_modules/.cache/calculation-tests/src/features/auth/services/authSessionController.js');
 const {
+  getAuthRedirect,
   getAuthenticatedArea,
 } = require('../node_modules/.cache/calculation-tests/src/features/auth/utils/authRouting.js');
 const {
@@ -22,9 +23,17 @@ const employee = {
 
 function createHarness(overrides = {}) {
   let token = overrides.initialToken ?? null;
-  const calls = { deleted: 0, googleSignOut: 0, loginBody: null, logoutToken: null, saved: [] };
+  const calls = {
+    deleted: 0,
+    googleSignOut: 0,
+    loginBody: null,
+    logoutToken: null,
+    order: [],
+    saved: [],
+  };
   const storage = {
     deleteToken: async () => {
+      calls.order.push('delete-local-token');
       calls.deleted += 1;
       token = null;
     },
@@ -47,7 +56,11 @@ function createHarness(overrides = {}) {
         };
       }),
     logout: async (sessionToken) => {
+      calls.order.push('revoke-api-session');
       calls.logoutToken = sessionToken;
+      if (overrides.logout) {
+        return overrides.logout(sessionToken);
+      }
       if (overrides.logoutError) {
         throw overrides.logoutError;
       }
@@ -56,6 +69,7 @@ function createHarness(overrides = {}) {
   const google = {
     signIn: overrides.signIn ?? (async () => ({ idToken: 'google-id-token', type: 'success' })),
     signOut: async () => {
+      calls.order.push('google-sign-out');
       calls.googleSignOut += 1;
       if (overrides.googleSignOutError) {
         throw overrides.googleSignOutError;
@@ -177,11 +191,49 @@ test('Google sign-out failure does not prevent application logout', async () => 
   assert.equal(harness.getToken(), null);
 });
 
+test('logout removes the local token before waiting for network revocation', async () => {
+  let releaseLogout;
+  const harness = createHarness({
+    initialToken: 'valid-token',
+    logout: () =>
+      new Promise((resolve) => {
+        releaseLogout = resolve;
+      }),
+  });
+
+  const logoutPromise = harness.controller.logout();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.getToken(), null);
+  assert.deepEqual(harness.calls.order, ['delete-local-token', 'revoke-api-session']);
+
+  releaseLogout();
+  await logoutPromise;
+  assert.deepEqual(harness.calls.order, [
+    'delete-local-token',
+    'revoke-api-session',
+    'google-sign-out',
+  ]);
+});
+
 test('routes manager and all employee roles to their correct shared area', () => {
   assert.equal(getAuthenticatedArea('GESTOR'), 'manager');
   assert.equal(getAuthenticatedArea('BALCONISTA'), 'employee');
   assert.equal(getAuthenticatedArea('CAIXA'), 'employee');
   assert.equal(getAuthenticatedArea('FARMACEUTICO'), 'employee');
+});
+
+test('redirects both authenticated areas to login synchronously after logout', () => {
+  assert.equal(getAuthRedirect('unauthenticated', null, '(gestor)'), 'login');
+  assert.equal(getAuthRedirect('unauthenticated', null, '(funcionario)'), 'login');
+  assert.equal(getAuthRedirect('unauthenticated', null, '(auth)'), null);
+});
+
+test('prevents protected routes from reopening for an unauthenticated user', () => {
+  assert.equal(getAuthRedirect('unauthenticated', null, '(gestor)'), 'login');
+  assert.equal(getAuthRedirect('unauthenticated', null, '(funcionario)'), 'login');
+  assert.equal(getAuthRedirect('authenticated', 'GESTOR', '(auth)'), 'manager-home');
+  assert.equal(getAuthRedirect('authenticated', 'CAIXA', '(auth)'), 'employee-home');
 });
 
 test('maps authorization, rate limit, and network errors without exposing internals', () => {

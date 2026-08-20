@@ -6,24 +6,20 @@ import {
 } from '@/features/dashboard/components/DashboardIcon';
 import type { ManagerDashboardMetrics } from '@/features/dashboard/types/managerDashboard';
 import { formatBrazilianCurrency } from '@/features/dashboard/utils/formatters';
-import type { TeamRoleSummary } from '@/features/employees/types/employee.types';
-import { formatActiveTeamComposition } from '@/features/dashboard/utils/calculateManagerDashboard';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
 
 interface ManagerQuickSummaryProps {
   metrics: ManagerDashboardMetrics;
-  teamSummary: TeamRoleSummary;
 }
 
 interface SummaryItem {
   icon: DashboardIconName;
   label: string;
-  secondary?: string;
   value: string;
 }
 
-export function ManagerQuickSummary({ metrics, teamSummary }: ManagerQuickSummaryProps) {
+export function ManagerQuickSummary({ metrics }: ManagerQuickSummaryProps) {
   const items: SummaryItem[] = [
     {
       icon: 'wallet',
@@ -38,7 +34,6 @@ export function ManagerQuickSummary({ metrics, teamSummary }: ManagerQuickSummar
     {
       icon: 'users',
       label: 'Equipe ativa',
-      secondary: formatActiveTeamComposition(teamSummary),
       value: String(metrics.activeEmployees),
     },
     {
@@ -70,11 +65,6 @@ export function ManagerQuickSummary({ metrics, teamSummary }: ManagerQuickSummar
             >
               {item.value}
             </AppText>
-            {item.secondary ? (
-              <AppText color="textMuted" numberOfLines={2} variant="caption">
-                {item.secondary}
-              </AppText>
-            ) : null}
           </View>
         </View>
       ))}
