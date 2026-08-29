@@ -24,6 +24,7 @@
     "src/features/campaigns/utils/campaign.utils.ts",
     "src/features/campaigns/utils/calculateCampaignDistribution.ts",
     "src/features/campaigns/utils/campaignDates.ts",
+    "src/features/campaigns/utils/campaignFormValues.ts",
     "src/features/campaigns/utils/validateCampaignForm.ts",
     "src/features/auth/google/googleSignIn.d.ts",
     "src/features/auth/services/authSessionController.ts",

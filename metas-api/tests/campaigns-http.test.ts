@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import request from 'supertest';
+import { DatabaseError, type Sequelize } from 'sequelize';
 
 import { createApp } from '../src/app.js';
 import type {
@@ -15,6 +16,7 @@ import type {
   CampaignMutationInput,
   CampaignService,
 } from '../src/modules/campaigns/campaign.types.js';
+import { PostgresCampaignService } from '../src/modules/campaigns/campaignService.js';
 import type { RealtimeEventType, RealtimePublisher } from '../src/realtime/realtime.types.js';
 import { AppError } from '../src/shared/errors/AppError.js';
 import type { Logger } from '../src/shared/logging/logger.js';
@@ -205,7 +207,7 @@ await test('manager creates, updates and closes a campaign with realtime invalid
   ]);
 });
 
-await test('manager creates and updates a campaign without quantity control', async () => {
+await test('manager creates and updates campaigns with or without quantity control', async () => {
   const { app } = createTestApp();
   const createdResponse = await request(app)
     .post('/v1/manager/campaigns')
@@ -221,6 +223,13 @@ await test('manager creates and updates a campaign without quantity control', as
     .send({ ...campaignInput, expectedLockVersion: created.lockVersion, targetQuantity: 25 })
     .expect(200);
   assert.equal((updatedResponse.body as CampaignDto).targetQuantity, 25);
+
+  const disabledResponse = await request(app)
+    .patch(`/v1/manager/campaigns/${created.id}`)
+    .set(managerAuthorization)
+    .send({ ...campaignInput, expectedLockVersion: 2, targetQuantity: null })
+    .expect(200);
+  assert.equal((disabledResponse.body as CampaignDto).targetQuantity, null);
 });
 
 await test('invalid, unknown and unauthorized campaign mutations are rejected', async () => {
@@ -239,6 +248,19 @@ await test('invalid, unknown and unauthorized campaign mutations are rejected', 
     .post('/v1/manager/campaigns')
     .set(managerAuthorization)
     .send({ ...campaignInput, targetQuantity: 0 })
+    .expect(422);
+  for (const targetQuantity of ['', -1, 1.5, '50']) {
+    await request(app)
+      .post('/v1/manager/campaigns')
+      .set(managerAuthorization)
+      .send({ ...campaignInput, targetQuantity })
+      .expect(422);
+  }
+  const { targetQuantity: _targetQuantity, ...inputWithoutQuantity } = campaignInput;
+  await request(app)
+    .post('/v1/manager/campaigns')
+    .set(managerAuthorization)
+    .send(inputWithoutQuantity)
     .expect(422);
   assert.deepEqual(realtimePublisher.events, []);
 });
@@ -261,4 +283,29 @@ await test('failed campaign persistence does not publish realtime invalidation',
     .send(campaignInput)
     .expect(409);
   assert.deepEqual(realtimePublisher.events, []);
+});
+
+await test('an outdated database does not turn null quantity into a false form error', async () => {
+  const database = {
+    query: async (sql: string) => {
+      if (sql.includes("set_config('app.current_user_id'")) return [];
+      const parent = Object.assign(new Error('INVALID_CAMPAIGN'), { code: '22023', sql });
+      throw new DatabaseError(parent);
+    },
+    transaction: async (callback: (transaction: object) => Promise<unknown>) => callback({}),
+  } as unknown as Sequelize;
+  const service = new PostgresCampaignService(database);
+
+  await assert.rejects(
+    service.create(managerSession, { ...campaignInput, targetQuantity: null }),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.statusCode === 503 &&
+      error.code === 'CAMPAIGN_QUANTITY_UNAVAILABLE',
+  );
+  await assert.rejects(
+    service.create(managerSession, campaignInput),
+    (error: unknown) =>
+      error instanceof AppError && error.statusCode === 422 && error.code === 'INVALID_INPUT',
+  );
 });

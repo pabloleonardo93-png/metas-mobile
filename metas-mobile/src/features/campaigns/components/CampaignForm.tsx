@@ -6,6 +6,7 @@ import {
   formatBrazilianDateInput,
   parseBrazilianDate,
 } from '@/features/campaigns/utils/campaignDates';
+import { changeCampaignQuantityControl } from '@/features/campaigns/utils/campaignFormValues';
 import { validateCampaignForm } from '@/features/campaigns/utils/validateCampaignForm';
 import {
   AppButton,
@@ -43,6 +44,11 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
     value: CampaignFormValues[Key],
   ) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
+    hideToast();
+  }
+
+  function updateQuantityControl(usesQuantity: boolean) {
+    setValues((currentValues) => changeCampaignQuantityControl(currentValues, usesQuantity));
     hideToast();
   }
 
@@ -104,7 +110,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
           thumbColor={colors.surface}
           trackColor={{ false: colors.disabled, true: colors.primary }}
           value={values.usesQuantity}
-          onValueChange={(value) => updateValue('usesQuantity', value)}
+          onValueChange={updateQuantityControl}
         />
       </View>
 
