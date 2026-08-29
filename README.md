@@ -171,24 +171,41 @@ npm run format:check
 
 Os testes de integração da API precisam de um PostgreSQL exclusivo para testes e das variáveis `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` e `TEST_ADMIN_DATABASE_URL`. As opções de SSL para esse ambiente são `TEST_DATABASE_SSL` e `TEST_DATABASE_SSL_SERVERNAME`.
 
+## Branches
+
+A `main` representa a versão estável. O desenvolvimento do dia a dia acontece em `develop`, e os novos trabalhos devem entrar primeiro nessa branch. A `main` é atualizada depois, quando uma versão estiver pronta.
+
 ## Expo e EAS
 
-O arquivo `metas-mobile/eas.json` define os perfis `development`, `preview` e `production`. O perfil `preview` gera um APK de distribuição interna e publica no canal de mesmo nome.
+O arquivo `metas-mobile/eas.json` define os perfis `development`, `preview` e `production`. O perfil `preview` gera um APK de distribuição interna, usa o canal `preview` e carrega o EAS Environment `preview`.
+
+As configurações públicas necessárias ao aplicativo devem existir no ambiente remoto, sem duplicação no `eas.json`:
+
+- `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
+- `EXPO_PUBLIC_API_BASE_URL`
+
+Para conferir as variáveis configuradas, sem copiar valores para o repositório:
+
+```powershell
+cd metas-mobile
+eas env:list --environment preview
+```
 
 Para criar um build Android de preview:
 
 ```powershell
-cd metas-mobile
-eas build --profile preview --platform android
+eas build --platform android --profile preview
 ```
 
-Para publicar uma atualização compatível com a versão nativa instalada:
+Esse perfil usa automaticamente as variáveis do EAS Environment `preview`.
+
+Para publicar uma atualização compatível com a versão nativa instalada, use o script do projeto:
 
 ```powershell
-eas update --channel preview --environment preview --message "Descrição da atualização"
+npm run update:preview -- --message "feat: descrição da atualização"
 ```
 
-O `runtimeVersion` segue a versão do aplicativo. Mudanças nativas exigem um novo EAS Build; o EAS Update atende alterações compatíveis em JavaScript e assets.
+O script informa o canal e o ambiente `preview`, evitando publicações sem a configuração remota necessária. O `runtimeVersion` segue a versão do aplicativo. Mudanças nativas exigem um novo EAS Build; o EAS Update atende alterações compatíveis em JavaScript e assets.
 
 ## Segurança e desenvolvimento
 
