@@ -205,6 +205,24 @@ await test('manager creates, updates and closes a campaign with realtime invalid
   ]);
 });
 
+await test('manager creates and updates a campaign without quantity control', async () => {
+  const { app } = createTestApp();
+  const createdResponse = await request(app)
+    .post('/v1/manager/campaigns')
+    .set(managerAuthorization)
+    .send({ ...campaignInput, targetQuantity: null })
+    .expect(201);
+  const created = createdResponse.body as CampaignDto;
+  assert.equal(created.targetQuantity, null);
+
+  const updatedResponse = await request(app)
+    .patch(`/v1/manager/campaigns/${created.id}`)
+    .set(managerAuthorization)
+    .send({ ...campaignInput, expectedLockVersion: created.lockVersion, targetQuantity: 25 })
+    .expect(200);
+  assert.equal((updatedResponse.body as CampaignDto).targetQuantity, 25);
+});
+
 await test('invalid, unknown and unauthorized campaign mutations are rejected', async () => {
   const { app, realtimePublisher } = createTestApp();
   await request(app)
@@ -217,6 +235,11 @@ await test('invalid, unknown and unauthorized campaign mutations are rejected', 
     .set(employeeAuthorization)
     .send(campaignInput)
     .expect(403);
+  await request(app)
+    .post('/v1/manager/campaigns')
+    .set(managerAuthorization)
+    .send({ ...campaignInput, targetQuantity: 0 })
+    .expect(422);
   assert.deepEqual(realtimePublisher.events, []);
 });
 

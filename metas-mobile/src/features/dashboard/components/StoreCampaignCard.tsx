@@ -25,18 +25,24 @@ export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampai
             {campaign.name}
           </AppText>
           <AppText color="textMuted" variant="caption">
-            {metrics.soldQuantity} / {metrics.targetQuantity} unidades da loja
+            {metrics
+              ? `${metrics.soldQuantity} / ${metrics.targetQuantity} unidades da loja`
+              : 'Sem controle por quantidade'}
           </AppText>
         </View>
-        <AppText color="primary" variant="bodyMedium">
-          {formatPercentage(metrics.progress, 0)}
-        </AppText>
+        {metrics ? (
+          <AppText color="primary" variant="bodyMedium">
+            {formatPercentage(metrics.progress, 0)}
+          </AppText>
+        ) : null}
       </View>
 
-      <GoalProgressBar
-        label={`Progresso geral da campanha ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-        progress={metrics.progress}
-      />
+      {metrics ? (
+        <GoalProgressBar
+          label={`Progresso geral da campanha ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
+          progress={metrics.progress}
+        />
+      ) : null}
 
       <AppText color="textMuted" variant="caption">
         Objetivo coletivo da loja
@@ -47,7 +53,7 @@ export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampai
         </AppText>
       ) : null}
 
-      {contributedQuantity !== undefined ? (
+      {metrics && contributedQuantity !== undefined ? (
         <View style={styles.contribution}>
           <AppText color="textMuted" variant="caption">
             Sua contribuição

@@ -32,6 +32,7 @@ const newCampaignInitialValues: CampaignFormValues = {
   startDate: '',
   targetAmount: '',
   targetQuantity: '',
+  usesQuantity: true,
 };
 
 function getCampaignId(value: string | string[] | undefined): string {
@@ -55,7 +56,8 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
         name: campaign.name,
         startDate: formatCampaignDate(campaign.startDate),
         targetAmount: formatCentsForBrlInput(campaign.targetAmountCents),
-        targetQuantity: String(campaign.targetQuantity),
+        targetQuantity: campaign.targetQuantity === null ? '' : String(campaign.targetQuantity),
+        usesQuantity: campaign.targetQuantity !== null,
       };
     }
 
@@ -118,7 +120,7 @@ export function CampaignFormScreen({ mode }: CampaignFormScreenProps) {
   const title = mode === 'create' ? 'Nova campanha' : 'Editar campanha';
   const subtitle =
     mode === 'create'
-      ? 'Defina o produto em foco e a meta em unidades'
+      ? 'Defina o produto em foco, a meta e o período'
       : 'Atualize a meta e o período da campanha';
 
   return (

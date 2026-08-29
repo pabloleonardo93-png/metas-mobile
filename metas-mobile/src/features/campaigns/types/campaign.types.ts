@@ -10,7 +10,7 @@ export interface Campaign {
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: number;
-  targetQuantity: number;
+  targetQuantity: number | null;
   updatedAt: string;
 }
 
@@ -27,6 +27,7 @@ export interface CampaignFormValues {
   startDate: string;
   targetAmount: string;
   targetQuantity: string;
+  usesQuantity: boolean;
 }
 
 export type CampaignFormErrors = Partial<Record<keyof CampaignFormValues, string>>;

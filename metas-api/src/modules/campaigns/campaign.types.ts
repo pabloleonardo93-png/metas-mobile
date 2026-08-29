@@ -12,7 +12,7 @@ export interface CampaignDto {
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: string;
-  targetQuantity: number;
+  targetQuantity: number | null;
   updatedAt: string;
 }
 
@@ -21,7 +21,7 @@ export interface CampaignMutationInput {
   name: string;
   startDate: string;
   targetAmountCents: string;
-  targetQuantity: number;
+  targetQuantity: number | null;
 }
 
 export interface CampaignService {

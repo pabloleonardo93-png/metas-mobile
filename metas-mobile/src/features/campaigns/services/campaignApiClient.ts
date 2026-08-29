@@ -14,7 +14,7 @@ interface CampaignApiResponse {
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: string;
-  targetQuantity: number;
+  targetQuantity: number | null;
   updatedAt: string;
 }
 

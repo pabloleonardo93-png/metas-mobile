@@ -51,8 +51,10 @@ export function calculateCampaignDailyDistribution(
   employees: readonly Employee[],
   configuredTeam: readonly TeamDistribution[],
   today: LocalDateSource = new Date(),
-): CampaignDailyDistributionResult {
+): CampaignDailyDistributionResult | null {
   const metrics = calculateCampaignMetrics(campaign);
+  if (!metrics) return null;
+
   const dayCounts = calculatePeriodDayCounts(campaign.startDate, campaign.endDate, today);
 
   if (!dayCounts) {

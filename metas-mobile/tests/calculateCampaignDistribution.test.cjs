@@ -222,6 +222,17 @@ test('trata equipe vazia e peso total igual a zero', () => {
   assert.equal(zeroWeight.totalTeamWeight, 0);
 });
 
+test('campanha sem controle por quantidade não calcula distribuição diária', () => {
+  const result = calculateCampaignDailyDistribution(
+    { ...baseCampaign, targetQuantity: null },
+    mixedTeamEmployees,
+    configuredTeam,
+    localDate(2026, 8, 20),
+  );
+
+  assert.equal(result, null);
+});
+
 test('Metas e Campanhas usam o mesmo núcleo ponderado e produzem a mesma distribuição', () => {
   const campaign = { ...baseCampaign, soldQuantity: 40 };
   const employees = [

@@ -19,8 +19,9 @@ interface CampaignCardProps {
 export function CampaignCard({ campaign, onPress }: CampaignCardProps) {
   const metrics = calculateCampaignMetrics(campaign);
   const daySummary = formatCampaignDaySummary(campaign.startDate, campaign.endDate);
-  const remainingLabel =
-    metrics.remainingQuantity === 0
+  const remainingLabel = !metrics
+    ? 'Sem controle por quantidade'
+    : metrics.remainingQuantity === 0
       ? 'Meta em unidades atingida'
       : `Faltam ${metrics.remainingQuantity} ${metrics.remainingQuantity === 1 ? 'unidade' : 'unidades'}`;
 
@@ -38,19 +39,23 @@ export function CampaignCard({ campaign, onPress }: CampaignCardProps) {
         <CampaignStatusBadge status={campaign.status} />
       </View>
 
-      <View style={styles.progressHeader}>
-        <AppText color="textMuted" variant="caption">
-          {metrics.soldQuantity} de {metrics.targetQuantity} unidades
-        </AppText>
-        <AppText color="primary" variant="bodyMedium">
-          {formatPercentage(metrics.progress, 0)}
-        </AppText>
-      </View>
+      {metrics ? (
+        <>
+          <View style={styles.progressHeader}>
+            <AppText color="textMuted" variant="caption">
+              {metrics.soldQuantity} de {metrics.targetQuantity} unidades
+            </AppText>
+            <AppText color="primary" variant="bodyMedium">
+              {formatPercentage(metrics.progress, 0)}
+            </AppText>
+          </View>
 
-      <AppProgressBar
-        label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-        progress={metrics.progress}
-      />
+          <AppProgressBar
+            label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
+            progress={metrics.progress}
+          />
+        </>
+      ) : null}
 
       <View style={styles.footer}>
         <View style={styles.footerCopy}>
