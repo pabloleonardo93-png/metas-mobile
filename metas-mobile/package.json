@@ -37,6 +37,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "update:preview": "eas update --channel preview --environment preview",
     "lint": "eslint .",
     "test": "npm run test:calculations",
     "test:calculations": "tsc -p tsconfig.calculation-tests.json && node --test tests/calculateDailyGoals.test.cjs tests/calculateCampaignDistribution.test.cjs tests/calculateEmployeePerformance.test.cjs tests/authSessionController.test.cjs tests/employeesApi.test.cjs tests/campaignsApi.test.cjs tests/brlCurrency.test.cjs tests/datePeriods.test.cjs tests/goalConfigurationApi.test.cjs tests/realtimeClient.test.cjs tests/toastController.test.cjs",

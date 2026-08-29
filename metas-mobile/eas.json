@@ -13,10 +13,6 @@
       "android": {
         "buildType": "apk"
       },
-      "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://site--metas-api--r9ddv76phv2t.code.run",
-        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "114371870899-su692j4036fnvm3qr5fcng8iplbdthf5.apps.googleusercontent.com"
-      },
       "channel": "preview"
     },
     "production": {
