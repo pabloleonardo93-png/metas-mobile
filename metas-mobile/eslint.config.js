@@ -2,4 +2,8 @@ const { defineConfig } = require('eslint/config');
 const expoConfig = require('eslint-config-expo/flat');
 const prettierConfig = require('eslint-config-prettier');
 
-module.exports = defineConfig([{ ignores: ['dist/**'] }, expoConfig, prettierConfig]);
+module.exports = defineConfig([
+  { ignores: ['.expo/**', 'build/**', 'dist/**', 'web-build/**'] },
+  expoConfig,
+  prettierConfig,
+]);
