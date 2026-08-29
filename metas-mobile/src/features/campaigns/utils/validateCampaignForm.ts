@@ -8,7 +8,6 @@ import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
 export function validateCampaignForm(values: CampaignFormValues): CampaignFormErrors {
   const errors: CampaignFormErrors = {};
   const targetAmountCents = parseBrlCurrencyToCents(values.targetAmount);
-  const targetQuantity = Number(values.targetQuantity);
   const startDate = parseBrazilianDate(values.startDate);
   const endDate = parseBrazilianDate(values.endDate);
 
@@ -19,6 +18,7 @@ export function validateCampaignForm(values: CampaignFormValues): CampaignFormEr
   }
 
   if (values.usesQuantity) {
+    const targetQuantity = Number(values.targetQuantity);
     if (!values.targetQuantity.trim()) {
       errors.targetQuantity = 'Informe a quantidade a vender.';
     } else if (!/^\d+$/.test(values.targetQuantity) || !Number.isInteger(targetQuantity)) {

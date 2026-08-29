@@ -33,7 +33,10 @@ const requireManager = (session: AuthenticatedSession): void => {
 const databaseErrorContains = (error: unknown, signal: string): boolean =>
   error instanceof DatabaseError && error.parent.message.includes(signal);
 
-const mapCampaignDatabaseError = (error: unknown): never => {
+const databaseErrorCode = (error: unknown): string | undefined =>
+  error instanceof DatabaseError ? (error.parent as Error & { code?: string }).code : undefined;
+
+const mapCampaignDatabaseError = (error: unknown, targetQuantity?: number | null): never => {
   if (databaseErrorContains(error, 'MANAGER_ACCESS_REQUIRED')) {
     throw new AppError(403, 'FORBIDDEN', 'Você não tem permissão para realizar esta operação.');
   }
@@ -50,10 +53,16 @@ const mapCampaignDatabaseError = (error: unknown): never => {
       'A campanha foi alterada por outro Gestor. Recarregue e tente novamente.',
     );
   }
-  if (
-    databaseErrorContains(error, 'INVALID_CAMPAIGN') ||
-    (error instanceof DatabaseError && (error.parent as Error & { code?: string }).code === '22023')
-  ) {
+  const isInvalidCampaign =
+    databaseErrorContains(error, 'INVALID_CAMPAIGN') || databaseErrorCode(error) === '22023';
+  if (targetQuantity === null && (isInvalidCampaign || databaseErrorCode(error) === '23502')) {
+    throw new AppError(
+      503,
+      'CAMPAIGN_QUANTITY_UNAVAILABLE',
+      'Não foi possível salvar esta campanha no momento.',
+    );
+  }
+  if (isInvalidCampaign) {
     throw new AppError(422, 'INVALID_INPUT', 'Os dados da campanha são inválidos.');
   }
   throw error;
@@ -219,7 +228,7 @@ export class PostgresCampaignService implements CampaignService {
       return this.requireMutationResult(rows);
     } catch (error: unknown) {
       if (error instanceof AppError) throw error;
-      return mapCampaignDatabaseError(error);
+      return mapCampaignDatabaseError(error, input.targetQuantity);
     }
   }
 

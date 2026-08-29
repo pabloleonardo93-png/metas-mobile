@@ -131,6 +131,19 @@ if (testDatabases === null) {
         targetQuantity: null,
       });
       assert.equal(withoutQuantity.targetQuantity, null);
+      const persistedWithoutQuantity = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ targetQuantity: number | null }>(
+          `SELECT target_quantity AS "targetQuantity"
+             FROM metas.campaigns
+             WHERE id = :campaignId`,
+          {
+            replacements: { campaignId: withoutQuantity.id },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.equal(persistedWithoutQuantity[0]?.targetQuantity, null);
 
       const withQuantity = await service.update(
         manager.session,
@@ -148,6 +161,19 @@ if (testDatabases === null) {
       );
       assert.equal(disabledAgain.targetQuantity, null);
       assert.equal((await service.getById(manager.session, disabledAgain.id)).targetQuantity, null);
+
+      await assert.rejects(
+        service.update(
+          manager.session,
+          disabledAgain.id,
+          { ...campaignInput('Campanha com versão antiga'), targetQuantity: 40 },
+          withQuantity.lockVersion,
+        ),
+        (error: unknown) =>
+          error instanceof AppError &&
+          error.statusCode === 409 &&
+          error.code === 'CAMPAIGN_CONFLICT',
+      );
     });
 
     await test('campaign status is derived from dates and explicit closure', async () => {
@@ -285,6 +311,18 @@ if (testDatabases === null) {
         assert.equal(item.forceRls, true);
         assert.equal(item.runtimeDml, false);
       }
+
+      const columns = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ isNullable: 'NO' | 'YES' }>(
+          `SELECT is_nullable AS "isNullable"
+           FROM information_schema.columns
+           WHERE table_schema = 'metas'
+             AND table_name = 'campaigns'
+             AND column_name = 'target_quantity'`,
+          { transaction, type: QueryTypes.SELECT },
+        ),
+      );
+      assert.deepEqual(columns, [{ isNullable: 'YES' }]);
     });
   } finally {
     await Promise.all([migrationDatabase.close(), runtimeDatabase.close()]);

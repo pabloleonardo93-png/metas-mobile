@@ -30,6 +30,9 @@ const {
 const {
   validateCampaignForm,
 } = require('../node_modules/.cache/calculation-tests/src/features/campaigns/utils/validateCampaignForm.js');
+const {
+  changeCampaignQuantityControl,
+} = require('../node_modules/.cache/calculation-tests/src/features/campaigns/utils/campaignFormValues.js');
 
 const responseCampaign = {
   createdAt: '2026-08-19T12:00:00.000Z',
@@ -137,6 +140,27 @@ test('quantity is required only when quantity control is enabled', () => {
   assert.equal(validateCampaignForm(values).targetQuantity, 'Informe a quantidade a vender.');
   assert.equal(validateCampaignForm({ ...values, usesQuantity: false }).targetQuantity, undefined);
   assert.equal(validateCampaignForm({ ...values, targetQuantity: '50' }).targetQuantity, undefined);
+});
+
+test('disabling quantity clears the previous value and enabling it again requires a new value', () => {
+  const values = {
+    endDate: '31/08/2026',
+    name: 'Campanha real',
+    startDate: '01/08/2026',
+    targetAmount: '5.000,00',
+    targetQuantity: '50',
+    usesQuantity: true,
+  };
+
+  const disabled = changeCampaignQuantityControl(values, false);
+  assert.equal(disabled.usesQuantity, false);
+  assert.equal(disabled.targetQuantity, '');
+  assert.equal(validateCampaignForm(disabled).targetQuantity, undefined);
+
+  const enabledAgain = changeCampaignQuantityControl(disabled, true);
+  assert.equal(enabledAgain.usesQuantity, true);
+  assert.equal(enabledAgain.targetQuantity, '');
+  assert.equal(validateCampaignForm(enabledAgain).targetQuantity, 'Informe a quantidade a vender.');
 });
 
 test('missing session and invalid money response fail safely', async () => {
