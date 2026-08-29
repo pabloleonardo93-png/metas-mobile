@@ -43,7 +43,9 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
                     {campaign.name}
                   </AppText>
                   <AppText color="textMuted" variant="caption">
-                    {metrics.soldQuantity} / {metrics.targetQuantity} unidades
+                    {metrics
+                      ? `${metrics.soldQuantity} / ${metrics.targetQuantity} unidades`
+                      : 'Sem controle por quantidade'}
                   </AppText>
                   {daySummary ? (
                     <AppText color="textMuted" variant="caption">
@@ -51,15 +53,19 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
                     </AppText>
                   ) : null}
                 </View>
-                <AppText color="primary" variant="bodyMedium">
-                  {formatPercentage(metrics.progress, 0)}
-                </AppText>
+                {metrics ? (
+                  <AppText color="primary" variant="bodyMedium">
+                    {formatPercentage(metrics.progress, 0)}
+                  </AppText>
+                ) : null}
               </View>
 
-              <GoalProgressBar
-                label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-                progress={metrics.progress}
-              />
+              {metrics ? (
+                <GoalProgressBar
+                  label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
+                  progress={metrics.progress}
+                />
+              ) : null}
             </View>
           );
         })}

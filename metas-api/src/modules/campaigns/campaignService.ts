@@ -20,7 +20,7 @@ interface CampaignDatabaseRow {
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: string;
-  targetQuantity: number;
+  targetQuantity: number | null;
   updatedAt: Date | string;
 }
 

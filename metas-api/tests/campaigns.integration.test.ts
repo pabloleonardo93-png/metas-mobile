@@ -124,6 +124,32 @@ if (testDatabases === null) {
       assert.deepEqual(await service.getById(manager.session, created.id), closed);
     });
 
+    await test('manager persists a campaign with or without quantity control', async () => {
+      const manager = await createManagerFixture(migrationDatabase, 'optional-quantity');
+      const withoutQuantity = await service.create(manager.session, {
+        ...campaignInput('Campanha sem quantidade'),
+        targetQuantity: null,
+      });
+      assert.equal(withoutQuantity.targetQuantity, null);
+
+      const withQuantity = await service.update(
+        manager.session,
+        withoutQuantity.id,
+        { ...campaignInput('Campanha com quantidade'), targetQuantity: 80 },
+        withoutQuantity.lockVersion,
+      );
+      assert.equal(withQuantity.targetQuantity, 80);
+
+      const disabledAgain = await service.update(
+        manager.session,
+        withQuantity.id,
+        { ...campaignInput('Campanha novamente sem quantidade'), targetQuantity: null },
+        withQuantity.lockVersion,
+      );
+      assert.equal(disabledAgain.targetQuantity, null);
+      assert.equal((await service.getById(manager.session, disabledAgain.id)).targetQuantity, null);
+    });
+
     await test('campaign status is derived from dates and explicit closure', async () => {
       const manager = await createManagerFixture(migrationDatabase, 'status');
       const scheduled = await service.create(manager.session, {

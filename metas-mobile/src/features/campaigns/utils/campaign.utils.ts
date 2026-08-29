@@ -17,7 +17,9 @@ function normalizeSearchText(value: string): string {
     .toLocaleLowerCase('pt-BR');
 }
 
-export function calculateCampaignMetrics(campaign: Campaign): CampaignMetrics {
+export function calculateCampaignMetrics(campaign: Campaign): CampaignMetrics | null {
+  if (campaign.targetQuantity === null) return null;
+
   const targetQuantity = normalizeQuantity(campaign.targetQuantity);
   const soldQuantity = normalizeQuantity(campaign.soldQuantity);
 

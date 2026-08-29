@@ -174,38 +174,51 @@ export function CampaignDetailsScreen() {
           </View>
 
           <View style={styles.metricsGrid}>
-            <View style={styles.metric}>
-              <AppText color="textMuted" variant="caption">
-                Meta
-              </AppText>
-              <AppText variant="bodyMedium">{metrics.targetQuantity} unidades</AppText>
-            </View>
+            {metrics ? (
+              <View style={styles.metric}>
+                <AppText color="textMuted" variant="caption">
+                  Meta
+                </AppText>
+                <AppText variant="bodyMedium">{metrics.targetQuantity} unidades</AppText>
+              </View>
+            ) : null}
             <View style={styles.metric}>
               <AppText color="textMuted" variant="caption">
                 Valor da meta
               </AppText>
               <AppText variant="bodyMedium">{formatCentsAsBrl(campaign.targetAmountCents)}</AppText>
             </View>
-            <View style={styles.metric}>
-              <AppText color="textMuted" variant="caption">
-                Vendidas
-              </AppText>
-              <AppText variant="bodyMedium">{metrics.soldQuantity}</AppText>
-            </View>
-            <View style={styles.metric}>
-              <AppText color="textMuted" variant="caption">
-                Faltam
-              </AppText>
-              <AppText variant="bodyMedium">{metrics.remainingQuantity}</AppText>
-            </View>
-            <View style={styles.metric}>
-              <AppText color="textMuted" variant="caption">
-                Progresso
-              </AppText>
-              <AppText color="primary" variant="bodyMedium">
-                {formatPercentage(metrics.progress, 0)}
-              </AppText>
-            </View>
+            {metrics ? (
+              <>
+                <View style={styles.metric}>
+                  <AppText color="textMuted" variant="caption">
+                    Vendidas
+                  </AppText>
+                  <AppText variant="bodyMedium">{metrics.soldQuantity}</AppText>
+                </View>
+                <View style={styles.metric}>
+                  <AppText color="textMuted" variant="caption">
+                    Faltam
+                  </AppText>
+                  <AppText variant="bodyMedium">{metrics.remainingQuantity}</AppText>
+                </View>
+                <View style={styles.metric}>
+                  <AppText color="textMuted" variant="caption">
+                    Progresso
+                  </AppText>
+                  <AppText color="primary" variant="bodyMedium">
+                    {formatPercentage(metrics.progress, 0)}
+                  </AppText>
+                </View>
+              </>
+            ) : (
+              <View style={styles.metric}>
+                <AppText color="textMuted" variant="caption">
+                  Quantidade
+                </AppText>
+                <AppText variant="bodyMedium">Sem controle</AppText>
+              </View>
+            )}
             <View style={styles.metric}>
               <AppText color="textMuted" variant="caption">
                 Dias da campanha
@@ -220,10 +233,12 @@ export function CampaignDetailsScreen() {
             </View>
           </View>
 
-          <AppProgressBar
-            label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-            progress={metrics.progress}
-          />
+          {metrics ? (
+            <AppProgressBar
+              label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
+              progress={metrics.progress}
+            />
+          ) : null}
         </View>
 
         {dailyDistribution ? (

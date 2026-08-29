@@ -17,7 +17,7 @@ export function resolveCampaignContributions(
         ? Math.floor(contribution.contributedQuantity)
         : 0;
 
-    if (campaign && contributedQuantity > 0) {
+    if (campaign && campaign.targetQuantity !== null && contributedQuantity > 0) {
       resolved.push({ campaign, contributedQuantity });
     }
 

@@ -24,8 +24,12 @@ const {
 } = require('../node_modules/.cache/calculation-tests/src/features/campaigns/state/campaignsState.js');
 const {
   countActiveCampaigns,
+  calculateCampaignMetrics,
   filterCampaigns,
 } = require('../node_modules/.cache/calculation-tests/src/features/campaigns/utils/campaign.utils.js');
+const {
+  validateCampaignForm,
+} = require('../node_modules/.cache/calculation-tests/src/features/campaigns/utils/validateCampaignForm.js');
 
 const responseCampaign = {
   createdAt: '2026-08-19T12:00:00.000Z',
@@ -109,6 +113,30 @@ test('create, update and close send cents, lock version and no store identifier'
     expectedLockVersion: updated.lockVersion,
   });
   assert.match(harness.calls[2].path, /\/close$/u);
+});
+
+test('campaign without quantity sends and receives an explicit null target', async () => {
+  const harness = createHarness({ response: { targetQuantity: null } });
+  const created = await harness.client.create({ ...campaignInput, targetQuantity: null });
+
+  assert.equal(created.targetQuantity, null);
+  assert.equal(harness.calls[0].options.body.targetQuantity, null);
+  assert.equal(calculateCampaignMetrics(created), null);
+});
+
+test('quantity is required only when quantity control is enabled', () => {
+  const values = {
+    endDate: '31/08/2026',
+    name: 'Campanha real',
+    startDate: '01/08/2026',
+    targetAmount: '5.000,00',
+    targetQuantity: '',
+    usesQuantity: true,
+  };
+
+  assert.equal(validateCampaignForm(values).targetQuantity, 'Informe a quantidade a vender.');
+  assert.equal(validateCampaignForm({ ...values, usesQuantity: false }).targetQuantity, undefined);
+  assert.equal(validateCampaignForm({ ...values, targetQuantity: '50' }).targetQuantity, undefined);
 });
 
 test('missing session and invalid money response fail safely', async () => {

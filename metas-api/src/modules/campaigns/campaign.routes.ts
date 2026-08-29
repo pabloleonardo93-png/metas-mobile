@@ -19,7 +19,7 @@ const campaignMutationFields = {
   name: z.string().trim().min(2).max(120),
   startDate: z.iso.date(),
   targetAmountCents: centsSchema,
-  targetQuantity: z.number().int().min(1).max(1_000_000_000),
+  targetQuantity: z.number().int().min(1).max(1_000_000_000).nullable(),
 } as const;
 const campaignMutationSchema = z
   .object(campaignMutationFields)

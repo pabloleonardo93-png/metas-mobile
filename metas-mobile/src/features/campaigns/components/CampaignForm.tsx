@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Switch, View } from 'react-native';
 
 import type { CampaignFormValues, CampaignInput } from '@/features/campaigns/types/campaign.types';
 import {
@@ -16,7 +16,7 @@ import {
   BrlCurrencyInput,
 } from '@/shared/components';
 import { useToast } from '@/shared/toast/ToastContext';
-import { colors, spacing } from '@/shared/theme';
+import { colors, radius, spacing } from '@/shared/theme';
 import { parseBrlCurrencyToCents } from '@/shared/utils/brlCurrency';
 import { calculatePeriodDayCounts } from '@/shared/utils/datePeriods';
 
@@ -68,7 +68,7 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
         name: values.name.trim(),
         startDate,
         targetAmountCents,
-        targetQuantity: Number(values.targetQuantity),
+        targetQuantity: values.usesQuantity ? Number(values.targetQuantity) : null,
       });
     } finally {
       setIsSubmitting(false);
@@ -90,20 +90,40 @@ export function CampaignForm({ initialValues, onSubmit, submitLabel }: CampaignF
         />
       </View>
 
-      <View style={styles.fieldGroup}>
-        <AppText variant="label">Quantidade a vender</AppText>
-        <AppTextInput
-          accessibilityLabel="Quantidade a vender"
-          error={submitted ? errors.targetQuantity : undefined}
-          inputMode="numeric"
-          keyboardType="number-pad"
-          leftAdornment={<AppIcon color={colors.textMuted} name="target" size={22} />}
-          placeholder="50"
-          returnKeyType="next"
-          value={values.targetQuantity}
-          onChangeText={(value) => updateValue('targetQuantity', value.replace(/\D/g, ''))}
+      <View style={[styles.quantityControl, values.usesQuantity && styles.quantityControlEnabled]}>
+        <View style={styles.quantityControlCopy}>
+          <AppText variant="bodyMedium">Controlar por quantidade</AppText>
+          <AppText color="textMuted" variant="caption">
+            Define uma meta em unidades e a distribuição diária da equipe.
+          </AppText>
+        </View>
+        <Switch
+          accessibilityLabel="Controlar por quantidade"
+          accessibilityState={{ checked: values.usesQuantity }}
+          ios_backgroundColor={colors.disabled}
+          thumbColor={colors.surface}
+          trackColor={{ false: colors.disabled, true: colors.primary }}
+          value={values.usesQuantity}
+          onValueChange={(value) => updateValue('usesQuantity', value)}
         />
       </View>
+
+      {values.usesQuantity ? (
+        <View style={styles.fieldGroup}>
+          <AppText variant="label">Quantidade a vender</AppText>
+          <AppTextInput
+            accessibilityLabel="Quantidade a vender"
+            error={submitted ? errors.targetQuantity : undefined}
+            inputMode="numeric"
+            keyboardType="number-pad"
+            leftAdornment={<AppIcon color={colors.textMuted} name="target" size={22} />}
+            placeholder="50"
+            returnKeyType="next"
+            value={values.targetQuantity}
+            onChangeText={(value) => updateValue('targetQuantity', value.replace(/\D/g, ''))}
+          />
+        </View>
+      ) : null}
 
       <View style={styles.fieldGroup}>
         <AppText variant="label">Valor da meta (R$)</AppText>
@@ -172,5 +192,25 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: spacing.lg,
+  },
+  quantityControl: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    padding: spacing.md,
+  },
+  quantityControlCopy: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  quantityControlEnabled: {
+    backgroundColor: colors.primarySubtle,
+    borderColor: colors.primary,
   },
 });
