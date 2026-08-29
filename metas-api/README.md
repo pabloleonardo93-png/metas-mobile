@@ -64,6 +64,14 @@ npm run db:migrate
 npm run db:migrate:status
 ```
 
+No Northflank, o diagnóstico seguro valida somente a conexão e o role de migration. A consulta de status também é somente leitura; apenas o comando de aplicação executa migrations:
+
+```bash
+npm run db:migrate:diagnose:northflank
+npm run db:migrate:status:northflank
+npm run db:migrate:northflank
+```
+
 Não há scripts de reset, drop ou force. O projeto não usa `sequelize.sync()`, `sync({ force: true })` ou `sync({ alter: true })`.
 
 O schema inicial contém:
@@ -179,6 +187,9 @@ npm run db:admin:bootstrap:test prepara infraestrutura no banco exclusivo de tes
 npm run db:migrate          aplica migrations pendentes
 npm run db:migrate:status   lista migrations executadas/pendentes
 npm run db:migrate:test     aplica migrations no banco de teste
+npm run db:migrate:diagnose:northflank valida conexão e role de migration sem aplicar migrations
+npm run db:migrate:status:northflank lista migrations sem aplicá-las
+npm run db:migrate:northflank aplica migrations pendentes no Northflank
 npm run format              formata arquivos
 npm run format:check        verifica formatação
 ```
