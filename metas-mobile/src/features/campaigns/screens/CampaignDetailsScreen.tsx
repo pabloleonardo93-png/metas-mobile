@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -10,13 +10,17 @@ import {
 } from 'react-native';
 
 import { appRoutes } from '@/config/routes';
+import { CampaignDailyDistribution } from '@/features/campaigns/components/CampaignDailyDistribution';
 import { CampaignStatusBadge } from '@/features/campaigns/components/CampaignStatusBadge';
 import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
 import type { Campaign } from '@/features/campaigns/types/campaign.types';
 import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
+import { calculateCampaignDailyDistribution } from '@/features/campaigns/utils/calculateCampaignDistribution';
 import { formatCampaignPeriod } from '@/features/campaigns/utils/campaignDates';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
+import { useEmployees } from '@/features/employees/context/EmployeesContext';
+import { useGoals } from '@/features/metas/context/GoalsContext';
 import {
   AppButton,
   AppIcon,
@@ -35,16 +39,54 @@ function getCampaignId(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
 }
 
+function getNextLocalDayDelay(now: Date): number {
+  const nextDay = new Date(now);
+  nextDay.setHours(24, 0, 1, 0);
+  return Math.max(nextDay.getTime() - now.getTime(), 1_000);
+}
+
 export function CampaignDetailsScreen() {
   const { hideToast, showToast } = useToast();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
   const { campaigns, closeCampaign, errorMessage, isLoading, refreshCampaigns } = useCampaigns();
+  const {
+    employees,
+    errorMessage: employeesErrorMessage,
+    isLoading: isLoadingEmployees,
+  } = useEmployees();
+  const {
+    errorMessage: goalsErrorMessage,
+    isLoading: isLoadingGoals,
+    teamDistribution,
+  } = useGoals();
   const [isClosing, setIsClosing] = useState(false);
+  const [calculationDate, setCalculationDate] = useState(() => new Date());
   const campaignId = getCampaignId(params.campaignId);
   const campaign = campaigns.find((item) => item.id === campaignId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
+  const dailyDistribution = useMemo(
+    () =>
+      campaign
+        ? calculateCampaignDailyDistribution(
+            campaign,
+            employees,
+            teamDistribution,
+            calculationDate,
+          )
+        : null,
+    [calculationDate, campaign, employees, teamDistribution],
+  );
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setCalculationDate(new Date());
+      void refreshCampaigns();
+    }, getNextLocalDayDelay(calculationDate));
+
+    return () => clearTimeout(timeout);
+  }, [calculationDate, refreshCampaigns]);
 
   if (isLoading || errorMessage) {
     return (
@@ -183,6 +225,19 @@ export function CampaignDetailsScreen() {
             progress={metrics.progress}
           />
         </View>
+
+        {dailyDistribution ? (
+          <CampaignDailyDistribution
+            result={dailyDistribution}
+            statusMessage={
+              isLoadingEmployees || isLoadingGoals
+                ? 'Carregando equipe e pesos da meta...'
+                : employeesErrorMessage || goalsErrorMessage
+                  ? 'Não foi possível carregar a equipe e os pesos da meta.'
+                  : undefined
+            }
+          />
+        ) : null}
 
         {campaign.status !== 'ENCERRADA' ? (
           <View style={styles.actions}>
