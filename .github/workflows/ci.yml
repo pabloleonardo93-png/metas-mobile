@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  mobile:
+    name: Mobile CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: metas-mobile
+    env:
+      CI: "true"
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_PUBLIC_API_BASE_URL: https://api.example.test
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ci.apps.googleusercontent.com
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: metas-mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Check changed file formatting
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          if [[ -z "$BASE_SHA" ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            BASE_SHA="$(git rev-parse "$HEAD_SHA^")"
+          fi
+
+          mapfile -d '' changed_files < <(
+            git diff --relative --name-only --diff-filter=ACMR -z "$BASE_SHA" "$HEAD_SHA" -- .
+          )
+
+          if (( ${#changed_files[@]} == 0 )); then
+            echo "No changed mobile files require formatting checks."
+          else
+            npx prettier --check --ignore-unknown "${changed_files[@]}"
+          fi
+
+      - name: Check workflow formatting
+        run: npx prettier --check ../.github/workflows/ci.yml
+
+      - name: Export Android bundle
+        run: npx expo export --platform android
+
+  api:
+    name: API CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: metas-api
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: metas-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit and HTTP tests
+        run: npm test
+
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Build API
+        run: npm run build
+
+  postgres:
+    name: PostgreSQL Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: metas-api
+    env:
+      CI: "true"
+      CI_MIGRATION_PASSWORD: ci_migration_password
+      CI_RUNTIME_PASSWORD: ci_runtime_password
+      NODE_ENV: test
+      PGPASSWORD: ci_admin_password
+      TEST_ADMIN_DATABASE_URL: postgresql://postgres:ci_admin_password@127.0.0.1:5432/metas_test
+      TEST_DATABASE_SSL: "false"
+      TEST_DATABASE_URL: postgresql://metas_app_runtime:ci_runtime_password@127.0.0.1:5432/metas_test
+      TEST_MIGRATION_DATABASE_URL: postgresql://metas_migration_runner:ci_migration_password@127.0.0.1:5432/metas_test
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: metas_test
+          POSTGRES_PASSWORD: ci_admin_password
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d metas_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: metas-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bootstrap test database roles and schema
+        run: npm run db:admin:bootstrap:test
+
+      - name: Configure disposable test role passwords
+        shell: bash
+        run: |
+          psql \
+            --host=127.0.0.1 \
+            --port=5432 \
+            --username=postgres \
+            --dbname=metas_test \
+            --set=ON_ERROR_STOP=1 \
+            --set=migration_password="$CI_MIGRATION_PASSWORD" \
+            --set=runtime_password="$CI_RUNTIME_PASSWORD" <<'SQL'
+          ALTER ROLE metas_migration_runner PASSWORD :'migration_password';
+          ALTER ROLE metas_app_runtime PASSWORD :'runtime_password';
+          SQL
+
+      - name: Apply migrations to the disposable database
+        run: npm run db:migrate:test
+
+      - name: Run PostgreSQL integration tests
+        run: npm run test:integration
