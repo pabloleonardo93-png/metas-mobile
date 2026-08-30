@@ -30,11 +30,3 @@ logs/
 *.temp
 .DS_Store
 Thumbs.db
-
-# Local tooling and agents
-.vscode/
-.agents/
-.codex/
-agents/
-AGENTS.md
-graphify-out/

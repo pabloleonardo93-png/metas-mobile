@@ -1,0 +1,219 @@
+name: Merge automático
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+      - Pull Request automático
+    types:
+      - completed
+    branches:
+      - develop
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: auto-merge-develop-main
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Validar e integrar PR
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validar elegibilidade e executar merge
+        uses: actions/github-script@v8
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGERING_WORKFLOW: ${{ github.event.workflow_run.name }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        with:
+          script: |
+            const baseBranch = 'main';
+            const headBranch = 'develop';
+            const migrationRoot = 'metas-api/src/database/migrations/';
+            const requiredJobs = ['Mobile CI', 'API CI', 'PostgreSQL Integration'];
+            const testedSha = process.env.TESTED_SHA;
+            const triggeringWorkflow = process.env.TRIGGERING_WORKFLOW;
+            const workflowRunId = Number(process.env.WORKFLOW_RUN_ID);
+            const { owner, repo } = context.repo;
+
+            if (
+              !/^[0-9a-f]{40}$/u.test(testedSha) ||
+              !Number.isSafeInteger(workflowRunId) ||
+              !['CI', 'Pull Request automático'].includes(triggeringWorkflow)
+            ) {
+              core.setFailed('Identificadores do workflow de CI são inválidos.');
+              return;
+            }
+
+            let ciRunId = workflowRunId;
+            if (triggeringWorkflow === 'Pull Request automático') {
+              const { data: runs } = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: 'ci.yml',
+                branch: headBranch,
+                event: 'push',
+                status: 'success',
+                head_sha: testedSha,
+                per_page: 100,
+              });
+              const successfulRun = runs.workflow_runs.find(({ head_sha: headSha }) => headSha === testedSha);
+              if (!successfulRun) {
+                core.notice('O Pull Request está pronto, mas o CI deste SHA ainda não terminou com sucesso.');
+                return;
+              }
+              ciRunId = successfulRun.id;
+            }
+
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner,
+              repo,
+              run_id: ciRunId,
+              filter: 'latest',
+              per_page: 100,
+            });
+            const jobConclusions = new Map(jobs.map(({ name, conclusion }) => [name, conclusion]));
+            const invalidJobs = requiredJobs.filter((name) => jobConclusions.get(name) !== 'success');
+
+            if (invalidJobs.length > 0) {
+              core.setFailed(`Checks obrigatórios sem sucesso: ${invalidJobs.join(', ')}.`);
+              return;
+            }
+
+            const openPulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              base: baseBranch,
+              head: `${owner}:${headBranch}`,
+              per_page: 100,
+            });
+
+            if (openPulls.length !== 1) {
+              core.notice(
+                `Merge não executado: esperado um PR develop → main aberto, encontrados ${openPulls.length}.`,
+              );
+              return;
+            }
+
+            const pullNumber = openPulls[0].number;
+            let pull;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const response = await github.rest.pulls.get({ owner, repo, pull_number: pullNumber });
+              pull = response.data;
+              if (pull.mergeable !== null) break;
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+
+            const sameRepository = pull.head.repo?.full_name === `${owner}/${repo}`;
+            const correctRoute = pull.head.ref === headBranch && pull.base.ref === baseBranch;
+            const currentHeadWasTested = pull.head.sha === testedSha;
+
+            if (
+              pull.state !== 'open' ||
+              pull.draft ||
+              !sameRepository ||
+              !correctRoute ||
+              !currentHeadWasTested
+            ) {
+              core.notice('Merge não executado: o PR atual não corresponde ao fluxo e ao SHA validados.');
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: pullNumber,
+              per_page: 100,
+            });
+            const migrationPresent = files.some(({ filename }) => filename.startsWith(migrationRoot));
+
+            if (migrationPresent) {
+              core.notice(
+                'Migration detectada. Auto-merge bloqueado; o PR deve seguir o fluxo manual de banco.',
+              );
+              return;
+            }
+
+            let unresolvedThreads = 0;
+            let cursor = null;
+            do {
+              const result = await github.graphql(
+                `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100, after: $cursor) {
+                        nodes { isResolved }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }`,
+                { owner, repo, number: pullNumber, cursor },
+              );
+              const threads = result.repository.pullRequest.reviewThreads;
+              unresolvedThreads += threads.nodes.filter(({ isResolved }) => !isResolved).length;
+              cursor = threads.pageInfo.hasNextPage ? threads.pageInfo.endCursor : null;
+            } while (cursor);
+
+            if (unresolvedThreads > 0) {
+              core.notice(`Merge não executado: ${unresolvedThreads} conversa(s) ainda não resolvida(s).`);
+              return;
+            }
+
+            if (pull.mergeable !== true || pull.mergeable_state !== 'clean') {
+              core.notice(
+                `Merge não executado: estado atual do PR é ${pull.mergeable_state ?? 'desconhecido'}.`,
+              );
+              return;
+            }
+
+            const { data: repository } = await github.rest.repos.get({ owner, repo });
+            if (!repository.allow_merge_commit || repository.merge_commit_title !== 'PR_TITLE') {
+              core.setFailed(
+                'O repositório não está configurado para Merge com o título do Pull Request.',
+              );
+              return;
+            }
+            if (repository.delete_branch_on_merge) {
+              core.setFailed(
+                'O repositório está configurado para apagar branches após o merge; desabilite essa opção para preservar a develop.',
+              );
+              return;
+            }
+
+            const { data: currentPull } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: pullNumber,
+            });
+            if (currentPull.state !== 'open' || currentPull.head.sha !== testedSha) {
+              core.notice('Merge cancelado: a HEAD do PR mudou depois das validações.');
+              return;
+            }
+
+            const { data: merge } = await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number: pullNumber,
+              sha: testedSha,
+              merge_method: 'merge',
+            });
+
+            if (!merge.merged) {
+              core.setFailed(`O GitHub recusou o merge: ${merge.message}`);
+              return;
+            }
+
+            core.info(`Pull Request #${pullNumber} integrado com sucesso por Merge.`);
