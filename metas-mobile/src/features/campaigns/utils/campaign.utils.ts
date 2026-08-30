@@ -4,6 +4,7 @@ import type {
   CampaignMetrics,
 } from '@/features/campaigns/types/campaign.types';
 import { calculateProgress } from '@/shared/utils/calculateProgress';
+import { calculateRemainingGoalAmount } from '@/shared/utils/goalCalculations';
 
 function normalizeQuantity(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -41,6 +42,7 @@ export function calculateCampaignMetrics(campaign: Campaign): CampaignMetrics {
   return {
     financialProgress: calculateProgress(soldAmountCents, targetAmountCents),
     quantity,
+    remainingAmountCents: calculateRemainingGoalAmount(targetAmountCents, soldAmountCents),
     soldAmountCents,
     targetAmountCents,
   };

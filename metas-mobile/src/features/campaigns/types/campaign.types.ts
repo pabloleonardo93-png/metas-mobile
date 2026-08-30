@@ -56,6 +56,7 @@ export type CampaignFormErrors = Partial<Record<keyof CampaignFormValues, string
 export interface CampaignMetrics {
   financialProgress: number;
   quantity: CampaignQuantityMetrics | null;
+  remainingAmountCents: number;
   soldAmountCents: number;
   targetAmountCents: number;
 }

@@ -133,6 +133,7 @@ test('campaign without quantity sends and receives an explicit null target', asy
   assert.deepEqual(calculateCampaignMetrics(created), {
     financialProgress: 0,
     quantity: null,
+    remainingAmountCents: 50000056,
     soldAmountCents: 0,
     targetAmountCents: 50000056,
   });
@@ -178,6 +179,7 @@ test('financial metrics remain valid with no quantity and cap visual progress ab
   });
   assert.equal(metrics.soldAmountCents, 180000);
   assert.equal(metrics.financialProgress, 45);
+  assert.equal(metrics.remainingAmountCents, 220000);
   assert.equal(metrics.quantity, null);
   assert.equal(Number.isFinite(metrics.financialProgress), true);
 
@@ -188,6 +190,7 @@ test('financial metrics remain valid with no quantity and cap visual progress ab
   });
   assert.equal(exceeded.soldAmountCents, 450000);
   assert.equal(exceeded.financialProgress, 100);
+  assert.equal(exceeded.remainingAmountCents, 0);
 });
 
 test('progress form makes quantity optional and guards against duplicate submission', () => {
@@ -268,4 +271,21 @@ test('campaign filters and active count use only real API state', () => {
     ['Campanha futura'],
   );
   assert.deepEqual(filterCampaigns([], '', 'ALL'), []);
+});
+
+test('campaign details show remaining money and the financial employee distribution', () => {
+  const detailsSource = fs.readFileSync(
+    path.resolve('src/features/campaigns/screens/CampaignDetailsScreen.tsx'),
+    'utf8',
+  );
+  const distributionSource = fs.readFileSync(
+    path.resolve('src/features/campaigns/components/CampaignFinancialDistribution.tsx'),
+    'utf8',
+  );
+
+  assert.match(detailsSource, /formatCentsAsBrl\(metrics\.remainingAmountCents\)/u);
+  assert.match(detailsSource, /<CampaignFinancialDistribution/u);
+  assert.match(distributionSource, /Quanto cada funcionário precisa vender/u);
+  assert.match(distributionSource, /employee\.remainingAmountCents/u);
+  assert.match(distributionSource, /employee\.dailyAmountCents/u);
 });
