@@ -1,0 +1,163 @@
+name: Pull Request automático
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-develop-main
+  cancel-in-progress: true
+
+jobs:
+  manage-pull-request:
+    name: Gerenciar PR develop para main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Criar ou atualizar Pull Request
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const baseBranch = 'main';
+            const headBranch = 'develop';
+            const migrationRoot = 'metas-api/src/database/migrations/';
+            const conventionalTitle = /^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: .+/u;
+            const { owner, repo } = context.repo;
+
+            const [{ data: base }, { data: head }] = await Promise.all([
+              github.rest.repos.getBranch({ owner, repo, branch: baseBranch }),
+              github.rest.repos.getBranch({ owner, repo, branch: headBranch }),
+            ]);
+
+            if (base.commit.commit.tree.sha === head.commit.commit.tree.sha) {
+              core.notice('main e develop possuem o mesmo conteúdo; nenhum Pull Request é necessário.');
+              return;
+            }
+
+            const openPulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              base: baseBranch,
+              head: `${owner}:${headBranch}`,
+              per_page: 100,
+            });
+
+            if (openPulls.length > 1) {
+              core.setFailed('Mais de um Pull Request develop → main está aberto; intervenção manual necessária.');
+              return;
+            }
+
+            let pull = openPulls[0];
+
+            if (!pull) {
+              const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                owner,
+                repo,
+                basehead: `${baseBranch}...${headBranch}`,
+              });
+              const comparisonCommits = comparison.commits ?? [];
+              const singleSubject =
+                comparison.total_commits === 1 && comparisonCommits.length === 1
+                  ? comparisonCommits[0].commit.message.split('\n')[0].trim()
+                  : '';
+              const title = conventionalTitle.test(singleSubject)
+                ? singleSubject.slice(0, 240)
+                : 'chore: integra alterações validadas da develop';
+
+              try {
+                const response = await github.rest.pulls.create({
+                  owner,
+                  repo,
+                  base: baseBranch,
+                  head: headBranch,
+                  title,
+                  body: 'Pull Request automático em preparação.',
+                });
+                pull = response.data;
+                core.info(`Pull Request #${pull.number} criado.`);
+              } catch (error) {
+                if (error.status === 403) {
+                  core.setFailed(
+                    'O GITHUB_TOKEN não pôde criar o Pull Request. Habilite “Allow GitHub Actions to create and approve pull requests” em Settings → Actions → General.',
+                  );
+                  return;
+                }
+                throw error;
+              }
+            } else {
+              core.info(`Pull Request #${pull.number} reutilizado; nenhum PR duplicado foi criado.`);
+            }
+
+            const [commits, files] = await Promise.all([
+              github.paginate(github.rest.pulls.listCommits, {
+                owner,
+                repo,
+                pull_number: pull.number,
+                per_page: 100,
+              }),
+              github.paginate(github.rest.pulls.listFiles, {
+                owner,
+                repo,
+                pull_number: pull.number,
+                per_page: 100,
+              }),
+            ]);
+
+            const migrationPresent = files.some(({ filename }) => filename.startsWith(migrationRoot));
+            const visibleCommits = commits.slice(0, 50);
+            const commitLines = visibleCommits.map(({ sha, commit }) => {
+              const subject = commit.message.split('\n')[0].trim().replaceAll('`', '\\`');
+              return `- \`${sha.slice(0, 7)}\` ${subject}`;
+            });
+            if (commits.length > visibleCommits.length) {
+              commitLines.push(`- … e mais ${commits.length - visibleCommits.length} commit(s)`);
+            }
+
+            const migrationSection = migrationPresent
+              ? [
+                  '**Status:** `MIGRATION_PRESENT=true`',
+                  '',
+                  '> ⚠️ Migration detectada. O merge automático está bloqueado. Execute backup, consulte o status, aplique a migration pelo fluxo administrativo e valide o ambiente antes do merge manual.',
+                ].join('\n')
+              : [
+                  '**Status:** `MIGRATION_PRESENT=false`',
+                  '',
+                  'Sem migrations alteradas: o merge poderá ocorrer automaticamente depois que todos os requisitos forem atendidos.',
+                ].join('\n');
+
+            const body = [
+              '## Pull Request automático',
+              '',
+              'Este PR foi criado e é atualizado automaticamente para integrar `develop` em `main`.',
+              '',
+              '### Commits incluídos',
+              '',
+              ...commitLines,
+              '',
+              '### Validação',
+              '',
+              '- `Mobile CI`',
+              '- `API CI`',
+              '- `PostgreSQL Integration`',
+              '',
+              '### Banco de dados',
+              '',
+              migrationSection,
+            ].join('\n');
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: pull.number,
+              body,
+            });
+
+            core.info(
+              `Pull Request #${pull.number} atualizado; MIGRATION_PRESENT=${String(migrationPresent)}.`,
+            );
