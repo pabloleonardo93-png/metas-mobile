@@ -181,7 +181,7 @@ O workflow `.github/workflows/ci.yml` executa o CI em Pull Requests para `main` 
 
 O CI usa somente credenciais descartáveis do próprio runner e não depende de secrets, Northflank, EAS ou bancos externos. Na API, a formatação é verificada por completo. No mobile, enquanto o passivo histórico de Prettier não for corrigido, a verificação é incremental nos arquivos modificados, sem ocultar novos problemas.
 
-No fluxo normal, um push para `develop` cria ou atualiza o Pull Request para `main`. Depois que os três checks passam, alterações sem migration podem ser integradas automaticamente por Merge, mantendo a `develop` permanente.
+O fluxo normal segue `develop → push → Pull Request automático → CI → merge automático → main`. Um novo push para `develop` cria ou atualiza o Pull Request e, depois que os três checks passam, alterações sem migration podem ser integradas automaticamente por Merge, mantendo a `develop` permanente.
 
 Quando algum arquivo em `metas-api/src/database/migrations/` é adicionado, alterado ou removido, o Pull Request continua aberto e o merge automático é bloqueado. O merge deve ocorrer manualmente somente depois do backup, da consulta de status, da aplicação administrativa da migration e da validação do ambiente.
 
