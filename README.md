@@ -171,6 +171,16 @@ npm run format:check
 
 Os testes de integração da API precisam de um PostgreSQL exclusivo para testes e das variáveis `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` e `TEST_ADMIN_DATABASE_URL`. As opções de SSL para esse ambiente são `TEST_DATABASE_SSL` e `TEST_DATABASE_SSL_SERVERNAME`.
 
+## Integração contínua
+
+O workflow `.github/workflows/ci.yml` executa o CI em Pull Requests para `main` e em pushes para `develop`. Os checks possuem nomes estáveis para uso nas regras de proteção da branch:
+
+- `Mobile CI` valida testes, TypeScript, ESLint, formatação dos arquivos alterados e o export Android do Expo;
+- `API CI` valida testes unitários e HTTP, TypeScript, ESLint, formatação e o build;
+- `PostgreSQL Integration` cria um PostgreSQL descartável, prepara os roles de teste, aplica todas as migrations e executa a integração real com RLS e menor privilégio.
+
+O CI usa somente credenciais descartáveis do próprio runner e não depende de secrets, Northflank, EAS ou bancos externos. Na API, a formatação é verificada por completo. No mobile, enquanto o passivo histórico de Prettier não for corrigido, a verificação é incremental nos arquivos modificados, sem ocultar novos problemas.
+
 ## Branches
 
 A `main` representa a versão estável. O desenvolvimento do dia a dia acontece em `develop`, e os novos trabalhos devem entrar primeiro nessa branch. A `main` é atualizada depois, quando uma versão estiver pronta.
