@@ -12,7 +12,12 @@ import {
 import { useAuth } from '@/features/auth/context/AuthContext';
 import { campaignsApi } from '@/features/campaigns/api/campaignsApi';
 import { campaignsReducer, initialCampaignsState } from '@/features/campaigns/state/campaignsState';
-import type { Campaign, CampaignInput } from '@/features/campaigns/types/campaign.types';
+import type {
+  Campaign,
+  CampaignInput,
+  CampaignProgressEntry,
+  CampaignProgressInput,
+} from '@/features/campaigns/types/campaign.types';
 import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { useRealtime } from '@/realtime/RealtimeContext';
 
@@ -22,7 +27,12 @@ interface CampaignsContextValue {
   campaigns: Campaign[];
   errorMessage: string | null;
   isLoading: boolean;
+  listProgress(campaignId: string): Promise<CampaignProgressEntry[]>;
   refreshCampaigns(): Promise<void>;
+  registerProgress(
+    campaignId: string,
+    input: CampaignProgressInput,
+  ): Promise<CampaignProgressEntry>;
   updateCampaign(campaign: Campaign, input: CampaignInput): Promise<Campaign>;
 }
 
@@ -102,6 +112,20 @@ export function CampaignsProvider({ children }: PropsWithChildren) {
     return closedCampaign;
   }, []);
 
+  const listProgress = useCallback(
+    (campaignId: string): Promise<CampaignProgressEntry[]> => campaignsApi.listProgress(campaignId),
+    [],
+  );
+
+  const registerProgress = useCallback(
+    async (campaignId: string, input: CampaignProgressInput): Promise<CampaignProgressEntry> => {
+      const result = await campaignsApi.createProgress(campaignId, input);
+      dispatch({ type: 'upserted', campaign: result.campaign });
+      return result.entry;
+    },
+    [],
+  );
+
   const value = useMemo<CampaignsContextValue>(
     () => ({
       campaigns: state.campaigns,
@@ -109,10 +133,20 @@ export function CampaignsProvider({ children }: PropsWithChildren) {
       createCampaign,
       errorMessage: state.errorMessage,
       isLoading: state.status === 'idle' || state.status === 'loading',
+      listProgress,
       refreshCampaigns,
+      registerProgress,
       updateCampaign,
     }),
-    [closeCampaign, createCampaign, refreshCampaigns, state, updateCampaign],
+    [
+      closeCampaign,
+      createCampaign,
+      listProgress,
+      refreshCampaigns,
+      registerProgress,
+      state,
+      updateCampaign,
+    ],
   );
 
   return <CampaignsContext.Provider value={value}>{children}</CampaignsContext.Provider>;

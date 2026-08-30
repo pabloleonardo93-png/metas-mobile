@@ -8,12 +8,33 @@ export interface CampaignDto {
   id: string;
   lockVersion: number;
   name: string;
-  soldQuantity: number;
+  soldAmountCents: string;
+  soldQuantity: number | null;
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: string;
   targetQuantity: number | null;
   updatedAt: string;
+}
+
+export interface CampaignProgressEntryDto {
+  amountCents: string;
+  campaignId: string;
+  createdAt: string;
+  createdByName: string;
+  createdByUserId: string;
+  id: string;
+  quantity: number | null;
+}
+
+export interface CampaignProgressInput {
+  amountCents: string;
+  quantity: number | null;
+}
+
+export interface CampaignProgressResultDto {
+  campaign: CampaignDto;
+  entry: CampaignProgressEntryDto;
 }
 
 export interface CampaignMutationInput {
@@ -31,8 +52,17 @@ export interface CampaignService {
     expectedLockVersion: number,
   ): Promise<CampaignDto>;
   create(session: AuthenticatedSession, input: CampaignMutationInput): Promise<CampaignDto>;
+  createProgress(
+    session: AuthenticatedSession,
+    campaignId: string,
+    input: CampaignProgressInput,
+  ): Promise<CampaignProgressResultDto>;
   getById(session: AuthenticatedSession, campaignId: string): Promise<CampaignDto>;
   list(session: AuthenticatedSession): Promise<CampaignDto[]>;
+  listProgress(
+    session: AuthenticatedSession,
+    campaignId: string,
+  ): Promise<CampaignProgressEntryDto[]>;
   update(
     session: AuthenticatedSession,
     campaignId: string,

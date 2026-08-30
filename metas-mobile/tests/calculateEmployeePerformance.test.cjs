@@ -111,6 +111,7 @@ test('resolve contribuição coletiva sem criar meta individual de campanha', ()
   const campaign = {
     id: 'campanha-1',
     name: 'Produto em foco',
+    soldAmountCents: 0,
     targetAmountCents: 500000,
     targetQuantity: 50,
     soldQuantity: 32,
@@ -132,9 +133,10 @@ test('não exibe contribuição em campanha sem controle por quantidade', () => 
   const campaign = {
     id: 'campanha-sem-quantidade',
     name: 'Ação de marca',
+    soldAmountCents: 0,
     targetAmountCents: 500000,
     targetQuantity: null,
-    soldQuantity: 0,
+    soldQuantity: null,
     startDate: '2026-08-01',
     endDate: '2026-08-31',
     status: 'ATIVA',

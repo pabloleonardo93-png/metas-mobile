@@ -106,6 +106,7 @@ if (testDatabases === null) {
       const manager = await createManagerFixture(migrationDatabase, 'crud');
       const created = await service.create(manager.session, campaignInput('Campanha CRUD'));
       assert.equal(created.soldQuantity, 0);
+      assert.equal(created.soldAmountCents, '0');
       assert.equal(created.status, 'ATIVA');
       assert.equal(created.targetAmountCents, '50000056');
 
@@ -190,6 +191,89 @@ if (testDatabases === null) {
       });
       assert.equal(scheduled.status, 'AGENDADA');
       assert.equal(ended.status, 'ENCERRADA');
+      await assert.rejects(
+        service.createProgress(manager.session, ended.id, {
+          amountCents: '1000',
+          quantity: null,
+        }),
+        (error: unknown) =>
+          error instanceof AppError && error.statusCode === 409 && error.code === 'CAMPAIGN_CLOSED',
+      );
+    });
+
+    await test('campaign progress aggregates money and optional quantities without losing legacy data', async () => {
+      const manager = await createManagerFixture(migrationDatabase, 'progress');
+      const withQuantity = await service.create(
+        manager.session,
+        campaignInput('Campanha com progresso'),
+      );
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query('UPDATE metas.campaigns SET sold_quantity = 35 WHERE id = :id', {
+          replacements: { id: withQuantity.id },
+          transaction,
+        }),
+      );
+
+      await service.createProgress(manager.session, withQuantity.id, {
+        amountCents: '30000',
+        quantity: null,
+      });
+      await service.createProgress(manager.session, withQuantity.id, {
+        amountCents: '20000',
+        quantity: 10,
+      });
+      const aggregated = await service.getById(manager.session, withQuantity.id);
+      assert.equal(aggregated.soldAmountCents, '50000');
+      assert.equal(aggregated.soldQuantity, 45);
+      const history = await service.listProgress(manager.session, withQuantity.id);
+      assert.equal(history.length, 2);
+      assert.deepEqual(
+        history.map(({ amountCents, quantity }) => ({ amountCents, quantity })),
+        [
+          { amountCents: '20000', quantity: 10 },
+          { amountCents: '30000', quantity: null },
+        ],
+      );
+
+      const withoutQuantity = await service.create(manager.session, {
+        ...campaignInput('Campanha financeira'),
+        targetAmountCents: '400000',
+        targetQuantity: null,
+      });
+      await service.createProgress(manager.session, withoutQuantity.id, {
+        amountCents: '500000',
+        quantity: null,
+      });
+      const financialOnly = await service.getById(manager.session, withoutQuantity.id);
+      assert.equal(financialOnly.soldAmountCents, '500000');
+      assert.equal(financialOnly.soldQuantity, null);
+      await assert.rejects(
+        service.createProgress(manager.session, withoutQuantity.id, {
+          amountCents: '1000',
+          quantity: 1,
+        }),
+        (error: unknown) =>
+          error instanceof AppError && error.code === 'CAMPAIGN_QUANTITY_NOT_TRACKED',
+      );
+    });
+
+    await test('concurrent campaign progress entries are independently persisted', async () => {
+      const manager = await createManagerFixture(migrationDatabase, 'concurrency');
+      const campaign = await service.create(manager.session, campaignInput('Campanha concorrente'));
+      await Promise.all([
+        service.createProgress(manager.session, campaign.id, {
+          amountCents: '10000',
+          quantity: 4,
+        }),
+        service.createProgress(manager.session, campaign.id, {
+          amountCents: '25000',
+          quantity: null,
+        }),
+      ]);
+      const aggregated = await service.getById(manager.session, campaign.id);
+      assert.equal(aggregated.soldAmountCents, '35000');
+      assert.equal(aggregated.soldQuantity, 4);
+      assert.equal((await service.listProgress(manager.session, campaign.id)).length, 2);
     });
 
     await test('RLS and controlled mutations isolate campaigns by store', async () => {
@@ -210,6 +294,22 @@ if (testDatabases === null) {
         service.getById(storeA.session, campaignB.id),
         (error: unknown) => error instanceof AppError && error.statusCode === 404,
       );
+      await service.createProgress(storeB.session, campaignB.id, {
+        amountCents: '1000',
+        quantity: null,
+      });
+      assert.deepEqual(await service.listProgress(storeA.session, campaignA.id), []);
+      await assert.rejects(
+        service.listProgress(storeA.session, campaignB.id),
+        (error: unknown) => error instanceof AppError && error.statusCode === 404,
+      );
+      await assert.rejects(
+        service.createProgress(storeA.session, campaignB.id, {
+          amountCents: '1000',
+          quantity: null,
+        }),
+        (error: unknown) => error instanceof AppError && error.statusCode === 404,
+      );
       await assert.rejects(
         service.update(
           storeA.session,
@@ -225,6 +325,13 @@ if (testDatabases === null) {
       const manager = await createManagerFixture(migrationDatabase, 'validation');
       await assert.rejects(
         service.create({ ...manager.session, role: 'CAIXA' }, campaignInput('Sem permissão')),
+        (error: unknown) => error instanceof AppError && error.statusCode === 403,
+      );
+      await assert.rejects(
+        service.createProgress({ ...manager.session, role: 'CAIXA' }, randomUUID(), {
+          amountCents: '1000',
+          quantity: null,
+        }),
         (error: unknown) => error instanceof AppError && error.statusCode === 403,
       );
       await assert.rejects(
@@ -323,6 +430,147 @@ if (testDatabases === null) {
         ),
       );
       assert.deepEqual(columns, [{ isNullable: 'YES' }]);
+
+      await service.createProgress(manager.session, campaign.id, {
+        amountCents: '1000',
+        quantity: 1,
+      });
+      const entriesWithoutContext = await runtimeDatabase.query<{ id: string }>(
+        'SELECT id FROM metas.campaign_progress_entries',
+        { type: QueryTypes.SELECT },
+      );
+      assert.deepEqual(entriesWithoutContext, []);
+      await assert.rejects(
+        withDatabaseContext(
+          runtimeDatabase,
+          {
+            employeeId: manager.session.employeeId,
+            storeId: manager.session.storeId,
+            userId: manager.session.userId,
+          },
+          (transaction) =>
+            runtimeDatabase.query(
+              `INSERT INTO metas.campaign_progress_entries (
+                 store_id, campaign_id, amount_cents, created_by_user_id
+               ) VALUES (:storeId, :campaignId, 1000, :userId)`,
+              {
+                replacements: {
+                  campaignId: campaign.id,
+                  storeId: manager.storeId,
+                  userId: manager.session.userId,
+                },
+                transaction,
+              },
+            ),
+        ),
+      );
+
+      const progressSecurity = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          forceRls: boolean;
+          owner: string;
+          publicExecute: boolean;
+          rowSecurity: boolean;
+          runtimeDml: boolean;
+          runtimeSelect: boolean;
+          searchPath: string[];
+          securityDefiner: boolean;
+        }>(
+          `SELECT
+             owner.rolname AS owner,
+             procedure.prosecdef AS "securityDefiner",
+             procedure.proconfig AS "searchPath",
+             has_function_privilege('public', procedure.oid, 'EXECUTE') AS "publicExecute",
+             relation.relrowsecurity AS "rowSecurity",
+             relation.relforcerowsecurity AS "forceRls",
+             has_table_privilege(
+               'metas_app_runtime', 'metas.campaign_progress_entries', 'INSERT,UPDATE,DELETE'
+             ) AS "runtimeDml",
+             has_table_privilege(
+               'metas_app_runtime', 'metas.campaign_progress_entries', 'SELECT'
+             ) AS "runtimeSelect"
+           FROM pg_proc procedure
+           JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
+           JOIN pg_roles owner ON owner.oid = procedure.proowner
+           CROSS JOIN pg_class relation
+           JOIN pg_namespace table_namespace ON table_namespace.oid = relation.relnamespace
+           WHERE namespace.nspname = 'metas'
+             AND procedure.proname = 'manager_create_campaign_progress_entry'
+             AND table_namespace.nspname = 'metas'
+             AND relation.relname = 'campaign_progress_entries'`,
+          { transaction, type: QueryTypes.SELECT },
+        ),
+      );
+      assert.equal(progressSecurity.length, 1);
+      assert.equal(progressSecurity[0]?.owner, 'metas_migration_owner');
+      assert.equal(progressSecurity[0]?.securityDefiner, true);
+      assert.deepEqual(progressSecurity[0]?.searchPath, ['search_path=pg_catalog']);
+      assert.equal(progressSecurity[0]?.publicExecute, false);
+      assert.equal(progressSecurity[0]?.rowSecurity, true);
+      assert.equal(progressSecurity[0]?.forceRls, true);
+      assert.equal(progressSecurity[0]?.runtimeDml, false);
+      assert.equal(progressSecurity[0]?.runtimeSelect, true);
+
+      const [progressSchemaObjects] = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          campaignIndexes: string[];
+          constraints: string[];
+          indexes: string[];
+          policies: string[];
+        }>(
+          `SELECT
+             ARRAY_TO_JSON(ARRAY(
+               SELECT indexname
+               FROM pg_indexes
+               WHERE schemaname = 'metas'
+                 AND tablename = 'campaigns'
+                 AND indexname = 'campaigns_id_store_unique_idx'
+               ORDER BY indexname
+             )) AS "campaignIndexes",
+             ARRAY_TO_JSON(ARRAY(
+               SELECT constraint_name
+               FROM information_schema.table_constraints
+               WHERE table_schema = 'metas'
+                 AND table_name = 'campaign_progress_entries'
+               ORDER BY constraint_name
+             )) AS constraints,
+             ARRAY_TO_JSON(ARRAY(
+               SELECT indexname
+               FROM pg_indexes
+               WHERE schemaname = 'metas'
+                 AND tablename = 'campaign_progress_entries'
+               ORDER BY indexname
+             )) AS indexes,
+             ARRAY_TO_JSON(ARRAY(
+               SELECT policyname
+               FROM pg_policies
+               WHERE schemaname = 'metas'
+                 AND tablename = 'campaign_progress_entries'
+               ORDER BY policyname
+             )) AS policies`,
+          { transaction, type: QueryTypes.SELECT },
+        ),
+      );
+      assert.deepEqual(progressSchemaObjects?.campaignIndexes, ['campaigns_id_store_unique_idx']);
+      const expectedProgressConstraints = [
+        'campaign_progress_entries_amount_valid',
+        'campaign_progress_entries_campaign_store_fk',
+        'campaign_progress_entries_created_by_user_fk',
+        'campaign_progress_entries_pkey',
+        'campaign_progress_entries_quantity_valid',
+        'campaign_progress_entries_store_fk',
+      ];
+      for (const constraint of expectedProgressConstraints) {
+        assert.equal(progressSchemaObjects?.constraints.includes(constraint), true);
+      }
+      assert.deepEqual(progressSchemaObjects?.indexes, [
+        'campaign_progress_entries_pkey',
+        'campaign_progress_entries_store_campaign_created_idx',
+      ]);
+      assert.deepEqual(progressSchemaObjects?.policies, [
+        'campaign_progress_entries_owner_all',
+        'campaign_progress_entries_runtime_select',
+      ]);
     });
   } finally {
     await Promise.all([migrationDatabase.close(), runtimeDatabase.close()]);

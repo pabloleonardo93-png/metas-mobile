@@ -9,11 +9,12 @@ import type { AuthenticatedSession, AuthenticationService } from '../auth/auth.t
 import type { CampaignService } from './campaign.types.js';
 
 const MAX_MONEY_CENTS = 9_007_199_254_740_991n;
+const MONEY_CENTS_PATTERN = /^[1-9]\d{0,15}$/;
 const campaignIdSchema = z.uuid();
 const centsSchema = z
   .string()
-  .regex(/^[1-9]\d{0,15}$/)
-  .refine((value) => BigInt(value) <= MAX_MONEY_CENTS);
+  .regex(MONEY_CENTS_PATTERN)
+  .refine((value) => !MONEY_CENTS_PATTERN.test(value) || BigInt(value) <= MAX_MONEY_CENTS);
 const campaignMutationFields = {
   endDate: z.iso.date(),
   name: z.string().trim().min(2).max(120),
@@ -30,6 +31,13 @@ const campaignUpdateSchema = z
   .strict()
   .refine((value) => value.endDate >= value.startDate, { path: ['endDate'] });
 const closeCampaignSchema = z.object({ expectedLockVersion: z.number().int().positive() }).strict();
+const campaignProgressSchema = z
+  .object({
+    amountCents: centsSchema,
+    quantity: z.number().int().min(1).max(1_000_000_000).nullable().optional(),
+  })
+  .strict()
+  .transform(({ amountCents, quantity }) => ({ amountCents, quantity: quantity ?? null }));
 
 interface CampaignRouterOptions {
   authenticationService: AuthenticationService;
@@ -109,6 +117,42 @@ export const createManagerCampaignRouter = ({
   const router = Router();
   router.use(createAuthenticateSession(authenticationService));
   addReadRoutes(router, campaignService, requireManagerSession);
+
+  router.get(
+    '/:campaignId/progress',
+    asyncHandler(async (request, response) => {
+      response
+        .status(200)
+        .json(
+          await campaignService.listProgress(
+            requireManagerSession(request),
+            parseCampaignId(request),
+          ),
+        );
+    }),
+  );
+
+  router.post(
+    '/:campaignId/progress',
+    asyncHandler(async (request, response) => {
+      const parsed = campaignProgressSchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new AppError(422, 'INVALID_INPUT', 'Os dados do progresso são inválidos.');
+      }
+      const session = requireManagerSession(request);
+      const result = await campaignService.createProgress(
+        session,
+        parseCampaignId(request),
+        parsed.data,
+      );
+      logger.info('CAMPAIGN_PROGRESS_CREATED', {
+        campaignId: result.entry.campaignId,
+        requestId: request.requestId,
+      });
+      realtimePublisher.publish(session.storeId, 'campaigns.changed');
+      response.status(201).json(result);
+    }),
+  );
 
   router.post(
     '/',
