@@ -11,6 +11,7 @@ import {
 
 import { appRoutes } from '@/config/routes';
 import { CampaignDailyDistribution } from '@/features/campaigns/components/CampaignDailyDistribution';
+import { CampaignFinancialDistribution } from '@/features/campaigns/components/CampaignFinancialDistribution';
 import { CampaignProgressForm } from '@/features/campaigns/components/CampaignProgressForm';
 import { CampaignProgressHistory } from '@/features/campaigns/components/CampaignProgressHistory';
 import { CampaignStatusBadge } from '@/features/campaigns/components/CampaignStatusBadge';
@@ -18,7 +19,10 @@ import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
 import type { Campaign, CampaignProgressEntry } from '@/features/campaigns/types/campaign.types';
 import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
-import { calculateCampaignDailyDistribution } from '@/features/campaigns/utils/calculateCampaignDistribution';
+import {
+  calculateCampaignDailyDistribution,
+  calculateCampaignFinancialDistribution,
+} from '@/features/campaigns/utils/calculateCampaignDistribution';
 import { formatCampaignPeriod } from '@/features/campaigns/utils/campaignDates';
 import { ManagerBottomNavigation } from '@/features/dashboard/components/ManagerBottomNavigation';
 import { useEmployees } from '@/features/employees/context/EmployeesContext';
@@ -98,6 +102,18 @@ export function CampaignDetailsScreen() {
         : null,
     [calculationDate, campaign, employees, teamDistribution],
   );
+  const financialDistribution = useMemo(
+    () =>
+      campaign
+        ? calculateCampaignFinancialDistribution(
+            campaign,
+            employees,
+            teamDistribution,
+            calculationDate,
+          )
+        : null,
+    [calculationDate, campaign, employees, teamDistribution],
+  );
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -165,7 +181,13 @@ export function CampaignDetailsScreen() {
   }
 
   const metrics = calculateCampaignMetrics(campaign);
-  const dayCounts = calculatePeriodDayCounts(campaign.startDate, campaign.endDate);
+  const dayCounts = calculatePeriodDayCounts(campaign.startDate, campaign.endDate, calculationDate);
+  const distributionStatusMessage =
+    isLoadingEmployees || isLoadingGoals
+      ? 'Carregando equipe e pesos da meta...'
+      : employeesErrorMessage || goalsErrorMessage
+        ? 'Não foi possível carregar a equipe e os pesos da meta.'
+        : undefined;
 
   function handleClose(campaignToClose: Campaign) {
     Alert.alert('Encerrar campanha', 'Esta ação encerra a campanha para toda a loja.', [
@@ -241,6 +263,14 @@ export function CampaignDetailsScreen() {
             </View>
             <View style={styles.metric}>
               <AppText color="textMuted" variant="caption">
+                Falta
+              </AppText>
+              <AppText variant="bodyMedium">
+                {formatCentsAsBrl(metrics.remainingAmountCents)}
+              </AppText>
+            </View>
+            <View style={styles.metric}>
+              <AppText color="textMuted" variant="caption">
                 Progresso financeiro
               </AppText>
               <AppText color="primary" variant="bodyMedium">
@@ -300,16 +330,17 @@ export function CampaignDetailsScreen() {
           />
         </View>
 
+        {financialDistribution ? (
+          <CampaignFinancialDistribution
+            result={financialDistribution}
+            statusMessage={distributionStatusMessage}
+          />
+        ) : null}
+
         {dailyDistribution ? (
           <CampaignDailyDistribution
             result={dailyDistribution}
-            statusMessage={
-              isLoadingEmployees || isLoadingGoals
-                ? 'Carregando equipe e pesos da meta...'
-                : employeesErrorMessage || goalsErrorMessage
-                  ? 'Não foi possível carregar a equipe e os pesos da meta.'
-                  : undefined
-            }
+            statusMessage={distributionStatusMessage}
           />
         ) : null}
 
