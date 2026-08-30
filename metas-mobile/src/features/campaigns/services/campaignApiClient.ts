@@ -1,6 +1,9 @@
 import type {
   Campaign,
   CampaignInput,
+  CampaignProgressEntry,
+  CampaignProgressInput,
+  CampaignProgressResult,
   CampaignStatus,
 } from '@/features/campaigns/types/campaign.types';
 
@@ -10,12 +13,28 @@ interface CampaignApiResponse {
   id: string;
   lockVersion: number;
   name: string;
-  soldQuantity: number;
+  soldAmountCents: string;
+  soldQuantity: number | null;
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: string;
   targetQuantity: number | null;
   updatedAt: string;
+}
+
+interface CampaignProgressApiResponse {
+  amountCents: string;
+  campaignId: string;
+  createdAt: string;
+  createdByName: string;
+  createdByUserId: string;
+  id: string;
+  quantity: number | null;
+}
+
+interface CampaignProgressResultApiResponse {
+  campaign: CampaignApiResponse;
+  entry: CampaignProgressApiResponse;
 }
 
 interface CampaignApiRequestOptions {
@@ -47,12 +66,26 @@ export class InvalidCampaignResponseError extends Error {
 }
 
 const toCampaign = (response: CampaignApiResponse): Campaign => {
+  const soldAmountCents = Number(response.soldAmountCents);
   const targetAmountCents = Number(response.targetAmountCents);
-  if (!Number.isSafeInteger(targetAmountCents) || targetAmountCents <= 0) {
+  if (
+    !Number.isSafeInteger(soldAmountCents) ||
+    soldAmountCents < 0 ||
+    !Number.isSafeInteger(targetAmountCents) ||
+    targetAmountCents <= 0
+  ) {
     throw new InvalidCampaignResponseError();
   }
 
-  return { ...response, targetAmountCents };
+  return { ...response, soldAmountCents, targetAmountCents };
+};
+
+const toProgressEntry = (response: CampaignProgressApiResponse): CampaignProgressEntry => {
+  const amountCents = Number(response.amountCents);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new InvalidCampaignResponseError();
+  }
+  return { ...response, amountCents };
 };
 
 const toRequest = (input: CampaignInput) => ({
@@ -82,6 +115,31 @@ export class CampaignApiClient {
         sessionToken,
       }),
     );
+  }
+
+  async createProgress(
+    campaignId: string,
+    input: CampaignProgressInput,
+  ): Promise<CampaignProgressResult> {
+    const sessionToken = await this.requireToken();
+    const result = await this.request<CampaignProgressResultApiResponse>(
+      `/v1/manager/campaigns/${campaignId}/progress`,
+      {
+        body: { amountCents: String(input.amountCents), quantity: input.quantity },
+        method: 'POST',
+        sessionToken,
+      },
+    );
+    return { campaign: toCampaign(result.campaign), entry: toProgressEntry(result.entry) };
+  }
+
+  async listProgress(campaignId: string): Promise<CampaignProgressEntry[]> {
+    const sessionToken = await this.requireToken();
+    const entries = await this.request<CampaignProgressApiResponse[]>(
+      `/v1/manager/campaigns/${campaignId}/progress`,
+      { sessionToken },
+    );
+    return entries.map(toProgressEntry);
   }
 
   async update(campaign: Campaign, input: CampaignInput): Promise<Campaign> {

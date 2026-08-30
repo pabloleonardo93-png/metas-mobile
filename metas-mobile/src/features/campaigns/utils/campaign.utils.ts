@@ -9,6 +9,10 @@ function normalizeQuantity(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
+function normalizeMoneyCents(value: number): number {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
 function normalizeSearchText(value: string): string {
   return value
     .normalize('NFD')
@@ -17,17 +21,28 @@ function normalizeSearchText(value: string): string {
     .toLocaleLowerCase('pt-BR');
 }
 
-export function calculateCampaignMetrics(campaign: Campaign): CampaignMetrics | null {
-  if (campaign.targetQuantity === null) return null;
-
-  const targetQuantity = normalizeQuantity(campaign.targetQuantity);
-  const soldQuantity = normalizeQuantity(campaign.soldQuantity);
+export function calculateCampaignMetrics(campaign: Campaign): CampaignMetrics {
+  const soldAmountCents = normalizeMoneyCents(campaign.soldAmountCents);
+  const targetAmountCents = normalizeMoneyCents(campaign.targetAmountCents);
+  const quantity =
+    campaign.targetQuantity === null
+      ? null
+      : (() => {
+          const targetQuantity = normalizeQuantity(campaign.targetQuantity);
+          const soldQuantity = normalizeQuantity(campaign.soldQuantity ?? 0);
+          return {
+            progress: calculateProgress(soldQuantity, targetQuantity),
+            remainingQuantity: Math.max(targetQuantity - soldQuantity, 0),
+            soldQuantity,
+            targetQuantity,
+          };
+        })();
 
   return {
-    progress: calculateProgress(soldQuantity, targetQuantity),
-    remainingQuantity: Math.max(targetQuantity - soldQuantity, 0),
-    soldQuantity,
-    targetQuantity,
+    financialProgress: calculateProgress(soldAmountCents, targetAmountCents),
+    quantity,
+    soldAmountCents,
+    targetAmountCents,
   };
 }
 

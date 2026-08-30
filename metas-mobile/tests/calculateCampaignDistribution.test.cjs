@@ -33,6 +33,7 @@ const baseCampaign = {
   id: '00000000-0000-4000-8000-000000000001',
   lockVersion: 1,
   name: 'Campanha ponderada',
+  soldAmountCents: 0,
   soldQuantity: 90,
   startDate: '2026-08-01',
   status: 'ATIVA',

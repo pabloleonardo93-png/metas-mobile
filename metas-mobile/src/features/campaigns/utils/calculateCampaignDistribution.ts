@@ -53,7 +53,7 @@ export function calculateCampaignDailyDistribution(
   today: LocalDateSource = new Date(),
 ): CampaignDailyDistributionResult | null {
   const metrics = calculateCampaignMetrics(campaign);
-  if (!metrics) return null;
+  if (!metrics.quantity) return null;
 
   const dayCounts = calculatePeriodDayCounts(campaign.startDate, campaign.endDate, today);
 
@@ -61,7 +61,7 @@ export function calculateCampaignDailyDistribution(
     return {
       dailyStoreGoal: 0,
       message: STATUS_MESSAGES['invalid-input'],
-      remainingAmount: metrics.remainingQuantity,
+      remainingAmount: metrics.quantity.remainingQuantity,
       roles: [],
       status: 'invalid-input',
       totalTeamWeight: 0,
@@ -69,7 +69,7 @@ export function calculateCampaignDailyDistribution(
   }
 
   const result = calculateWeightedDailyDistribution({
-    remainingAmount: metrics.remainingQuantity,
+    remainingAmount: metrics.quantity.remainingQuantity,
     remainingDays: campaign.status === 'ENCERRADA' ? 0 : dayCounts.remainingDays,
     team: createCurrentTeamDistribution(employees, configuredTeam),
   });

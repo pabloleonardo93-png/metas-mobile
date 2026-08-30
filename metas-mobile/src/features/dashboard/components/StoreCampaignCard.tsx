@@ -7,6 +7,7 @@ import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar
 import { formatPercentage } from '@/features/dashboard/utils/formatters';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import { formatCentsAsBrl } from '@/shared/utils/brlCurrency';
 
 interface StoreCampaignCardProps {
   campaign: Campaign;
@@ -25,24 +26,24 @@ export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampai
             {campaign.name}
           </AppText>
           <AppText color="textMuted" variant="caption">
-            {metrics
-              ? `${metrics.soldQuantity} / ${metrics.targetQuantity} unidades da loja`
+            {formatCentsAsBrl(metrics.soldAmountCents)} de{' '}
+            {formatCentsAsBrl(metrics.targetAmountCents)}
+          </AppText>
+          <AppText color="textMuted" variant="caption">
+            {metrics.quantity
+              ? `${metrics.quantity.soldQuantity} / ${metrics.quantity.targetQuantity} unidades da loja`
               : 'Sem controle por quantidade'}
           </AppText>
         </View>
-        {metrics ? (
-          <AppText color="primary" variant="bodyMedium">
-            {formatPercentage(metrics.progress, 0)}
-          </AppText>
-        ) : null}
+        <AppText color="primary" variant="bodyMedium">
+          {formatPercentage(metrics.financialProgress, 0)}
+        </AppText>
       </View>
 
-      {metrics ? (
-        <GoalProgressBar
-          label={`Progresso geral da campanha ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-          progress={metrics.progress}
-        />
-      ) : null}
+      <GoalProgressBar
+        label={`Progresso financeiro da campanha ${campaign.name}: ${formatPercentage(metrics.financialProgress, 0)}`}
+        progress={metrics.financialProgress}
+      />
 
       <AppText color="textMuted" variant="caption">
         Objetivo coletivo da loja
@@ -53,7 +54,7 @@ export function StoreCampaignCard({ campaign, contributedQuantity }: StoreCampai
         </AppText>
       ) : null}
 
-      {metrics && contributedQuantity !== undefined ? (
+      {metrics.quantity && contributedQuantity !== undefined ? (
         <View style={styles.contribution}>
           <AppText color="textMuted" variant="caption">
             Sua contribuição

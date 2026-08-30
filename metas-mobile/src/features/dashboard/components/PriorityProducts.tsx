@@ -8,6 +8,7 @@ import { GoalProgressBar } from '@/features/dashboard/components/GoalProgressBar
 import { formatPercentage } from '@/features/dashboard/utils/formatters';
 import { AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import { formatCentsAsBrl } from '@/shared/utils/brlCurrency';
 
 interface PriorityProductsProps {
   campaigns: readonly Campaign[];
@@ -43,8 +44,12 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
                     {campaign.name}
                   </AppText>
                   <AppText color="textMuted" variant="caption">
-                    {metrics
-                      ? `${metrics.soldQuantity} / ${metrics.targetQuantity} unidades`
+                    {formatCentsAsBrl(metrics.soldAmountCents)} de{' '}
+                    {formatCentsAsBrl(metrics.targetAmountCents)}
+                  </AppText>
+                  <AppText color="textMuted" variant="caption">
+                    {metrics.quantity
+                      ? `${metrics.quantity.soldQuantity} / ${metrics.quantity.targetQuantity} unidades`
                       : 'Sem controle por quantidade'}
                   </AppText>
                   {daySummary ? (
@@ -53,19 +58,15 @@ export function PriorityProducts({ campaigns, onSeeAll }: PriorityProductsProps)
                     </AppText>
                   ) : null}
                 </View>
-                {metrics ? (
-                  <AppText color="primary" variant="bodyMedium">
-                    {formatPercentage(metrics.progress, 0)}
-                  </AppText>
-                ) : null}
+                <AppText color="primary" variant="bodyMedium">
+                  {formatPercentage(metrics.financialProgress, 0)}
+                </AppText>
               </View>
 
-              {metrics ? (
-                <GoalProgressBar
-                  label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-                  progress={metrics.progress}
-                />
-              ) : null}
+              <GoalProgressBar
+                label={`Progresso financeiro de ${campaign.name}: ${formatPercentage(metrics.financialProgress, 0)}`}
+                progress={metrics.financialProgress}
+              />
             </View>
           );
         })}

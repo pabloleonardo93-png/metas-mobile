@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
 const Module = require('node:module');
@@ -40,6 +41,7 @@ const responseCampaign = {
   id: '00000000-0000-4000-8000-000000000020',
   lockVersion: 1,
   name: 'Campanha real',
+  soldAmountCents: '0',
   soldQuantity: 0,
   startDate: '2026-08-01',
   status: 'ATIVA',
@@ -53,6 +55,10 @@ function createHarness(overrides = {}) {
   const request = async (path, options = {}) => {
     calls.push({ options, path });
     if (overrides.error) throw overrides.error;
+    if (path.endsWith('/progress')) {
+      if (options.method === undefined) return overrides.progressList ?? [];
+      return overrides.progressResponse;
+    }
     if (options.method === undefined) return overrides.list ?? [responseCampaign];
     return { ...responseCampaign, ...(overrides.response ?? {}) };
   };
@@ -124,7 +130,76 @@ test('campaign without quantity sends and receives an explicit null target', asy
 
   assert.equal(created.targetQuantity, null);
   assert.equal(harness.calls[0].options.body.targetQuantity, null);
-  assert.equal(calculateCampaignMetrics(created), null);
+  assert.deepEqual(calculateCampaignMetrics(created), {
+    financialProgress: 0,
+    quantity: null,
+    soldAmountCents: 0,
+    targetAmountCents: 50000056,
+  });
+});
+
+test('campaign progress sends integer cents with optional quantity and parses history', async () => {
+  const progressResponse = {
+    amountCents: '30000',
+    campaignId: responseCampaign.id,
+    createdAt: '2026-08-30T12:00:00.000Z',
+    createdByName: 'Gestor da loja',
+    createdByUserId: '00000000-0000-4000-8000-000000000030',
+    id: '00000000-0000-4000-8000-000000000031',
+    quantity: null,
+  };
+  const harness = createHarness({
+    progressList: [progressResponse],
+    progressResponse: {
+      campaign: { ...responseCampaign, soldAmountCents: '30000' },
+      entry: progressResponse,
+    },
+  });
+  const created = await harness.client.createProgress(responseCampaign.id, {
+    amountCents: 30000,
+    quantity: null,
+  });
+  const history = await harness.client.listProgress(responseCampaign.id);
+
+  assert.equal(created.entry.amountCents, 30000);
+  assert.equal(created.campaign.soldAmountCents, 30000);
+  assert.equal(history[0].quantity, null);
+  assert.deepEqual(harness.calls[0].options.body, { amountCents: '30000', quantity: null });
+  assert.equal(harness.calls[0].path, `/v1/manager/campaigns/${responseCampaign.id}/progress`);
+});
+
+test('financial metrics remain valid with no quantity and cap visual progress above target', () => {
+  const metrics = calculateCampaignMetrics({
+    ...responseCampaign,
+    soldAmountCents: 180000,
+    soldQuantity: null,
+    targetAmountCents: 400000,
+    targetQuantity: null,
+  });
+  assert.equal(metrics.soldAmountCents, 180000);
+  assert.equal(metrics.financialProgress, 45);
+  assert.equal(metrics.quantity, null);
+  assert.equal(Number.isFinite(metrics.financialProgress), true);
+
+  const exceeded = calculateCampaignMetrics({
+    ...responseCampaign,
+    soldAmountCents: 450000,
+    targetAmountCents: 400000,
+  });
+  assert.equal(exceeded.soldAmountCents, 450000);
+  assert.equal(exceeded.financialProgress, 100);
+});
+
+test('progress form makes quantity optional and guards against duplicate submission', () => {
+  const source = fs.readFileSync(
+    path.resolve('src/features/campaigns/components/CampaignProgressForm.tsx'),
+    'utf8',
+  );
+  assert.match(source, /allowsQuantity \? \([\s\S]*Informar quantidade vendida/u);
+  assert.match(source, /allowsQuantity && includeQuantity \? \([\s\S]*Quantidade vendida/u);
+  assert.match(source, /if \(submissionLockRef\.current\) return;/u);
+  assert.match(source, /submissionLockRef\.current = true;/u);
+  assert.match(source, /quantity: allowsQuantity && includeQuantity \? Number\(quantity\) : null/u);
 });
 
 test('quantity is required only when quantity control is enabled', () => {
@@ -170,6 +245,10 @@ test('missing session and invalid money response fail safely', async () => {
 
   const invalidMoney = createHarness({ list: [{ ...responseCampaign, targetAmountCents: '1.5' }] });
   await assert.rejects(() => invalidMoney.client.list(true), InvalidCampaignResponseError);
+  const invalidSoldMoney = createHarness({
+    list: [{ ...responseCampaign, soldAmountCents: '-1' }],
+  });
+  await assert.rejects(() => invalidSoldMoney.client.list(true), InvalidCampaignResponseError);
 });
 
 test('campaign filters and active count use only real API state', () => {

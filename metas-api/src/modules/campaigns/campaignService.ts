@@ -6,6 +6,9 @@ import type { AuthenticatedSession } from '../auth/auth.types.js';
 import type {
   CampaignDto,
   CampaignMutationInput,
+  CampaignProgressEntryDto,
+  CampaignProgressInput,
+  CampaignProgressResultDto,
   CampaignService,
   CampaignStatus,
 } from './campaign.types.js';
@@ -16,12 +19,27 @@ interface CampaignDatabaseRow {
   id: string;
   lockVersion: number;
   name: string;
-  soldQuantity: number;
+  soldAmountCents: string;
+  soldQuantity: null | number | string;
   startDate: string;
   status: CampaignStatus;
   targetAmountCents: string;
   targetQuantity: number | null;
   updatedAt: Date | string;
+}
+
+interface CampaignMutationDatabaseRow extends Omit<CampaignDatabaseRow, 'soldAmountCents'> {
+  soldQuantity: number;
+}
+
+interface CampaignProgressDatabaseRow {
+  amountCents: string;
+  campaignId: string;
+  createdAt: Date | string;
+  createdByName: string;
+  createdByUserId: string;
+  id: string;
+  quantity: number | null;
 }
 
 const requireManager = (session: AuthenticatedSession): void => {
@@ -53,6 +71,16 @@ const mapCampaignDatabaseError = (error: unknown, targetQuantity?: number | null
       'A campanha foi alterada por outro Gestor. Recarregue e tente novamente.',
     );
   }
+  if (databaseErrorContains(error, 'CAMPAIGN_QUANTITY_NOT_TRACKED')) {
+    throw new AppError(
+      422,
+      'CAMPAIGN_QUANTITY_NOT_TRACKED',
+      'Esta campanha não controla quantidade.',
+    );
+  }
+  if (databaseErrorContains(error, 'INVALID_CAMPAIGN_PROGRESS')) {
+    throw new AppError(422, 'INVALID_INPUT', 'Os dados do progresso são inválidos.');
+  }
   const isInvalidCampaign =
     databaseErrorContains(error, 'INVALID_CAMPAIGN') || databaseErrorCode(error) === '22023';
   if (targetQuantity === null && (isInvalidCampaign || databaseErrorCode(error) === '23502')) {
@@ -82,7 +110,11 @@ const selectColumns = `
   campaign.id,
   campaign.name,
   campaign.target_quantity AS "targetQuantity",
-  campaign.sold_quantity AS "soldQuantity",
+  progress.sold_amount_cents::TEXT AS "soldAmountCents",
+  CASE
+    WHEN campaign.target_quantity IS NULL THEN NULL
+    ELSE (campaign.sold_quantity::BIGINT + progress.sold_quantity)::TEXT
+  END AS "soldQuantity",
   campaign.target_amount_cents::TEXT AS "targetAmountCents",
   campaign.start_date AS "startDate",
   campaign.end_date AS "endDate",
@@ -90,6 +122,16 @@ const selectColumns = `
   campaign.lock_version AS "lockVersion",
   campaign.created_at AS "createdAt",
   campaign.updated_at AS "updatedAt"`;
+
+const progressAggregateJoin = `
+  LEFT JOIN LATERAL (
+    SELECT
+      COALESCE(SUM(entry.amount_cents), 0) AS sold_amount_cents,
+      COALESCE(SUM(entry.quantity), 0) AS sold_quantity
+    FROM metas.campaign_progress_entries entry
+    WHERE entry.campaign_id = campaign.id
+      AND entry.store_id = campaign.store_id
+  ) progress ON TRUE`;
 
 const functionColumns = `
   id,
@@ -107,10 +149,22 @@ const functionColumns = `
 const toIsoString = (value: Date | string): string =>
   value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 
-const toCampaign = (row: CampaignDatabaseRow): CampaignDto => ({
+const toCampaign = (row: CampaignDatabaseRow): CampaignDto => {
+  const soldQuantity = row.soldQuantity === null ? null : Number(row.soldQuantity);
+  if (soldQuantity !== null && (!Number.isSafeInteger(soldQuantity) || soldQuantity < 0)) {
+    throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
+  }
+  return {
+    ...row,
+    createdAt: toIsoString(row.createdAt),
+    soldQuantity,
+    updatedAt: toIsoString(row.updatedAt),
+  };
+};
+
+const toProgressEntry = (row: CampaignProgressDatabaseRow): CampaignProgressEntryDto => ({
   ...row,
   createdAt: toIsoString(row.createdAt),
-  updatedAt: toIsoString(row.updatedAt),
 });
 
 export class PostgresCampaignService implements CampaignService {
@@ -122,6 +176,7 @@ export class PostgresCampaignService implements CampaignService {
         `SELECT ${selectColumns}
          FROM metas.campaigns campaign
          JOIN metas.stores store ON store.id = campaign.store_id
+         ${progressAggregateJoin}
          ORDER BY campaign.start_date DESC, campaign.created_at DESC`,
         { transaction, type: QueryTypes.SELECT },
       ),
@@ -130,20 +185,13 @@ export class PostgresCampaignService implements CampaignService {
   }
 
   public async getById(session: AuthenticatedSession, campaignId: string): Promise<CampaignDto> {
-    const rows = await this.withContext(session, (transaction) =>
-      this.database.query<CampaignDatabaseRow>(
-        `SELECT ${selectColumns}
-         FROM metas.campaigns campaign
-         JOIN metas.stores store ON store.id = campaign.store_id
-         WHERE campaign.id = :campaignId`,
-        { replacements: { campaignId }, transaction, type: QueryTypes.SELECT },
-      ),
+    const campaign = await this.withContext(session, (transaction) =>
+      this.findByIdInTransaction(campaignId, transaction),
     );
-    const campaign = rows[0];
     if (!campaign) {
       throw new AppError(404, 'CAMPAIGN_NOT_FOUND', 'Campanha não encontrada.');
     }
-    return toCampaign(campaign);
+    return campaign;
   }
 
   public async create(
@@ -152,6 +200,79 @@ export class PostgresCampaignService implements CampaignService {
   ): Promise<CampaignDto> {
     requireManager(session);
     return this.runMutation(session, 'manager_create_campaign', input);
+  }
+
+  public async createProgress(
+    session: AuthenticatedSession,
+    campaignId: string,
+    input: CampaignProgressInput,
+  ): Promise<CampaignProgressResultDto> {
+    requireManager(session);
+    try {
+      return await this.withContext(session, async (transaction) => {
+        const rows = await this.database.query<CampaignProgressDatabaseRow>(
+          `SELECT
+             id,
+             campaign_id AS "campaignId",
+             amount_cents AS "amountCents",
+             quantity,
+             created_by_user_id AS "createdByUserId",
+             created_by_name AS "createdByName",
+             created_at AS "createdAt"
+           FROM metas.manager_create_campaign_progress_entry(
+             :campaignId,
+             :amountCents,
+             :quantity
+           )`,
+          {
+            replacements: { ...input, campaignId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        );
+        const entry = rows[0];
+        if (!entry) {
+          throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
+        }
+        const campaign = await this.findByIdInTransaction(campaignId, transaction);
+        if (!campaign) {
+          throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
+        }
+        return { campaign, entry: toProgressEntry(entry) };
+      });
+    } catch (error: unknown) {
+      if (error instanceof AppError) throw error;
+      return mapCampaignDatabaseError(error);
+    }
+  }
+
+  public async listProgress(
+    session: AuthenticatedSession,
+    campaignId: string,
+  ): Promise<CampaignProgressEntryDto[]> {
+    requireManager(session);
+    return this.withContext(session, async (transaction) => {
+      const campaign = await this.findByIdInTransaction(campaignId, transaction);
+      if (!campaign) {
+        throw new AppError(404, 'CAMPAIGN_NOT_FOUND', 'Campanha não encontrada.');
+      }
+      const rows = await this.database.query<CampaignProgressDatabaseRow>(
+        `SELECT
+           entry.id,
+           entry.campaign_id AS "campaignId",
+           entry.amount_cents::TEXT AS "amountCents",
+           entry.quantity,
+           entry.created_by_user_id AS "createdByUserId",
+           creator.full_name AS "createdByName",
+           entry.created_at AS "createdAt"
+         FROM metas.campaign_progress_entries entry
+         JOIN metas.users creator ON creator.id = entry.created_by_user_id
+         WHERE entry.campaign_id = :campaignId
+         ORDER BY entry.created_at DESC, entry.id DESC`,
+        { replacements: { campaignId }, transaction, type: QueryTypes.SELECT },
+      );
+      return rows.map(toProgressEntry);
+    });
   }
 
   public async update(
@@ -177,8 +298,8 @@ export class PostgresCampaignService implements CampaignService {
   ): Promise<CampaignDto> {
     requireManager(session);
     try {
-      const rows = await this.withContext(session, (transaction) =>
-        this.database.query<CampaignDatabaseRow>(
+      return await this.withContext(session, async (transaction) => {
+        const rows = await this.database.query<CampaignMutationDatabaseRow>(
           `SELECT ${functionColumns}
            FROM metas.manager_close_campaign(:campaignId, :expectedLockVersion)`,
           {
@@ -186,9 +307,14 @@ export class PostgresCampaignService implements CampaignService {
             transaction,
             type: QueryTypes.SELECT,
           },
-        ),
-      );
-      return this.requireMutationResult(rows);
+        );
+        const result = this.requireMutationResult(rows);
+        const campaign = await this.findByIdInTransaction(result.id, transaction);
+        if (!campaign) {
+          throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
+        }
+        return campaign;
+      });
     } catch (error: unknown) {
       if (error instanceof AppError) throw error;
       return mapCampaignDatabaseError(error);
@@ -203,8 +329,8 @@ export class PostgresCampaignService implements CampaignService {
     expectedLockVersion?: number,
   ): Promise<CampaignDto> {
     try {
-      const rows = await this.withContext(session, (transaction) =>
-        this.database.query<CampaignDatabaseRow>(
+      return await this.withContext(session, async (transaction) => {
+        const rows = await this.database.query<CampaignMutationDatabaseRow>(
           `SELECT ${functionColumns}
            FROM metas.${functionName}(
              ${campaignId ? ':campaignId, ' : ''}
@@ -223,21 +349,41 @@ export class PostgresCampaignService implements CampaignService {
             transaction,
             type: QueryTypes.SELECT,
           },
-        ),
-      );
-      return this.requireMutationResult(rows);
+        );
+        const result = this.requireMutationResult(rows);
+        const campaign = await this.findByIdInTransaction(result.id, transaction);
+        if (!campaign) {
+          throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
+        }
+        return campaign;
+      });
     } catch (error: unknown) {
       if (error instanceof AppError) throw error;
       return mapCampaignDatabaseError(error, input.targetQuantity);
     }
   }
 
-  private requireMutationResult(rows: CampaignDatabaseRow[]): CampaignDto {
+  private requireMutationResult(rows: CampaignMutationDatabaseRow[]): CampaignMutationDatabaseRow {
     const campaign = rows[0];
     if (!campaign) {
       throw new AppError(500, 'INTERNAL_ERROR', 'Ocorreu um erro interno.');
     }
-    return toCampaign(campaign);
+    return campaign;
+  }
+
+  private async findByIdInTransaction(
+    campaignId: string,
+    transaction: Transaction,
+  ): Promise<CampaignDto | undefined> {
+    const rows = await this.database.query<CampaignDatabaseRow>(
+      `SELECT ${selectColumns}
+       FROM metas.campaigns campaign
+       JOIN metas.stores store ON store.id = campaign.store_id
+       ${progressAggregateJoin}
+       WHERE campaign.id = :campaignId`,
+      { replacements: { campaignId }, transaction, type: QueryTypes.SELECT },
+    );
+    return rows[0] ? toCampaign(rows[0]) : undefined;
   }
 
   private withContext<Result>(

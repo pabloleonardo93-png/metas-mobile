@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -11,9 +11,11 @@ import {
 
 import { appRoutes } from '@/config/routes';
 import { CampaignDailyDistribution } from '@/features/campaigns/components/CampaignDailyDistribution';
+import { CampaignProgressForm } from '@/features/campaigns/components/CampaignProgressForm';
+import { CampaignProgressHistory } from '@/features/campaigns/components/CampaignProgressHistory';
 import { CampaignStatusBadge } from '@/features/campaigns/components/CampaignStatusBadge';
 import { useCampaigns } from '@/features/campaigns/context/CampaignsContext';
-import type { Campaign } from '@/features/campaigns/types/campaign.types';
+import type { Campaign, CampaignProgressEntry } from '@/features/campaigns/types/campaign.types';
 import { getCampaignApiErrorMessage } from '@/features/campaigns/utils/campaignApiError';
 import { calculateCampaignMetrics } from '@/features/campaigns/utils/campaign.utils';
 import { calculateCampaignDailyDistribution } from '@/features/campaigns/utils/calculateCampaignDistribution';
@@ -50,7 +52,15 @@ export function CampaignDetailsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ campaignId?: string | string[] }>();
-  const { campaigns, closeCampaign, errorMessage, isLoading, refreshCampaigns } = useCampaigns();
+  const {
+    campaigns,
+    closeCampaign,
+    errorMessage,
+    isLoading,
+    listProgress,
+    refreshCampaigns,
+    registerProgress,
+  } = useCampaigns();
   const {
     employees,
     errorMessage: employeesErrorMessage,
@@ -62,19 +72,29 @@ export function CampaignDetailsScreen() {
     teamDistribution,
   } = useGoals();
   const [isClosing, setIsClosing] = useState(false);
+  const [isLoadingProgress, setIsLoadingProgress] = useState(true);
+  const [progressEntries, setProgressEntries] = useState<CampaignProgressEntry[]>([]);
+  const [progressErrorMessage, setProgressErrorMessage] = useState<string | null>(null);
   const [calculationDate, setCalculationDate] = useState(() => new Date());
   const campaignId = getCampaignId(params.campaignId);
   const campaign = campaigns.find((item) => item.id === campaignId);
   const horizontalPadding = Math.max(spacing.md, (width - 680) / 2);
+  const loadProgress = useCallback(async () => {
+    if (!campaignId) return;
+    setIsLoadingProgress(true);
+    setProgressErrorMessage(null);
+    try {
+      setProgressEntries(await listProgress(campaignId));
+    } catch (error: unknown) {
+      setProgressErrorMessage(getCampaignApiErrorMessage(error));
+    } finally {
+      setIsLoadingProgress(false);
+    }
+  }, [campaignId, listProgress]);
   const dailyDistribution = useMemo(
     () =>
       campaign
-        ? calculateCampaignDailyDistribution(
-            campaign,
-            employees,
-            teamDistribution,
-            calculationDate,
-          )
+        ? calculateCampaignDailyDistribution(campaign, employees, teamDistribution, calculationDate)
         : null,
     [calculationDate, campaign, employees, teamDistribution],
   );
@@ -87,6 +107,27 @@ export function CampaignDetailsScreen() {
 
     return () => clearTimeout(timeout);
   }, [calculationDate, refreshCampaigns]);
+
+  useEffect(() => {
+    if (!campaign) return undefined;
+    let isCurrent = true;
+    void listProgress(campaignId)
+      .then((entries) => {
+        if (isCurrent) {
+          setProgressEntries(entries);
+          setProgressErrorMessage(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isCurrent) setProgressErrorMessage(getCampaignApiErrorMessage(error));
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoadingProgress(false);
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [campaign, campaignId, listProgress]);
 
   if (isLoading || errorMessage) {
     return (
@@ -148,6 +189,18 @@ export function CampaignDetailsScreen() {
     ]);
   }
 
+  async function handleRegisterProgress(input: Parameters<typeof registerProgress>[1]) {
+    hideToast();
+    try {
+      const entry = await registerProgress(campaignId, input);
+      setProgressEntries((current) => [entry, ...current.filter(({ id }) => id !== entry.id)]);
+      showToast({ message: 'Progresso registrado com sucesso.', type: 'success' });
+    } catch (error: unknown) {
+      showToast({ message: getCampaignApiErrorMessage(error), type: 'error' });
+      throw error;
+    }
+  }
+
   return (
     <ScreenContainer edges={['top', 'bottom']}>
       <ScrollView
@@ -174,40 +227,48 @@ export function CampaignDetailsScreen() {
           </View>
 
           <View style={styles.metricsGrid}>
-            {metrics ? (
-              <View style={styles.metric}>
-                <AppText color="textMuted" variant="caption">
-                  Meta
-                </AppText>
-                <AppText variant="bodyMedium">{metrics.targetQuantity} unidades</AppText>
-              </View>
-            ) : null}
             <View style={styles.metric}>
               <AppText color="textMuted" variant="caption">
-                Valor da meta
+                Meta financeira
               </AppText>
-              <AppText variant="bodyMedium">{formatCentsAsBrl(campaign.targetAmountCents)}</AppText>
+              <AppText variant="bodyMedium">{formatCentsAsBrl(metrics.targetAmountCents)}</AppText>
             </View>
-            {metrics ? (
+            <View style={styles.metric}>
+              <AppText color="textMuted" variant="caption">
+                Vendido
+              </AppText>
+              <AppText variant="bodyMedium">{formatCentsAsBrl(metrics.soldAmountCents)}</AppText>
+            </View>
+            <View style={styles.metric}>
+              <AppText color="textMuted" variant="caption">
+                Progresso financeiro
+              </AppText>
+              <AppText color="primary" variant="bodyMedium">
+                {formatPercentage(metrics.financialProgress, 0)}
+              </AppText>
+            </View>
+            {metrics.quantity ? (
               <>
                 <View style={styles.metric}>
                   <AppText color="textMuted" variant="caption">
-                    Vendidas
+                    Quantidade
                   </AppText>
-                  <AppText variant="bodyMedium">{metrics.soldQuantity}</AppText>
+                  <AppText variant="bodyMedium">
+                    {metrics.quantity.soldQuantity} / {metrics.quantity.targetQuantity}
+                  </AppText>
                 </View>
                 <View style={styles.metric}>
                   <AppText color="textMuted" variant="caption">
                     Faltam
                   </AppText>
-                  <AppText variant="bodyMedium">{metrics.remainingQuantity}</AppText>
+                  <AppText variant="bodyMedium">{metrics.quantity.remainingQuantity}</AppText>
                 </View>
                 <View style={styles.metric}>
                   <AppText color="textMuted" variant="caption">
-                    Progresso
+                    Progresso em quantidade
                   </AppText>
                   <AppText color="primary" variant="bodyMedium">
-                    {formatPercentage(metrics.progress, 0)}
+                    {formatPercentage(metrics.quantity.progress, 0)}
                   </AppText>
                 </View>
               </>
@@ -233,12 +294,10 @@ export function CampaignDetailsScreen() {
             </View>
           </View>
 
-          {metrics ? (
-            <AppProgressBar
-              label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-              progress={metrics.progress}
-            />
-          ) : null}
+          <AppProgressBar
+            label={`Progresso financeiro de ${campaign.name}: ${formatPercentage(metrics.financialProgress, 0)}`}
+            progress={metrics.financialProgress}
+          />
         </View>
 
         {dailyDistribution ? (
@@ -253,6 +312,20 @@ export function CampaignDetailsScreen() {
             }
           />
         ) : null}
+
+        {campaign.status !== 'ENCERRADA' ? (
+          <CampaignProgressForm
+            allowsQuantity={campaign.targetQuantity !== null}
+            onSubmit={handleRegisterProgress}
+          />
+        ) : null}
+
+        <CampaignProgressHistory
+          entries={progressEntries}
+          errorMessage={progressErrorMessage}
+          isLoading={isLoadingProgress}
+          onRetry={() => void loadProgress()}
+        />
 
         {campaign.status !== 'ENCERRADA' ? (
           <View style={styles.actions}>

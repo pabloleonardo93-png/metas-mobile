@@ -9,6 +9,7 @@ import {
 } from '@/features/campaigns/utils/campaignDates';
 import { AppIcon, AppProgressBar, AppText } from '@/shared/components';
 import { colors, radius, shadows, spacing } from '@/shared/theme';
+import { formatCentsAsBrl } from '@/shared/utils/brlCurrency';
 import { formatPercentage } from '@/shared/utils/formatters';
 
 interface CampaignCardProps {
@@ -19,11 +20,11 @@ interface CampaignCardProps {
 export function CampaignCard({ campaign, onPress }: CampaignCardProps) {
   const metrics = calculateCampaignMetrics(campaign);
   const daySummary = formatCampaignDaySummary(campaign.startDate, campaign.endDate);
-  const remainingLabel = !metrics
+  const remainingLabel = !metrics.quantity
     ? 'Sem controle por quantidade'
-    : metrics.remainingQuantity === 0
+    : metrics.quantity.remainingQuantity === 0
       ? 'Meta em unidades atingida'
-      : `Faltam ${metrics.remainingQuantity} ${metrics.remainingQuantity === 1 ? 'unidade' : 'unidades'}`;
+      : `Faltam ${metrics.quantity.remainingQuantity} ${metrics.quantity.remainingQuantity === 1 ? 'unidade' : 'unidades'}`;
 
   return (
     <Pressable
@@ -39,23 +40,20 @@ export function CampaignCard({ campaign, onPress }: CampaignCardProps) {
         <CampaignStatusBadge status={campaign.status} />
       </View>
 
-      {metrics ? (
-        <>
-          <View style={styles.progressHeader}>
-            <AppText color="textMuted" variant="caption">
-              {metrics.soldQuantity} de {metrics.targetQuantity} unidades
-            </AppText>
-            <AppText color="primary" variant="bodyMedium">
-              {formatPercentage(metrics.progress, 0)}
-            </AppText>
-          </View>
+      <View style={styles.progressHeader}>
+        <AppText color="textMuted" variant="caption">
+          {formatCentsAsBrl(metrics.soldAmountCents)} de{' '}
+          {formatCentsAsBrl(metrics.targetAmountCents)}
+        </AppText>
+        <AppText color="primary" variant="bodyMedium">
+          {formatPercentage(metrics.financialProgress, 0)}
+        </AppText>
+      </View>
 
-          <AppProgressBar
-            label={`Progresso de ${campaign.name}: ${formatPercentage(metrics.progress, 0)}`}
-            progress={metrics.progress}
-          />
-        </>
-      ) : null}
+      <AppProgressBar
+        label={`Progresso financeiro de ${campaign.name}: ${formatPercentage(metrics.financialProgress, 0)}`}
+        progress={metrics.financialProgress}
+      />
 
       <View style={styles.footer}>
         <View style={styles.footerCopy}>
