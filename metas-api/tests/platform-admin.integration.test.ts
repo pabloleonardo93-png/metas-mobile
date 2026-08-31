@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import request from 'supertest';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { QueryTypes, type Sequelize, type Transaction } from 'sequelize';
 
 import { createApp } from '../src/app.js';
@@ -18,6 +19,8 @@ import type {
 } from '../src/modules/auth/auth.types.js';
 import { hashSessionToken } from '../src/modules/auth/sessionToken.js';
 import { PostgresPlatformAdminAuthenticationService } from '../src/modules/platformAdmin/platformAdminAuthenticationService.js';
+import type { PlatformAdminWebAuthnAdapter } from '../src/modules/platformAdmin/platformAdminWebAuthnAdapter.js';
+import { PostgresPlatformAdminWebAuthnService } from '../src/modules/platformAdmin/platformAdminWebAuthnService.js';
 import type {
   PlatformAdminLoginResult,
   PlatformAdminSession,
@@ -36,6 +39,160 @@ class FakeGoogleVerifier implements GoogleIdTokenVerifier {
     return Promise.resolve(this.identity);
   }
 }
+
+class FakeWebAuthnAdapter implements PlatformAdminWebAuthnAdapter {
+  public authenticationChallenge = `authentication-${randomUUID()}`;
+  public authenticationChallenges: string[] = [];
+  public authenticationUserVerified = true;
+  public rejectAuthentication = false;
+  public rejectRegistration = false;
+  public registrationUserVerified = true;
+  private verificationBarrier:
+    { arrived: number; expected: number; promise: Promise<void>; release: () => void } | undefined;
+  public constructor(
+    public readonly credentialId = `integration_${randomUUID().replaceAll('-', '')}`,
+  ) {}
+
+  public waitForConcurrentVerifications(expected: number): void {
+    let release = (): void => undefined;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.verificationBarrier = { arrived: 0, expected, promise, release };
+  }
+  public registrationChallenge = `registration-${randomUUID()}`;
+
+  public generateAuthenticationOptions(
+    options: Parameters<PlatformAdminWebAuthnAdapter['generateAuthenticationOptions']>[0],
+  ): ReturnType<PlatformAdminWebAuthnAdapter['generateAuthenticationOptions']> {
+    assert.equal(options.rpID, 'admin.example.test');
+    assert.equal(options.userVerification, 'required');
+    this.authenticationChallenges.push(this.authenticationChallenge);
+    return Promise.resolve({
+      challenge: this.authenticationChallenge,
+      rpId: 'admin.example.test',
+      userVerification: 'required',
+    });
+  }
+
+  public generateRegistrationOptions(
+    options: Parameters<PlatformAdminWebAuthnAdapter['generateRegistrationOptions']>[0],
+  ): ReturnType<PlatformAdminWebAuthnAdapter['generateRegistrationOptions']> {
+    assert.equal(options.rpID, 'admin.example.test');
+    assert.equal(options.attestationType, 'none');
+    assert.equal(options.authenticatorSelection?.userVerification, 'required');
+    this.registrationChallenge = `registration-${randomUUID()}`;
+    return Promise.resolve({
+      attestation: 'none',
+      challenge: this.registrationChallenge,
+      pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+      rp: { id: 'admin.example.test', name: 'Metas Admin' },
+      user: { displayName: 'Admin', id: 'admin-id', name: 'admin@example.test' },
+    });
+  }
+
+  public async verifyAuthenticationResponse(
+    options: Parameters<PlatformAdminWebAuthnAdapter['verifyAuthenticationResponse']>[0],
+  ): ReturnType<PlatformAdminWebAuthnAdapter['verifyAuthenticationResponse']> {
+    assert.deepEqual(options.expectedOrigin, ['https://admin.example.test']);
+    assert.equal(options.expectedRPID, 'admin.example.test');
+    assert.equal(options.requireUserVerification, true);
+    if (this.verificationBarrier) {
+      this.verificationBarrier.arrived += 1;
+      if (this.verificationBarrier.arrived === this.verificationBarrier.expected) {
+        this.verificationBarrier.release();
+      }
+      await this.verificationBarrier.promise;
+    }
+    let challengeValid = false;
+    if (typeof options.expectedChallenge === 'function') {
+      for (const challenge of this.authenticationChallenges) {
+        if (await Promise.resolve(options.expectedChallenge(challenge))) {
+          challengeValid = true;
+          break;
+        }
+      }
+    } else {
+      challengeValid = this.authenticationChallenges.includes(options.expectedChallenge);
+    }
+    return {
+      authenticationInfo: {
+        credentialBackedUp: true,
+        credentialDeviceType: 'multiDevice',
+        credentialID: options.credential.id,
+        newCounter: options.credential.counter + 1,
+        origin: 'https://admin.example.test',
+        rpID: 'admin.example.test',
+        userVerified: this.authenticationUserVerified,
+      },
+      verified: challengeValid && !this.rejectAuthentication,
+    };
+  }
+
+  public async verifyRegistrationResponse(
+    options: Parameters<PlatformAdminWebAuthnAdapter['verifyRegistrationResponse']>[0],
+  ): ReturnType<PlatformAdminWebAuthnAdapter['verifyRegistrationResponse']> {
+    assert.deepEqual(options.expectedOrigin, ['https://admin.example.test']);
+    assert.equal(options.expectedRPID, 'admin.example.test');
+    assert.equal(options.requireUserVerification, true);
+    if (this.verificationBarrier) {
+      this.verificationBarrier.arrived += 1;
+      if (this.verificationBarrier.arrived === this.verificationBarrier.expected) {
+        this.verificationBarrier.release();
+      }
+      await this.verificationBarrier.promise;
+    }
+    const challengeValid =
+      typeof options.expectedChallenge === 'function'
+        ? await options.expectedChallenge(this.registrationChallenge)
+        : options.expectedChallenge === this.registrationChallenge;
+    if (!challengeValid || this.rejectRegistration) return { verified: false };
+    return {
+      registrationInfo: {
+        aaguid: randomUUID(),
+        attestationObject: Uint8Array.from([1, 2, 3]),
+        credential: {
+          counter: 0,
+          id: this.credentialId,
+          publicKey: Uint8Array.from([1, 2, 3, 4]),
+          transports: ['internal'],
+        },
+        credentialBackedUp: true,
+        credentialDeviceType: 'multiDevice',
+        credentialType: 'public-key',
+        fmt: 'none',
+        origin: 'https://admin.example.test',
+        rpID: 'admin.example.test',
+        userVerified: this.registrationUserVerified,
+      },
+      verified: true,
+    };
+  }
+}
+
+const registrationResponse: RegistrationResponseJSON = {
+  clientExtensionResults: {},
+  id: 'integration_credential_id',
+  rawId: 'integration_credential_id',
+  response: {
+    attestationObject: 'attestation_object',
+    clientDataJSON: 'client_data',
+    transports: ['internal'],
+  },
+  type: 'public-key',
+};
+
+const authenticationResponse: AuthenticationResponseJSON = {
+  clientExtensionResults: {},
+  id: 'integration_credential_id',
+  rawId: 'integration_credential_id',
+  response: {
+    authenticatorData: 'authenticator_data',
+    clientDataJSON: 'client_data',
+    signature: 'signature',
+  },
+  type: 'public-key',
+};
 
 const withMigrationOwner = async <Result>(
   database: Sequelize,
@@ -389,6 +546,645 @@ if (testDatabases === null) {
       );
     });
 
+    await test('WebAuthn enrollment, MFA, replay protection and token rotation are enforced', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const googleOnlySession = await authenticationService.authenticateSession(
+        loginResult.sessionToken,
+      );
+      const adapter = new FakeWebAuthnAdapter();
+      const webAuthnService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+
+      await assert.rejects(webAuthnService.createAuthenticationOptions(googleOnlySession));
+      const options = await webAuthnService.createRegistrationOptions(googleOnlySession);
+      const registration = await webAuthnService.verifyRegistration(
+        googleOnlySession,
+        options.challengeId,
+        registrationResponse,
+        'Passkey de integração',
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      assert.equal(registration.assuranceLevel, 'MFA_VERIFIED');
+      await assert.rejects(authenticationService.authenticateSession(loginResult.sessionToken));
+      const mfaSession = await authenticationService.authenticateSession(registration.sessionToken);
+      assert.equal(mfaSession.assuranceLevel, 'MFA_VERIFIED');
+      assert.ok(mfaSession.mfaVerifiedAt);
+      assert.ok(mfaSession.stepUpVerifiedAt);
+
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admin_sessions
+           SET created_at = now() - interval '1 hour',
+               mfa_verified_at = now() - interval '10 minutes',
+               step_up_verified_at = now() - interval '10 minutes'
+           WHERE id = :sessionId`,
+          { replacements: { sessionId: mfaSession.sessionId }, transaction },
+        ),
+      );
+      await assert.rejects(webAuthnService.createRegistrationOptions(mfaSession));
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admin_sessions
+           SET mfa_verified_at = now(), step_up_verified_at = now()
+           WHERE id = :sessionId`,
+          { replacements: { sessionId: mfaSession.sessionId }, transaction },
+        ),
+      );
+      assert.ok((await webAuthnService.createRegistrationOptions(mfaSession)).challengeId);
+
+      const persisted = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          challengeHashLength: number;
+          credentialCount: string;
+          tokenHashMatches: boolean;
+          tokenVersion: string;
+        }>(
+          `SELECT
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials
+               WHERE platform_admin_id = :platformAdminId) AS "credentialCount",
+             (SELECT octet_length(challenge_hash)
+               FROM metas.platform_admin_webauthn_challenges
+               WHERE id = :challengeId) AS "challengeHashLength",
+             (SELECT token_hash = :tokenHash FROM metas.platform_admin_sessions
+               WHERE id = :sessionId) AS "tokenHashMatches",
+             (SELECT token_version::TEXT FROM metas.platform_admin_sessions
+               WHERE id = :sessionId) AS "tokenVersion"`,
+          {
+            replacements: {
+              challengeId: options.challengeId,
+              platformAdminId: admin.id,
+              sessionId: mfaSession.sessionId,
+              tokenHash: hashSessionToken(registration.sessionToken),
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(persisted[0], {
+        challengeHashLength: 32,
+        credentialCount: '1',
+        tokenHashMatches: true,
+        tokenVersion: '1',
+      });
+      assert.doesNotMatch(JSON.stringify(persisted), /registration-|integration_credential_id/u);
+
+      const nextLogin = await login(platformAdminRuntimeDatabase, admin);
+      const nextGoogleOnlySession = await authenticationService.authenticateSession(
+        nextLogin.sessionToken,
+      );
+      adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const secondFactorOptions =
+        await webAuthnService.createAuthenticationOptions(nextGoogleOnlySession);
+      assert.equal(secondFactorOptions.purpose, 'AUTHENTICATION');
+      const secondFactor = await webAuthnService.verifyAuthentication(
+        nextGoogleOnlySession,
+        secondFactorOptions.challengeId,
+        {
+          ...authenticationResponse,
+          id: adapter.credentialId,
+          rawId: adapter.credentialId,
+        },
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      await assert.rejects(authenticationService.authenticateSession(nextLogin.sessionToken));
+      assert.equal(
+        (await authenticationService.authenticateSession(secondFactor.sessionToken)).assuranceLevel,
+        'MFA_VERIFIED',
+      );
+
+      adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const authenticationOptions = await webAuthnService.createAuthenticationOptions(mfaSession);
+      assert.equal(authenticationOptions.purpose, 'STEP_UP');
+      const stepUp = await webAuthnService.verifyAuthentication(
+        mfaSession,
+        authenticationOptions.challengeId,
+        {
+          ...authenticationResponse,
+          id: adapter.credentialId,
+          rawId: adapter.credentialId,
+        },
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      await assert.rejects(
+        webAuthnService.verifyAuthentication(
+          mfaSession,
+          authenticationOptions.challengeId,
+          {
+            ...authenticationResponse,
+            id: adapter.credentialId,
+            rawId: adapter.credentialId,
+          },
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        ),
+      );
+      await assert.rejects(authenticationService.authenticateSession(registration.sessionToken));
+      assert.equal(
+        (await authenticationService.authenticateSession(stepUp.sessionToken)).assuranceLevel,
+        'MFA_VERIFIED',
+      );
+      const auditEvents = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ action: string; metadata: Record<string, unknown> }>(
+          `SELECT action, metadata
+           FROM metas.platform_admin_audit_events
+           WHERE platform_admin_id = :adminId
+           ORDER BY created_at, id`,
+          {
+            replacements: { adminId: admin.id },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      const actions = auditEvents.map(({ action }) => action);
+      assert.ok(actions.includes('WEBAUTHN_CREDENTIAL_REGISTERED'));
+      assert.ok(actions.includes('WEBAUTHN_AUTHENTICATION_SUCCESS'));
+      assert.ok(actions.includes('WEBAUTHN_STEP_UP_SUCCESS'));
+      assert.ok(actions.includes('WEBAUTHN_STEP_UP_FAILURE'));
+      assert.doesNotMatch(
+        JSON.stringify(auditEvents),
+        /challenge|publicKey|sessionToken|tokenHash|authorization/iu,
+      );
+    });
+
+    await test('WebAuthn challenges are bound to their administrative session', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-session-binding');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+      const secondLogin = await login(platformAdminRuntimeDatabase, admin);
+      const firstSession = await authenticationService.authenticateSession(firstLogin.sessionToken);
+      const secondSession = await authenticationService.authenticateSession(
+        secondLogin.sessionToken,
+      );
+      const webAuthnService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        new FakeWebAuthnAdapter(),
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const options = await webAuthnService.createRegistrationOptions(firstSession);
+      await assert.rejects(
+        webAuthnService.verifyRegistration(
+          secondSession,
+          options.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: null },
+        ),
+      );
+    });
+
+    await test('WebAuthn challenge purpose, expiration and concurrent reuse are denied', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-challenge');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const session = await authenticationService.authenticateSession(loginResult.sessionToken);
+      const adapter = new FakeWebAuthnAdapter();
+      const webAuthnService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const wrongPurpose = await webAuthnService.createRegistrationOptions(session);
+      await assert.rejects(
+        withPlatformAdminDatabaseContext(
+          platformAdminRuntimeDatabase,
+          { platformAdminId: session.platformAdminId, sessionId: session.sessionId },
+          (transaction) =>
+            platformAdminRuntimeDatabase.query(
+              `SELECT * FROM metas.consume_platform_admin_webauthn_challenge(
+                CAST(:challengeId AS UUID), 'AUTHENTICATION'
+              )`,
+              {
+                replacements: { challengeId: wrongPurpose.challengeId },
+                transaction,
+              },
+            ),
+        ),
+      );
+
+      const expired = await webAuthnService.createRegistrationOptions(session);
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admin_webauthn_challenges
+           SET created_at = now() - interval '6 minutes',
+               expires_at = now() - interval '1 minute'
+           WHERE id = :challengeId`,
+          { replacements: { challengeId: expired.challengeId }, transaction },
+        ),
+      );
+      await assert.rejects(
+        webAuthnService.verifyRegistration(
+          session,
+          expired.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: null },
+        ),
+      );
+
+      const concurrent = await webAuthnService.createRegistrationOptions(session);
+      const attempts = await Promise.allSettled(
+        Array.from({ length: 2 }, () =>
+          webAuthnService.verifyRegistration(
+            session,
+            concurrent.challengeId,
+            registrationResponse,
+            null,
+            { ipAddress: null, requestId: randomUUID(), userAgent: null },
+          ),
+        ),
+      );
+      assert.equal(attempts.filter(({ status }) => status === 'fulfilled').length, 1);
+      assert.equal(attempts.filter(({ status }) => status === 'rejected').length, 1);
+    });
+
+    await test('WebAuthn credential IDs are globally unique without account disclosure', async () => {
+      const sharedCredentialId = `shared_${randomUUID().replaceAll('-', '')}`;
+      const firstAdmin = await provisionAdmin(migrationDatabase, 'webauthn-unique-a');
+      const secondAdmin = await provisionAdmin(migrationDatabase, 'webauthn-unique-b');
+      const enroll = async (admin: ProvisionedAdmin): Promise<PromiseSettledResult<unknown>> => {
+        const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+        const loginResult = await login(platformAdminRuntimeDatabase, admin);
+        const session = await authenticationService.authenticateSession(loginResult.sessionToken);
+        const service = new PostgresPlatformAdminWebAuthnService(
+          platformAdminRuntimeDatabase,
+          new FakeWebAuthnAdapter(sharedCredentialId),
+          {
+            allowedOrigins: ['https://admin.example.test'],
+            challengeTtlSeconds: 300,
+            rpId: 'admin.example.test',
+            rpName: 'Metas Admin',
+            stepUpTtlSeconds: 300,
+          },
+        );
+        const options = await service.createRegistrationOptions(session);
+        try {
+          const value = await service.verifyRegistration(
+            session,
+            options.challengeId,
+            registrationResponse,
+            null,
+            { ipAddress: null, requestId: randomUUID(), userAgent: null },
+          );
+          return { status: 'fulfilled', value };
+        } catch (reason: unknown) {
+          return { reason, status: 'rejected' };
+        }
+      };
+
+      assert.equal((await enroll(firstAdmin)).status, 'fulfilled');
+      const duplicate = await enroll(secondAdmin);
+      assert.equal(duplicate.status, 'rejected');
+      if (duplicate.status === 'rejected') {
+        assert.ok(duplicate.reason instanceof AppError);
+        assert.equal(duplicate.reason.code, 'WEBAUTHN_VERIFICATION_DENIED');
+        assert.doesNotMatch(duplicate.reason.message, /admin|credential|unique|duplicate/iu);
+      }
+    });
+
+    await test('concurrent WebAuthn counters cannot overwrite a newer credential state', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-counter-race');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const googleOnlySession = await authenticationService.authenticateSession(
+        loginResult.sessionToken,
+      );
+      const adapter = new FakeWebAuthnAdapter();
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const registrationOptions = await service.createRegistrationOptions(googleOnlySession);
+      const enrollment = await service.verifyRegistration(
+        googleOnlySession,
+        registrationOptions.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: null },
+      );
+      const firstMfaSession = await authenticationService.authenticateSession(
+        enrollment.sessionToken,
+      );
+      const secondLogin = await login(platformAdminRuntimeDatabase, admin);
+      const secondGoogleOnlySession = await authenticationService.authenticateSession(
+        secondLogin.sessionToken,
+      );
+      adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const secondFactorOptions =
+        await service.createAuthenticationOptions(secondGoogleOnlySession);
+      const secondFactor = await service.verifyAuthentication(
+        secondGoogleOnlySession,
+        secondFactorOptions.challengeId,
+        {
+          ...authenticationResponse,
+          id: adapter.credentialId,
+          rawId: adapter.credentialId,
+        },
+        { ipAddress: null, requestId: randomUUID(), userAgent: null },
+      );
+      const secondMfaSession = await authenticationService.authenticateSession(
+        secondFactor.sessionToken,
+      );
+      adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const first = await service.createAuthenticationOptions(firstMfaSession);
+      adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const second = await service.createAuthenticationOptions(secondMfaSession);
+      adapter.waitForConcurrentVerifications(2);
+      const assertion = {
+        ...authenticationResponse,
+        id: adapter.credentialId,
+        rawId: adapter.credentialId,
+      };
+      const attempts = await Promise.allSettled([
+        service.verifyAuthentication(firstMfaSession, first.challengeId, assertion, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        }),
+        service.verifyAuthentication(secondMfaSession, second.challengeId, assertion, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        }),
+      ]);
+      assert.equal(attempts.filter(({ status }) => status === 'fulfilled').length, 1);
+      assert.equal(attempts.filter(({ status }) => status === 'rejected').length, 1);
+    });
+
+    await test('concurrent WebAuthn flows cannot rotate the same session twice', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-session-rotation-race');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const googleOnlySession = await authenticationService.authenticateSession(
+        loginResult.sessionToken,
+      );
+      const enrollmentAdapter = new FakeWebAuthnAdapter();
+      const configuration = {
+        allowedOrigins: ['https://admin.example.test'],
+        challengeTtlSeconds: 300,
+        rpId: 'admin.example.test',
+        rpName: 'Metas Admin',
+        stepUpTtlSeconds: 300,
+      } as const;
+      const enrollmentService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        enrollmentAdapter,
+        configuration,
+      );
+      const enrollmentOptions =
+        await enrollmentService.createRegistrationOptions(googleOnlySession);
+      const enrollment = await enrollmentService.verifyRegistration(
+        googleOnlySession,
+        enrollmentOptions.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: null },
+      );
+      const mfaSession = await authenticationService.authenticateSession(enrollment.sessionToken);
+
+      const concurrentAdapter = new FakeWebAuthnAdapter();
+      const concurrentService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        concurrentAdapter,
+        configuration,
+      );
+      const registrationOptions = await concurrentService.createRegistrationOptions(mfaSession);
+      concurrentAdapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const authenticationOptions = await concurrentService.createAuthenticationOptions(mfaSession);
+      concurrentAdapter.waitForConcurrentVerifications(2);
+
+      const attempts = await Promise.allSettled([
+        concurrentService.verifyRegistration(
+          mfaSession,
+          registrationOptions.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: null },
+        ),
+        concurrentService.verifyAuthentication(
+          mfaSession,
+          authenticationOptions.challengeId,
+          {
+            ...authenticationResponse,
+            id: enrollmentAdapter.credentialId,
+            rawId: enrollmentAdapter.credentialId,
+          },
+          { ipAddress: null, requestId: randomUUID(), userAgent: null },
+        ),
+      ]);
+
+      assert.equal(attempts.filter(({ status }) => status === 'fulfilled').length, 1);
+      assert.equal(attempts.filter(({ status }) => status === 'rejected').length, 1);
+      const successful = attempts.find((result) => result.status === 'fulfilled');
+      assert.equal(successful?.status, 'fulfilled');
+      if (!successful || successful.status !== 'fulfilled') {
+        throw new Error('Expected one successful WebAuthn session rotation.');
+      }
+      await assert.rejects(authenticationService.authenticateSession(enrollment.sessionToken));
+      assert.equal(
+        (await authenticationService.authenticateSession(successful.value.sessionToken))
+          .assuranceLevel,
+        'MFA_VERIFIED',
+      );
+    });
+
+    await test('disabled admin and revoked session cannot complete WebAuthn', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-revocation');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const session = await authenticationService.authenticateSession(loginResult.sessionToken);
+      const adapter = new FakeWebAuthnAdapter();
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const options = await service.createRegistrationOptions(session);
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admins SET status = 'DISABLED' WHERE id = :adminId`,
+          { replacements: { adminId: admin.id }, transaction },
+        ),
+      );
+      await assert.rejects(
+        service.verifyRegistration(session, options.challengeId, registrationResponse, null, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        }),
+      );
+
+      await withMigrationOwner(migrationDatabase, async (transaction) => {
+        await migrationDatabase.query(
+          `UPDATE metas.platform_admins SET status = 'ACTIVE' WHERE id = :adminId`,
+          { replacements: { adminId: admin.id }, transaction },
+        );
+        await migrationDatabase.query(
+          `UPDATE metas.platform_admin_sessions SET revoked_at = now() WHERE id = :sessionId`,
+          { replacements: { sessionId: session.sessionId }, transaction },
+        );
+      });
+      await assert.rejects(service.createRegistrationOptions(session));
+    });
+
+    await test('revoked credentials are excluded from WebAuthn authentication', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-revoked-credential');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const session = await authenticationService.authenticateSession(loginResult.sessionToken);
+      const adapter = new FakeWebAuthnAdapter();
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const options = await service.createRegistrationOptions(session);
+      const enrollment = await service.verifyRegistration(
+        session,
+        options.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: null },
+      );
+      const elevatedSession = await authenticationService.authenticateSession(
+        enrollment.sessionToken,
+      );
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admin_webauthn_credentials
+           SET revoked_at = now()
+           WHERE platform_admin_id = :adminId`,
+          { replacements: { adminId: admin.id }, transaction },
+        ),
+      );
+      await assert.rejects(service.createAuthenticationOptions(elevatedSession));
+    });
+
+    await test('failed origin, RP ID or missing user verification never elevates assurance', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'webauthn-invalid-assertion');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const session = await authenticationService.authenticateSession(loginResult.sessionToken);
+      const adapter = new FakeWebAuthnAdapter();
+      adapter.rejectRegistration = true;
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const options = await service.createRegistrationOptions(session);
+      await assert.rejects(
+        service.verifyRegistration(session, options.challengeId, registrationResponse, null, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        }),
+      );
+      assert.equal(
+        (await authenticationService.authenticateSession(loginResult.sessionToken)).assuranceLevel,
+        'GOOGLE_ONLY',
+      );
+
+      adapter.rejectRegistration = false;
+      adapter.registrationUserVerified = false;
+      const registrationWithoutUserVerification = await service.createRegistrationOptions(session);
+      await assert.rejects(
+        service.verifyRegistration(
+          session,
+          registrationWithoutUserVerification.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: null },
+        ),
+      );
+      assert.equal(
+        (await authenticationService.authenticateSession(loginResult.sessionToken)).assuranceLevel,
+        'GOOGLE_ONLY',
+      );
+
+      adapter.registrationUserVerified = true;
+      const validRegistrationOptions = await service.createRegistrationOptions(session);
+      await service.verifyRegistration(
+        session,
+        validRegistrationOptions.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: null },
+      );
+      const secondLogin = await login(platformAdminRuntimeDatabase, admin);
+      const secondGoogleOnlySession = await authenticationService.authenticateSession(
+        secondLogin.sessionToken,
+      );
+      adapter.authenticationUserVerified = false;
+      adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+      const authenticationWithoutUserVerification =
+        await service.createAuthenticationOptions(secondGoogleOnlySession);
+      await assert.rejects(
+        service.verifyAuthentication(
+          secondGoogleOnlySession,
+          authenticationWithoutUserVerification.challengeId,
+          {
+            ...authenticationResponse,
+            id: adapter.credentialId,
+            rawId: adapter.credentialId,
+          },
+          { ipAddress: null, requestId: randomUUID(), userAgent: null },
+        ),
+      );
+      assert.equal(
+        (await authenticationService.authenticateSession(secondLogin.sessionToken)).assuranceLevel,
+        'GOOGLE_ONLY',
+      );
+    });
+
     await test('platform admin role, RLS, function grants and audit log remain least-privileged', async () => {
       const roles = await migrationDatabase.query<{
         bypassRls: boolean;
@@ -438,7 +1234,7 @@ if (testDatabases === null) {
          ORDER BY relation.relname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(tables.length, 4);
+      assert.equal(tables.length, 6);
       assert.ok(
         tables.every(
           ({ forceRls, owner, rls }) => forceRls && rls && owner === 'metas_migration_owner',
@@ -450,6 +1246,8 @@ if (testDatabases === null) {
         'platform_admin_identities',
         'platform_admin_sessions',
         'platform_admin_audit_events',
+        'platform_admin_webauthn_challenges',
+        'platform_admin_webauthn_credentials',
       ]) {
         await assert.rejects(platformAdminRuntimeDatabase.query(`SELECT * FROM metas.${table}`));
       }
@@ -501,12 +1299,18 @@ if (testDatabases === null) {
              'resolve_platform_admin_session',
              'require_platform_admin_context',
              'get_platform_admin_me',
-             'revoke_platform_admin_session'
+             'revoke_platform_admin_session',
+             'list_platform_admin_webauthn_credentials',
+             'create_platform_admin_webauthn_challenge',
+             'consume_platform_admin_webauthn_challenge',
+             'register_platform_admin_webauthn_credential',
+             'complete_platform_admin_webauthn_authentication',
+             'record_platform_admin_webauthn_failure'
            )
          ORDER BY procedure.proname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(functions.length, 6);
+      assert.equal(functions.length, 12);
       assert.ok(
         functions.every(
           ({ appCanExecute, owner, publicCanExecute, searchPath }) =>
@@ -526,6 +1330,12 @@ if (testDatabases === null) {
         'get_platform_admin_me',
         'resolve_platform_admin_session',
         'revoke_platform_admin_session',
+        'list_platform_admin_webauthn_credentials',
+        'create_platform_admin_webauthn_challenge',
+        'consume_platform_admin_webauthn_challenge',
+        'register_platform_admin_webauthn_credential',
+        'complete_platform_admin_webauthn_authentication',
+        'record_platform_admin_webauthn_failure',
       ]) {
         assert.equal(byName.get(functionName)?.platformCanExecute, true);
         assert.equal(byName.get(functionName)?.migrationCanExecute, false);

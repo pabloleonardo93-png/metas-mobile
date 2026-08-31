@@ -1,5 +1,6 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { z } from 'zod';
 
 import { AppError } from '../../shared/errors/AppError.js';
@@ -10,10 +11,72 @@ import type {
   PlatformAdminRequestMetadata,
   PlatformAdminSession,
 } from './platformAdmin.types.js';
+import type { PlatformAdminWebAuthnService } from './platformAdminWebAuthn.types.js';
 
 const googleLoginSchema = z
   .object({
     idToken: z.string().min(20).max(16_384),
+  })
+  .strict();
+
+const base64UrlSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+$/u)
+  .min(1)
+  .max(65_536);
+const authenticatorAttachmentSchema = z.enum(['cross-platform', 'platform']).optional();
+const transportsSchema = z
+  .array(z.enum(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']))
+  .max(7)
+  .optional();
+const clientExtensionResultsSchema = z.record(z.string(), z.unknown());
+const registrationResponseSchema = z
+  .object({
+    authenticatorAttachment: authenticatorAttachmentSchema,
+    clientExtensionResults: clientExtensionResultsSchema,
+    id: base64UrlSchema,
+    rawId: base64UrlSchema,
+    response: z
+      .object({
+        attestationObject: base64UrlSchema,
+        authenticatorData: base64UrlSchema.optional(),
+        clientDataJSON: base64UrlSchema,
+        publicKey: base64UrlSchema.optional(),
+        publicKeyAlgorithm: z.number().int().optional(),
+        transports: transportsSchema,
+      })
+      .strict(),
+    type: z.literal('public-key'),
+  })
+  .strict();
+const authenticationResponseSchema = z
+  .object({
+    authenticatorAttachment: authenticatorAttachmentSchema,
+    clientExtensionResults: clientExtensionResultsSchema,
+    id: base64UrlSchema,
+    rawId: base64UrlSchema,
+    response: z
+      .object({
+        authenticatorData: base64UrlSchema,
+        clientDataJSON: base64UrlSchema,
+        signature: base64UrlSchema,
+        userHandle: base64UrlSchema.optional(),
+      })
+      .strict(),
+    type: z.literal('public-key'),
+  })
+  .strict();
+const registrationVerificationSchema = z
+  .object({
+    challengeId: z.uuid(),
+    friendlyName: z.string().trim().min(1).max(100).nullable().optional(),
+    response: registrationResponseSchema,
+  })
+  .strict();
+const authenticationVerificationSchema = z
+  .object({
+    challengeId: z.uuid(),
+    response: authenticationResponseSchema,
   })
   .strict();
 
@@ -22,10 +85,17 @@ export interface PlatformAdminRateLimitOptions {
   windowMs: number;
 }
 
+export interface PlatformAdminWebAuthnRateLimitOptions {
+  options: PlatformAdminRateLimitOptions;
+  verification: PlatformAdminRateLimitOptions;
+}
+
 interface PlatformAdminRouterOptions {
   authenticationService: PlatformAdminAuthenticationService;
   logger: Logger;
   rateLimitOptions?: PlatformAdminRateLimitOptions;
+  webAuthnService?: PlatformAdminWebAuthnService;
+  webAuthnRateLimitOptions?: PlatformAdminWebAuthnRateLimitOptions;
 }
 
 const asyncHandler =
@@ -53,6 +123,11 @@ export const createPlatformAdminRouter = ({
   authenticationService,
   logger,
   rateLimitOptions = { limit: 5, windowMs: 15 * 60 * 1000 },
+  webAuthnService,
+  webAuthnRateLimitOptions = {
+    options: { limit: 20, windowMs: 15 * 60 * 1000 },
+    verification: { limit: 10, windowMs: 15 * 60 * 1000 },
+  },
 }: PlatformAdminRouterOptions): Router => {
   const router = Router();
   const authenticateSession = createAuthenticatePlatformAdminSession(authenticationService);
@@ -70,6 +145,25 @@ export const createPlatformAdminRouter = ({
       });
     },
   });
+
+  const createWebAuthnRateLimit = (
+    event: string,
+    options: PlatformAdminRateLimitOptions,
+  ): RequestHandler =>
+    rateLimit({
+      legacyHeaders: false,
+      limit: options.limit,
+      standardHeaders: 'draft-8',
+      windowMs: options.windowMs,
+      handler: (request, response) => {
+        logger.info(event, { requestId: request.requestId });
+        response.status(429).json({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Muitas tentativas. Tente novamente mais tarde.',
+          requestId: request.requestId,
+        });
+      },
+    });
 
   router.post(
     '/auth/google',
@@ -121,6 +215,105 @@ export const createPlatformAdminRouter = ({
       response.status(200).json(await authenticationService.getMe(requireSession(request)));
     }),
   );
+
+  if (webAuthnService) {
+    router.post(
+      '/mfa/webauthn/registration/options',
+      authenticateSession,
+      createWebAuthnRateLimit(
+        'PLATFORM_ADMIN_WEBAUTHN_REGISTRATION_OPTIONS_RATE_LIMITED',
+        webAuthnRateLimitOptions.options,
+      ),
+      asyncHandler(async (request, response) => {
+        if (
+          !z
+            .object({})
+            .strict()
+            .safeParse(request.body ?? {}).success
+        ) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da solicitação inválidos.');
+        }
+        response
+          .status(200)
+          .json(await webAuthnService.createRegistrationOptions(requireSession(request)));
+      }),
+    );
+
+    router.post(
+      '/mfa/webauthn/registration/verify',
+      authenticateSession,
+      createWebAuthnRateLimit(
+        'PLATFORM_ADMIN_WEBAUTHN_REGISTRATION_VERIFY_RATE_LIMITED',
+        webAuthnRateLimitOptions.verification,
+      ),
+      asyncHandler(async (request, response) => {
+        const parsed = registrationVerificationSchema.safeParse(request.body);
+        if (!parsed.success) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da passkey inválidos.');
+        }
+        const result = await webAuthnService.verifyRegistration(
+          requireSession(request),
+          parsed.data.challengeId,
+          parsed.data.response as RegistrationResponseJSON,
+          parsed.data.friendlyName ?? null,
+          metadataFromRequest(request),
+        );
+        logger.info('PLATFORM_ADMIN_WEBAUTHN_REGISTRATION_SUCCESS', {
+          platformAdminId: requireSession(request).platformAdminId,
+          requestId: request.requestId,
+        });
+        response.status(200).json(result);
+      }),
+    );
+
+    router.post(
+      '/mfa/webauthn/authentication/options',
+      authenticateSession,
+      createWebAuthnRateLimit(
+        'PLATFORM_ADMIN_WEBAUTHN_AUTHENTICATION_OPTIONS_RATE_LIMITED',
+        webAuthnRateLimitOptions.options,
+      ),
+      asyncHandler(async (request, response) => {
+        if (
+          !z
+            .object({})
+            .strict()
+            .safeParse(request.body ?? {}).success
+        ) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da solicitação inválidos.');
+        }
+        response
+          .status(200)
+          .json(await webAuthnService.createAuthenticationOptions(requireSession(request)));
+      }),
+    );
+
+    router.post(
+      '/mfa/webauthn/authentication/verify',
+      authenticateSession,
+      createWebAuthnRateLimit(
+        'PLATFORM_ADMIN_WEBAUTHN_AUTHENTICATION_VERIFY_RATE_LIMITED',
+        webAuthnRateLimitOptions.verification,
+      ),
+      asyncHandler(async (request, response) => {
+        const parsed = authenticationVerificationSchema.safeParse(request.body);
+        if (!parsed.success) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da passkey inválidos.');
+        }
+        const result = await webAuthnService.verifyAuthentication(
+          requireSession(request),
+          parsed.data.challengeId,
+          parsed.data.response as AuthenticationResponseJSON,
+          metadataFromRequest(request),
+        );
+        logger.info('PLATFORM_ADMIN_WEBAUTHN_AUTHENTICATION_SUCCESS', {
+          platformAdminId: requireSession(request).platformAdminId,
+          requestId: request.requestId,
+        });
+        response.status(200).json(result);
+      }),
+    );
+  }
 
   return router;
 };

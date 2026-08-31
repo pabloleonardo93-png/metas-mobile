@@ -247,7 +247,7 @@ O login possui rate limit em memória adequado ao processo único do MVP. Antes 
 
 ## Fundação do administrador da plataforma
 
-O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. A migration 013 cria identidades Google previamente provisionadas, sessões administrativas opacas e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
+O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. As migrations 013 e 014 criam identidades Google previamente provisionadas, sessões administrativas opacas, autenticação WebAuthn/passkeys e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
 
 Rotas desta fase:
 
@@ -255,6 +255,10 @@ Rotas desta fase:
 POST /v1/platform-admin/auth/google
 POST /v1/platform-admin/auth/logout
 GET  /v1/platform-admin/me
+POST /v1/platform-admin/mfa/webauthn/registration/options
+POST /v1/platform-admin/mfa/webauthn/registration/verify
+POST /v1/platform-admin/mfa/webauthn/authentication/options
+POST /v1/platform-admin/mfa/webauthn/authentication/verify
 ```
 
 O primeiro administrador não é criado por HTTP nem por migration. Depois da infraestrutura e da migration 013, um operador autorizado fornece explicitamente nome, e-mail e o `sub` Google por variáveis de ambiente e executa:
@@ -279,9 +283,18 @@ PLATFORM_ADMIN_DATABASE_URL
 GOOGLE_ADMIN_ALLOWED_CLIENT_IDS
 PLATFORM_ADMIN_SESSION_TTL_SECONDS
 PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS
+PLATFORM_ADMIN_WEBAUTHN_RP_ID
+PLATFORM_ADMIN_WEBAUTHN_RP_NAME
+PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS
+PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS
+PLATFORM_ADMIN_WEBAUTHN_STEP_UP_TTL_SECONDS
 ```
 
-Os Client IDs administrativos não podem reutilizar a audience do mobile. A sessão nasce com assurance `GOOGLE_ONLY`; o servidor não permite ativar esse login em produção enquanto MFA/WebAuthn não estiver concluído. Antes de operar com múltiplas instâncias, o rate limit em memória também deve migrar para armazenamento compartilhado ou para a borda.
+Os Client IDs administrativos não podem reutilizar a audience do mobile. A sessão nasce com assurance `GOOGLE_ONLY` e só muda para `MFA_VERIFIED` depois de uma verificação WebAuthn com `userVerification` obrigatório. O challenge tem validade curta, uso único e vínculo com administrador, sessão e finalidade. O token opaco da sessão é rotacionado após o cadastro ou a autenticação da passkey.
+
+`PLATFORM_ADMIN_AUTH_ENABLED` continua `false` por padrão. Quando habilitado, o startup exige a conexão administrativa, a audience Google própria e a configuração completa do RP ID, nome e allowlist exata de origins; em produção, todos os origins precisam usar HTTPS. O projeto não configura nem habilita esses valores automaticamente. Antes de operar com múltiplas instâncias, os rate limits em memória devem migrar para armazenamento compartilhado ou para a borda.
+
+O primeiro cadastro de passkey é permitido somente na sessão `GOOGLE_ONLY` de um administrador previamente provisionado. Antes de habilitar o domínio em produção, esse primeiro acesso deve ocorrer em uma janela operacional controlada, confirmando a identidade do administrador por um canal independente; uma conta Google comprometida antes do enrollment poderia registrar a primeira passkey. Passkeys adicionais exigem `MFA_VERIFIED` e step-up recente. Revogação, remoção da última credencial e recuperação administrativa permanecem fora desta fase para evitar um bypass inseguro; devem ser implementadas com step-up e procedimento operacional auditável.
 
 No futuro `metas-admin`, o BFF deverá manter a credencial somente em cookie `__Host-*`, `HttpOnly`, `Secure`, `SameSite` e `Path=/`, sem expô-la a Client Components. Mutações deverão validar `Origin`/`Host` e usar proteção CSRF vinculada à sessão; `SameSite` não é defesa suficiente isoladamente.
 
