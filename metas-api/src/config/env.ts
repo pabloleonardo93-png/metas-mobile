@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
@@ -6,6 +8,37 @@ const splitCommaSeparated = (value: string): string[] =>
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+
+const webAuthnRpIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(253)
+  .transform((value) => value.toLowerCase())
+  .refine(
+    (value) =>
+      value === 'localhost' ||
+      /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(
+        value,
+      ),
+    'must be a valid relying party hostname',
+  );
+
+const parseWebAuthnOrigins = (value: string): string[] =>
+  splitCommaSeparated(value).map((origin) => {
+    const parsed = new URL(origin);
+    if (
+      parsed.origin !== origin ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error('WebAuthn origins must be exact origins without paths or credentials.');
+    }
+    return parsed.origin;
+  });
 
 const rawEnvSchema = z
   .object({
@@ -46,6 +79,21 @@ const rawEnvSchema = z
       .min(900)
       .max(86_400)
       .default(28_800),
+    PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS: z.string().default(''),
+    PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(600)
+      .default(300),
+    PLATFORM_ADMIN_WEBAUTHN_RP_ID: webAuthnRpIdSchema.optional(),
+    PLATFORM_ADMIN_WEBAUTHN_RP_NAME: z.string().trim().min(1).max(100).optional(),
+    PLATFORM_ADMIN_WEBAUTHN_STEP_UP_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(900)
+      .default(300),
     SESSION_TTL_SECONDS: z.coerce.number().int().min(300).max(2_592_000).default(604_800),
   })
   .superRefine((environment, context) => {
@@ -90,11 +138,59 @@ const rawEnvSchema = z
           path: ['GOOGLE_ADMIN_ALLOWED_CLIENT_IDS'],
         });
       }
-      if (environment.NODE_ENV === 'production') {
+      if (!environment.PLATFORM_ADMIN_WEBAUTHN_RP_ID) {
         context.addIssue({
           code: 'custom',
-          message: 'must remain disabled in production until MFA/WebAuthn is implemented',
-          path: ['PLATFORM_ADMIN_AUTH_ENABLED'],
+          message: 'is required when platform admin authentication is enabled',
+          path: ['PLATFORM_ADMIN_WEBAUTHN_RP_ID'],
+        });
+      }
+      if (!environment.PLATFORM_ADMIN_WEBAUTHN_RP_NAME) {
+        context.addIssue({
+          code: 'custom',
+          message: 'is required when platform admin authentication is enabled',
+          path: ['PLATFORM_ADMIN_WEBAUTHN_RP_NAME'],
+        });
+      }
+      let adminOrigins: string[] = [];
+      try {
+        adminOrigins = parseWebAuthnOrigins(environment.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS);
+      } catch {
+        context.addIssue({
+          code: 'custom',
+          message: 'must contain valid exact origins',
+          path: ['PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS'],
+        });
+      }
+      if (adminOrigins.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must contain at least one origin',
+          path: ['PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS'],
+        });
+      }
+      for (const origin of adminOrigins) {
+        const parsedOrigin = new URL(origin);
+        if (
+          parsedOrigin.hostname !== environment.PLATFORM_ADMIN_WEBAUTHN_RP_ID ||
+          (environment.NODE_ENV === 'production' && parsedOrigin.protocol !== 'https:')
+        ) {
+          context.addIssue({
+            code: 'custom',
+            message: 'must use the configured RP ID and HTTPS in production',
+            path: ['PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS'],
+          });
+        }
+      }
+      if (
+        environment.NODE_ENV === 'production' &&
+        (environment.PLATFORM_ADMIN_WEBAUTHN_RP_ID === 'localhost' ||
+          isIP(environment.PLATFORM_ADMIN_WEBAUTHN_RP_ID ?? '') !== 0)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must be a production domain name',
+          path: ['PLATFORM_ADMIN_WEBAUTHN_RP_ID'],
         });
       }
     }
@@ -159,6 +255,11 @@ export interface AppEnv {
   platformAdminDatabaseUrl: string | undefined;
   platformAdminIdleTimeoutSeconds: number;
   platformAdminSessionTtlSeconds: number;
+  platformAdminWebAuthnAllowedOrigins: readonly string[];
+  platformAdminWebAuthnChallengeTtlSeconds: number;
+  platformAdminWebAuthnRpId: string | undefined;
+  platformAdminWebAuthnRpName: string | undefined;
+  platformAdminWebAuthnStepUpTtlSeconds: number;
   sessionTtlSeconds: number;
   trustProxyHops: number;
 }
@@ -245,6 +346,14 @@ export const loadEnv = (): AppEnv => {
     platformAdminDatabaseUrl: parsed.data.PLATFORM_ADMIN_DATABASE_URL,
     platformAdminIdleTimeoutSeconds: parsed.data.PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS,
     platformAdminSessionTtlSeconds: parsed.data.PLATFORM_ADMIN_SESSION_TTL_SECONDS,
+    platformAdminWebAuthnAllowedOrigins: parseWebAuthnOrigins(
+      parsed.data.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS,
+    ),
+    platformAdminWebAuthnChallengeTtlSeconds:
+      parsed.data.PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS,
+    platformAdminWebAuthnRpId: parsed.data.PLATFORM_ADMIN_WEBAUTHN_RP_ID,
+    platformAdminWebAuthnRpName: parsed.data.PLATFORM_ADMIN_WEBAUTHN_RP_NAME,
+    platformAdminWebAuthnStepUpTtlSeconds: parsed.data.PLATFORM_ADMIN_WEBAUTHN_STEP_UP_TTL_SECONDS,
     sessionTtlSeconds: parsed.data.SESSION_TTL_SECONDS,
     corsOrigins: splitCommaSeparated(parsed.data.CORS_ORIGINS),
   };

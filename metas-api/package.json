@@ -35,6 +35,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@simplewebauthn/server": "13.3.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

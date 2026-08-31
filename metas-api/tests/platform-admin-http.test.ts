@@ -11,6 +11,11 @@ import type {
   PlatformAdminRequestMetadata,
   PlatformAdminSession,
 } from '../src/modules/platformAdmin/platformAdmin.types.js';
+import type {
+  PlatformAdminWebAuthnAuthenticationOptionsResult,
+  PlatformAdminWebAuthnService,
+  PlatformAdminWebAuthnVerificationResult,
+} from '../src/modules/platformAdmin/platformAdminWebAuthn.types.js';
 import { AppError } from '../src/shared/errors/AppError.js';
 import type { Logger, LogContext } from '../src/shared/logging/logger.js';
 
@@ -71,6 +76,52 @@ class FakePlatformAdminAuthenticationService implements PlatformAdminAuthenticat
   public logout(): Promise<void> {
     this.logoutCalled = true;
     return Promise.resolve();
+  }
+}
+
+const webAuthnVerificationResult: PlatformAdminWebAuthnVerificationResult = {
+  assuranceLevel: 'MFA_VERIFIED',
+  mfaVerifiedAt: '2026-08-31T12:00:00.000Z',
+  sessionToken: 'n'.repeat(43),
+  stepUpVerifiedAt: '2026-08-31T12:00:00.000Z',
+};
+
+class FakePlatformAdminWebAuthnService implements PlatformAdminWebAuthnService {
+  public authenticationVerifications = 0;
+  public registrationVerifications = 0;
+
+  public createAuthenticationOptions(): Promise<PlatformAdminWebAuthnAuthenticationOptionsResult> {
+    return Promise.resolve({
+      challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120020',
+      options: { challenge: 'challenge', rpId: 'admin.example.test' },
+      purpose: 'AUTHENTICATION',
+    });
+  }
+
+  public createRegistrationOptions(): ReturnType<
+    PlatformAdminWebAuthnService['createRegistrationOptions']
+  > {
+    return Promise.resolve({
+      challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120021',
+      options: {
+        attestation: 'none',
+        authenticatorSelection: { userVerification: 'required' },
+        challenge: 'challenge',
+        pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+        rp: { id: 'admin.example.test', name: 'Metas Admin' },
+        user: { displayName: 'Admin', id: 'admin-id', name: 'admin@example.test' },
+      },
+    });
+  }
+
+  public verifyAuthentication(): Promise<PlatformAdminWebAuthnVerificationResult> {
+    this.authenticationVerifications += 1;
+    return Promise.resolve(webAuthnVerificationResult);
+  }
+
+  public verifyRegistration(): Promise<PlatformAdminWebAuthnVerificationResult> {
+    this.registrationVerifications += 1;
+    return Promise.resolve(webAuthnVerificationResult);
   }
 }
 
@@ -196,4 +247,137 @@ await test('no public HTTP route provisions a platform admin', async () => {
   });
   await request(app).post('/v1/platform-admin').send({}).expect(404);
   await request(app).post('/v1/platform-admin/bootstrap').send({}).expect(404);
+});
+
+await test('WebAuthn routes require the dedicated administrative session', async () => {
+  const app = createApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
+  });
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/registration/options')
+    .send({})
+    .expect(401);
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/authentication/options')
+    .set('Authorization', `Bearer ${employeeToken}`)
+    .send({})
+    .expect(401);
+});
+
+await test('WebAuthn option endpoints reject mass assignment and return server challenges', async () => {
+  const app = createApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
+  });
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/registration/options')
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send({ assuranceLevel: 'MFA_VERIFIED' })
+    .expect(422);
+  const response = await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/authentication/options')
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send({})
+    .expect(200);
+  assert.equal(parseJson<{ purpose: string }>(response.text).purpose, 'AUTHENTICATION');
+});
+
+await test('WebAuthn verification contracts are strict and never accept authority fields', async () => {
+  const webAuthnService = new FakePlatformAdminWebAuthnService();
+  const app = createApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: webAuthnService,
+  });
+  const authenticationResponse = {
+    challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120020',
+    response: {
+      clientExtensionResults: {},
+      id: 'credential_id',
+      rawId: 'credential_id',
+      response: {
+        authenticatorData: 'authenticator_data',
+        clientDataJSON: 'client_data',
+        signature: 'signature',
+      },
+      type: 'public-key',
+    },
+  };
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/authentication/verify')
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send({ ...authenticationResponse, platformAdminId: platformSession.platformAdminId })
+    .expect(422);
+  const response = await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/authentication/verify')
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send(authenticationResponse)
+    .expect(200);
+  assert.equal(webAuthnService.authenticationVerifications, 1);
+  assert.equal(parseJson<{ assuranceLevel: string }>(response.text).assuranceLevel, 'MFA_VERIFIED');
+  assert.doesNotMatch(response.text, /tokenHash|credentialPublicKey|challengeHash/u);
+});
+
+await test('WebAuthn registration verification returns only rotated session assurance data', async () => {
+  const webAuthnService = new FakePlatformAdminWebAuthnService();
+  const app = createApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: webAuthnService,
+  });
+  const response = await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/registration/verify')
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send({
+      challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120021',
+      friendlyName: 'Notebook administrativo',
+      response: {
+        clientExtensionResults: {},
+        id: 'credential_id',
+        rawId: 'credential_id',
+        response: {
+          attestationObject: 'attestation_object',
+          clientDataJSON: 'client_data',
+          transports: ['internal'],
+        },
+        type: 'public-key',
+      },
+    })
+    .expect(200);
+  assert.equal(webAuthnService.registrationVerifications, 1);
+  assert.deepEqual(
+    parseJson<PlatformAdminWebAuthnVerificationResult>(response.text),
+    webAuthnVerificationResult,
+  );
+});
+
+await test('WebAuthn endpoints have independent administrative rate limiters', async () => {
+  const app = createApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
+    platformAdminWebAuthnRateLimit: {
+      options: { limit: 1, windowMs: 60_000 },
+      verification: { limit: 1, windowMs: 60_000 },
+    },
+  });
+  const authorization = `Bearer ${platformToken}`;
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/registration/options')
+    .set('Authorization', authorization)
+    .send({})
+    .expect(200);
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/registration/options')
+    .set('Authorization', authorization)
+    .send({})
+    .expect(429);
+  await request(app)
+    .post('/v1/platform-admin/mfa/webauthn/authentication/options')
+    .set('Authorization', authorization)
+    .send({})
+    .expect(200);
 });

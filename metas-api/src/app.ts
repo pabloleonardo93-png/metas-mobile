@@ -20,8 +20,10 @@ import type { GoalService } from './modules/goals/goal.types.js';
 import {
   createPlatformAdminRouter,
   type PlatformAdminRateLimitOptions,
+  type PlatformAdminWebAuthnRateLimitOptions,
 } from './modules/platformAdmin/platformAdmin.routes.js';
 import type { PlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdmin.types.js';
+import type { PlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthn.types.js';
 import type { RealtimePublisher } from './realtime/realtime.types.js';
 import { healthRouter } from './routes/health.routes.js';
 import { AppError } from './shared/errors/AppError.js';
@@ -37,6 +39,8 @@ export interface AppOptions {
   logger?: Logger;
   platformAdminAuthenticationService?: PlatformAdminAuthenticationService;
   platformAdminRateLimit?: PlatformAdminRateLimitOptions;
+  platformAdminWebAuthnService?: PlatformAdminWebAuthnService;
+  platformAdminWebAuthnRateLimit?: PlatformAdminWebAuthnRateLimitOptions;
   realtimePublisher?: RealtimePublisher;
   trustProxyHops?: number;
 }
@@ -72,6 +76,12 @@ export const createApp = (options: AppOptions = {}): express.Express => {
       createPlatformAdminRouter({
         authenticationService: options.platformAdminAuthenticationService,
         logger,
+        ...(options.platformAdminWebAuthnService
+          ? { webAuthnService: options.platformAdminWebAuthnService }
+          : {}),
+        ...(options.platformAdminWebAuthnRateLimit
+          ? { webAuthnRateLimitOptions: options.platformAdminWebAuthnRateLimit }
+          : {}),
         ...(options.platformAdminRateLimit
           ? { rateLimitOptions: options.platformAdminRateLimit }
           : {}),

@@ -15,6 +15,8 @@ import { PostgresCampaignService } from './modules/campaigns/campaignService.js'
 import { PostgresEmployeeService } from './modules/employees/employeeService.js';
 import { PostgresGoalService } from './modules/goals/goalService.js';
 import { PostgresPlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdminAuthenticationService.js';
+import { officialPlatformAdminWebAuthnAdapter } from './modules/platformAdmin/platformAdminWebAuthnAdapter.js';
+import { PostgresPlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthnService.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
 import { logger } from './shared/logging/logger.js';
 
@@ -77,6 +79,23 @@ const bootstrap = async (): Promise<void> => {
         env.platformAdminIdleTimeoutSeconds,
       )
     : undefined;
+  const platformAdminWebAuthnService =
+    platformAdminDatabase &&
+    env.platformAdminWebAuthnRpId &&
+    env.platformAdminWebAuthnRpName &&
+    env.platformAdminWebAuthnAllowedOrigins.length > 0
+      ? new PostgresPlatformAdminWebAuthnService(
+          platformAdminDatabase,
+          officialPlatformAdminWebAuthnAdapter,
+          {
+            allowedOrigins: env.platformAdminWebAuthnAllowedOrigins,
+            challengeTtlSeconds: env.platformAdminWebAuthnChallengeTtlSeconds,
+            rpId: env.platformAdminWebAuthnRpId,
+            rpName: env.platformAdminWebAuthnRpName,
+            stepUpTtlSeconds: env.platformAdminWebAuthnStepUpTtlSeconds,
+          },
+        )
+      : undefined;
   const server = createServer();
   const realtimeServer = new AuthenticatedRealtimeServer(server, authenticationService, logger);
   const app = createApp({
@@ -86,6 +105,7 @@ const bootstrap = async (): Promise<void> => {
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),
     ...(platformAdminAuthenticationService ? { platformAdminAuthenticationService } : {}),
+    ...(platformAdminWebAuthnService ? { platformAdminWebAuthnService } : {}),
     realtimePublisher: realtimeServer,
     trustProxyHops: env.trustProxyHops,
   });
