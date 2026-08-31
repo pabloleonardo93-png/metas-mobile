@@ -1,6 +1,9 @@
 import { Sequelize } from 'sequelize';
 
-import { assertRuntimeConnectionSecurity } from '../database/connectionSecurity.js';
+import {
+  assertPlatformAdminRuntimeConnectionSecurity,
+  assertRuntimeConnectionSecurity,
+} from '../database/connectionSecurity.js';
 import type { AppEnv } from './env.js';
 
 export interface DatabaseConnectionParameters {
@@ -13,6 +16,19 @@ export interface DatabaseConnectionParameters {
 
 export const createDatabase = (env: AppEnv): Sequelize =>
   createDatabaseFromUrl(env.databaseUrl, env.databaseSsl, 10, env.databaseSslServerName);
+
+export const createPlatformAdminDatabase = (env: AppEnv): Sequelize => {
+  if (!env.platformAdminDatabaseUrl) {
+    throw new Error('Platform admin database configuration is not available.');
+  }
+
+  return createDatabaseFromUrl(
+    env.platformAdminDatabaseUrl,
+    env.databaseSsl,
+    5,
+    env.databaseSslServerName,
+  );
+};
 
 export const createDatabaseFromUrl = (
   databaseUrl: string,
@@ -80,6 +96,11 @@ export const createDatabaseFromParameters = (
 export const connectDatabase = async (database: Sequelize): Promise<void> => {
   await database.authenticate();
   await assertRuntimeConnectionSecurity(database);
+};
+
+export const connectPlatformAdminDatabase = async (database: Sequelize): Promise<void> => {
+  await database.authenticate();
+  await assertPlatformAdminRuntimeConnectionSecurity(database);
 };
 
 export const disconnectDatabase = async (database: Sequelize): Promise<void> => {

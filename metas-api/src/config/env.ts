@@ -24,9 +24,81 @@ const rawEnvSchema = z
     DATABASE_SSL_SERVERNAME: z.string().trim().min(1).max(253).optional(),
     CORS_ORIGINS: z.string().default(''),
     GOOGLE_ALLOWED_CLIENT_IDS: z.string().default(''),
+    GOOGLE_ADMIN_ALLOWED_CLIENT_IDS: z.string().default(''),
+    PLATFORM_ADMIN_AUTH_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    PLATFORM_ADMIN_DATABASE_URL: z
+      .string()
+      .min(1)
+      .refine((value) => /^postgres(?:ql)?:\/\//u.test(value), 'must be a PostgreSQL URL')
+      .optional(),
+    PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(300)
+      .max(86_400)
+      .default(1_800),
+    PLATFORM_ADMIN_SESSION_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(900)
+      .max(86_400)
+      .default(28_800),
     SESSION_TTL_SECONDS: z.coerce.number().int().min(300).max(2_592_000).default(604_800),
   })
   .superRefine((environment, context) => {
+    if (
+      environment.PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS >=
+      environment.PLATFORM_ADMIN_SESSION_TTL_SECONDS
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'must be shorter than the platform admin session TTL',
+        path: ['PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS'],
+      });
+    }
+    if (environment.PLATFORM_ADMIN_AUTH_ENABLED) {
+      if (environment.PLATFORM_ADMIN_SESSION_TTL_SECONDS >= environment.SESSION_TTL_SECONDS) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must be shorter than the mobile session TTL',
+          path: ['PLATFORM_ADMIN_SESSION_TTL_SECONDS'],
+        });
+      }
+      if (!environment.PLATFORM_ADMIN_DATABASE_URL) {
+        context.addIssue({
+          code: 'custom',
+          message: 'is required when platform admin authentication is enabled',
+          path: ['PLATFORM_ADMIN_DATABASE_URL'],
+        });
+      }
+      const adminClientIds = splitCommaSeparated(environment.GOOGLE_ADMIN_ALLOWED_CLIENT_IDS);
+      if (adminClientIds.length === 0) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must contain at least one admin client ID',
+          path: ['GOOGLE_ADMIN_ALLOWED_CLIENT_IDS'],
+        });
+      }
+      const mobileClientIds = splitCommaSeparated(environment.GOOGLE_ALLOWED_CLIENT_IDS);
+      if (adminClientIds.some((clientId) => mobileClientIds.includes(clientId))) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must not reuse a mobile client ID',
+          path: ['GOOGLE_ADMIN_ALLOWED_CLIENT_IDS'],
+        });
+      }
+      if (environment.NODE_ENV === 'production') {
+        context.addIssue({
+          code: 'custom',
+          message: 'must remain disabled in production until MFA/WebAuthn is implemented',
+          path: ['PLATFORM_ADMIN_AUTH_ENABLED'],
+        });
+      }
+    }
+
     if (environment.NODE_ENV !== 'production') {
       return;
     }
@@ -79,9 +151,14 @@ export interface AppEnv {
   databaseSslServerName: string | undefined;
   databaseUrl: string;
   googleAllowedClientIds: readonly string[];
+  googleAdminAllowedClientIds: readonly string[];
   host: string;
   nodeEnv: 'development' | 'production' | 'test';
   port: number;
+  platformAdminAuthEnabled: boolean;
+  platformAdminDatabaseUrl: string | undefined;
+  platformAdminIdleTimeoutSeconds: number;
+  platformAdminSessionTtlSeconds: number;
   sessionTtlSeconds: number;
   trustProxyHops: number;
 }
@@ -118,6 +195,7 @@ export interface NorthflankRoleDatabaseEnv {
 
 export interface NorthflankIntegrationTestEnv {
   migration: NorthflankRoleDatabaseEnv;
+  platformAdminRuntime: NorthflankRoleDatabaseEnv;
   runtime: NorthflankRoleDatabaseEnv;
 }
 
@@ -125,6 +203,7 @@ export interface TestDatabaseEnv {
   databaseSsl: boolean;
   databaseSslServerName: string | undefined;
   migrationDatabaseUrl: string;
+  platformAdminRuntimeDatabaseUrl: string;
   runtimeDatabaseUrl: string;
 }
 
@@ -161,6 +240,11 @@ export const loadEnv = (): AppEnv => {
     databaseSsl: parsed.data.DATABASE_SSL,
     databaseSslServerName: parsed.data.DATABASE_SSL_SERVERNAME,
     googleAllowedClientIds: splitCommaSeparated(parsed.data.GOOGLE_ALLOWED_CLIENT_IDS),
+    googleAdminAllowedClientIds: splitCommaSeparated(parsed.data.GOOGLE_ADMIN_ALLOWED_CLIENT_IDS),
+    platformAdminAuthEnabled: parsed.data.PLATFORM_ADMIN_AUTH_ENABLED,
+    platformAdminDatabaseUrl: parsed.data.PLATFORM_ADMIN_DATABASE_URL,
+    platformAdminIdleTimeoutSeconds: parsed.data.PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS,
+    platformAdminSessionTtlSeconds: parsed.data.PLATFORM_ADMIN_SESSION_TTL_SECONDS,
     sessionTtlSeconds: parsed.data.SESSION_TTL_SECONDS,
     corsOrigins: splitCommaSeparated(parsed.data.CORS_ORIGINS),
   };
@@ -281,20 +365,20 @@ export const loadNorthflankAdminDatabaseEnv = (): NorthflankAdminDatabaseEnv => 
 };
 
 const loadNorthflankRoleDatabaseEnv = (
-  role: 'migration' | 'runtime',
+  role: 'migration' | 'platform-admin-runtime' | 'runtime',
 ): NorthflankRoleDatabaseEnv => {
   loadNorthflankDotEnv();
 
-  const roleSchema =
-    role === 'migration'
-      ? z.object({
-          username: z.literal('metas_migration_runner'),
-          password: z.string().min(1),
-        })
-      : z.object({
-          username: z.literal('metas_app_runtime'),
-          password: z.string().min(1),
-        });
+  const roleSchema = z.object({
+    username: z.literal(
+      role === 'migration'
+        ? 'metas_migration_runner'
+        : role === 'platform-admin-runtime'
+          ? 'metas_platform_admin_runtime'
+          : 'metas_app_runtime',
+    ),
+    password: z.string().min(1),
+  });
   const parsedCommon = z
     .object({
       NORTHFLANK_ADMIN_DB_HOST: z.string().trim().min(1).max(253),
@@ -308,11 +392,15 @@ const loadNorthflankRoleDatabaseEnv = (
     password:
       role === 'migration'
         ? process.env.NORTHFLANK_MIGRATION_DB_PASSWORD
-        : process.env.NORTHFLANK_RUNTIME_DB_PASSWORD,
+        : role === 'platform-admin-runtime'
+          ? process.env.NORTHFLANK_PLATFORM_ADMIN_RUNTIME_DB_PASSWORD
+          : process.env.NORTHFLANK_RUNTIME_DB_PASSWORD,
     username:
       role === 'migration'
         ? process.env.NORTHFLANK_MIGRATION_DB_USER
-        : process.env.NORTHFLANK_RUNTIME_DB_USER,
+        : role === 'platform-admin-runtime'
+          ? process.env.NORTHFLANK_PLATFORM_ADMIN_RUNTIME_DB_USER
+          : process.env.NORTHFLANK_RUNTIME_DB_USER,
   });
 
   if (!parsedCommon.success) {
@@ -338,6 +426,9 @@ export const loadNorthflankMigrationDatabaseEnv = (): NorthflankRoleDatabaseEnv 
 export const loadNorthflankRuntimeDatabaseEnv = (): NorthflankRoleDatabaseEnv =>
   loadNorthflankRoleDatabaseEnv('runtime');
 
+export const loadNorthflankPlatformAdminRuntimeDatabaseEnv = (): NorthflankRoleDatabaseEnv =>
+  loadNorthflankRoleDatabaseEnv('platform-admin-runtime');
+
 export const loadNorthflankIntegrationTestEnv = (): NorthflankIntegrationTestEnv | null => {
   loadNorthflankDotEnv();
 
@@ -353,6 +444,7 @@ export const loadNorthflankIntegrationTestEnv = (): NorthflankIntegrationTestEnv
 
   return {
     migration: loadNorthflankMigrationDatabaseEnv(),
+    platformAdminRuntime: loadNorthflankPlatformAdminRuntimeDatabaseEnv(),
     runtime: loadNorthflankRuntimeDatabaseEnv(),
   };
 };
@@ -370,7 +462,11 @@ const databaseIdentity = (databaseUrl: string): string => {
 export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
   loadDotEnv();
 
-  if (!process.env.TEST_DATABASE_URL && !process.env.TEST_MIGRATION_DATABASE_URL) {
+  if (
+    !process.env.TEST_DATABASE_URL &&
+    !process.env.TEST_MIGRATION_DATABASE_URL &&
+    !process.env.TEST_PLATFORM_ADMIN_DATABASE_URL
+  ) {
     return null;
   }
 
@@ -379,10 +475,12 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
       NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
       TEST_DATABASE_URL: databaseUrlSchema,
       TEST_MIGRATION_DATABASE_URL: databaseUrlSchema,
+      TEST_PLATFORM_ADMIN_DATABASE_URL: databaseUrlSchema,
       TEST_DATABASE_SSL: booleanStringSchema,
       TEST_DATABASE_SSL_SERVERNAME: sslServerNameSchema,
       DATABASE_URL: databaseUrlSchema.optional(),
       MIGRATION_DATABASE_URL: databaseUrlSchema.optional(),
+      PLATFORM_ADMIN_DATABASE_URL: databaseUrlSchema.optional(),
     })
     .safeParse(process.env);
 
@@ -394,10 +492,12 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
     throw new Error('PostgreSQL integration tests are forbidden in production.');
   }
 
-  const { TEST_DATABASE_URL, TEST_MIGRATION_DATABASE_URL } = parsed.data;
+  const { TEST_DATABASE_URL, TEST_MIGRATION_DATABASE_URL, TEST_PLATFORM_ADMIN_DATABASE_URL } =
+    parsed.data;
   if (
     !databaseNameContainsTest(TEST_DATABASE_URL) ||
-    !databaseNameContainsTest(TEST_MIGRATION_DATABASE_URL)
+    !databaseNameContainsTest(TEST_MIGRATION_DATABASE_URL) ||
+    !databaseNameContainsTest(TEST_PLATFORM_ADMIN_DATABASE_URL)
   ) {
     throw new Error('PostgreSQL integration tests require database names containing "test".');
   }
@@ -407,7 +507,10 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
       databaseIdentity(TEST_DATABASE_URL) === databaseIdentity(parsed.data.DATABASE_URL)) ||
     (parsed.data.MIGRATION_DATABASE_URL !== undefined &&
       databaseIdentity(TEST_MIGRATION_DATABASE_URL) ===
-        databaseIdentity(parsed.data.MIGRATION_DATABASE_URL))
+        databaseIdentity(parsed.data.MIGRATION_DATABASE_URL)) ||
+    (parsed.data.PLATFORM_ADMIN_DATABASE_URL !== undefined &&
+      databaseIdentity(TEST_PLATFORM_ADMIN_DATABASE_URL) ===
+        databaseIdentity(parsed.data.PLATFORM_ADMIN_DATABASE_URL))
   ) {
     throw new Error('PostgreSQL test URLs must not match development or production URLs.');
   }
@@ -415,6 +518,7 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
   return {
     runtimeDatabaseUrl: TEST_DATABASE_URL,
     migrationDatabaseUrl: TEST_MIGRATION_DATABASE_URL,
+    platformAdminRuntimeDatabaseUrl: TEST_PLATFORM_ADMIN_DATABASE_URL,
     databaseSsl: parsed.data.TEST_DATABASE_SSL,
     databaseSslServerName: parsed.data.TEST_DATABASE_SSL_SERVERNAME,
   };

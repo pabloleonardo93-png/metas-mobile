@@ -1,13 +1,20 @@
 import { createServer, type Server } from 'node:http';
 
 import { createApp } from './app.js';
-import { connectDatabase, createDatabase, disconnectDatabase } from './config/database.js';
+import {
+  connectDatabase,
+  connectPlatformAdminDatabase,
+  createDatabase,
+  createPlatformAdminDatabase,
+  disconnectDatabase,
+} from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { PostgresAuthenticationService } from './modules/auth/authenticationService.js';
 import { OfficialGoogleIdTokenVerifier } from './modules/auth/googleIdTokenVerifier.js';
 import { PostgresCampaignService } from './modules/campaigns/campaignService.js';
 import { PostgresEmployeeService } from './modules/employees/employeeService.js';
 import { PostgresGoalService } from './modules/goals/goalService.js';
+import { PostgresPlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdminAuthenticationService.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
 import { logger } from './shared/logging/logger.js';
 
@@ -39,14 +46,21 @@ const closeServer = async (server: Server): Promise<void> =>
 const bootstrap = async (): Promise<void> => {
   const env = loadEnv();
   const database = createDatabase(env);
+  const platformAdminDatabase = env.platformAdminAuthEnabled
+    ? createPlatformAdminDatabase(env)
+    : null;
 
   try {
     await connectDatabase(database);
+    if (platformAdminDatabase) {
+      await connectPlatformAdminDatabase(platformAdminDatabase);
+    }
   } catch (error: unknown) {
     logger.error('database_connection_failed', {
       errorType: error instanceof Error ? error.name : 'UnknownError',
     });
     await disconnectDatabase(database).catch(() => undefined);
+    await platformAdminDatabase?.close().catch(() => undefined);
     throw new Error('Server bootstrap failed', { cause: error });
   }
 
@@ -55,6 +69,14 @@ const bootstrap = async (): Promise<void> => {
     new OfficialGoogleIdTokenVerifier(env.googleAllowedClientIds),
     env.sessionTtlSeconds,
   );
+  const platformAdminAuthenticationService = platformAdminDatabase
+    ? new PostgresPlatformAdminAuthenticationService(
+        platformAdminDatabase,
+        new OfficialGoogleIdTokenVerifier(env.googleAdminAllowedClientIds),
+        env.platformAdminSessionTtlSeconds,
+        env.platformAdminIdleTimeoutSeconds,
+      )
+    : undefined;
   const server = createServer();
   const realtimeServer = new AuthenticatedRealtimeServer(server, authenticationService, logger);
   const app = createApp({
@@ -63,6 +85,7 @@ const bootstrap = async (): Promise<void> => {
     corsOrigins: env.corsOrigins,
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),
+    ...(platformAdminAuthenticationService ? { platformAdminAuthenticationService } : {}),
     realtimePublisher: realtimeServer,
     trustProxyHops: env.trustProxyHops,
   });
@@ -81,6 +104,7 @@ const bootstrap = async (): Promise<void> => {
       await realtimeServer.close();
       await closeServer(server);
       await disconnectDatabase(database);
+      await platformAdminDatabase?.close();
       logger.info('server_shutdown_completed', { signal });
     } catch (error: unknown) {
       logger.error('server_shutdown_failed', {
@@ -108,6 +132,7 @@ const bootstrap = async (): Promise<void> => {
   } catch (error: unknown) {
     await realtimeServer.close().catch(() => undefined);
     await disconnectDatabase(database).catch(() => undefined);
+    await platformAdminDatabase?.close().catch(() => undefined);
     throw error;
   }
 };

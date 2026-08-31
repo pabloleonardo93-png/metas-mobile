@@ -59,3 +59,13 @@ await test('Google verifier reports missing Client ID configuration without netw
   const verifier = new OfficialGoogleIdTokenVerifier([], clientFor(validPayload()));
   await assert.rejects(verifier.verify('valid-google-id-token'), GoogleProviderNotConfiguredError);
 });
+
+await test('an admin verifier rejects a token issued to the mobile audience', async () => {
+  const adminAudience = 'admin-client-id.apps.googleusercontent.com';
+  const verifier = new OfficialGoogleIdTokenVerifier(
+    [adminAudience],
+    clientFor({ ...validPayload(), aud: allowedAudience }),
+  );
+
+  await assert.rejects(verifier.verify('mobile-google-id-token'), InvalidGoogleIdTokenError);
+});

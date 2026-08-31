@@ -17,6 +17,11 @@ import { createEmployeeRouter } from './modules/employees/employee.routes.js';
 import type { EmployeeService } from './modules/employees/employee.types.js';
 import { createGoalRouter } from './modules/goals/goal.routes.js';
 import type { GoalService } from './modules/goals/goal.types.js';
+import {
+  createPlatformAdminRouter,
+  type PlatformAdminRateLimitOptions,
+} from './modules/platformAdmin/platformAdmin.routes.js';
+import type { PlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdmin.types.js';
 import type { RealtimePublisher } from './realtime/realtime.types.js';
 import { healthRouter } from './routes/health.routes.js';
 import { AppError } from './shared/errors/AppError.js';
@@ -30,6 +35,8 @@ export interface AppOptions {
   employeeService?: EmployeeService;
   goalService?: GoalService;
   logger?: Logger;
+  platformAdminAuthenticationService?: PlatformAdminAuthenticationService;
+  platformAdminRateLimit?: PlatformAdminRateLimitOptions;
   realtimePublisher?: RealtimePublisher;
   trustProxyHops?: number;
 }
@@ -59,6 +66,18 @@ export const createApp = (options: AppOptions = {}): express.Express => {
   app.use(express.json({ limit: '64kb', strict: true }));
 
   app.use('/health', healthRouter);
+  if (options.platformAdminAuthenticationService) {
+    app.use(
+      '/v1/platform-admin',
+      createPlatformAdminRouter({
+        authenticationService: options.platformAdminAuthenticationService,
+        logger,
+        ...(options.platformAdminRateLimit
+          ? { rateLimitOptions: options.platformAdminRateLimit }
+          : {}),
+      }),
+    );
+  }
   if (options.authenticationService) {
     app.use(
       '/v1',

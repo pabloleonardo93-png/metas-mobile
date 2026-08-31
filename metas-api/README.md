@@ -23,11 +23,12 @@ Cada finalidade utiliza um login PostgreSQL diferente:
 
 ```text
 DATABASE_URL             API em runtime
+PLATFORM_ADMIN_DATABASE_URL runtime isolado do domínio administrativo
 MIGRATION_DATABASE_URL   execução de migrations
 ADMIN_DATABASE_URL       bootstrap explícito da infraestrutura PostgreSQL
 ```
 
-`metas_migration_owner` é `NOLOGIN` e proprietário do schema e dos objetos. `metas_migration_runner` e `metas_app_runtime` são os logins separados usados, respectivamente, por migrations e pela API. O bootstrap não define senhas; credenciais e permissão de conexão são configuradas localmente pela administração do PostgreSQL e nunca ficam no repositório.
+`metas_migration_owner` é `NOLOGIN` e proprietário do schema e dos objetos. `metas_migration_runner`, `metas_app_runtime` e `metas_platform_admin_runtime` são logins separados usados, respectivamente, por migrations, pela API das farmácias e pelo domínio administrativo. O bootstrap não define senhas; credenciais e permissão de conexão são configuradas localmente pela administração do PostgreSQL e nunca ficam no repositório.
 
 O bootstrap remove atributos elevados desses logins. A API e o migrator também verificam na conexão real o nome exato do role, `LOGIN`, ausência de superuser, `BYPASSRLS`, criação de roles/bancos e replicação, além das memberships incompatíveis.
 
@@ -72,6 +73,8 @@ npm run db:migrate:status:northflank
 npm run db:migrate:northflank
 ```
 
+Antes de aplicar a migration 013 em qualquer ambiente, o bootstrap de roles precisa ter criado `metas_platform_admin_runtime`. A credencial dessa role é configurada fora do repositório e não substitui `metas_app_runtime` nem `metas_migration_runner`.
+
 Não há scripts de reset, drop ou force. O projeto não usa `sequelize.sync()`, `sync({ force: true })` ou `sync({ alter: true })`.
 
 O schema inicial contém:
@@ -110,6 +113,7 @@ Os testes de integração exigem banco dedicado e conexões com privilégios sep
 NODE_ENV diferente de production
 TEST_DATABASE_URL
 TEST_MIGRATION_DATABASE_URL
+TEST_PLATFORM_ADMIN_DATABASE_URL
 TEST_ADMIN_DATABASE_URL
 TEST_DATABASE_SSL
 ```
@@ -190,6 +194,8 @@ npm run db:migrate:test     aplica migrations no banco de teste
 npm run db:migrate:diagnose:northflank valida conexão e role de migration sem aplicar migrations
 npm run db:migrate:status:northflank lista migrations sem aplicá-las
 npm run db:migrate:northflank aplica migrations pendentes no Northflank
+npm run platform-admin:bootstrap provisiona explicitamente uma identidade administrativa
+npm run platform-admin:bootstrap:northflank provisiona via conexão de migration no Northflank
 npm run format              formata arquivos
 npm run format:check        verifica formatação
 ```
@@ -238,3 +244,45 @@ As sessões são opacas. O token aleatório de 32 bytes é retornado uma única 
 As operações anteriores ao contexto RLS usam funções `SECURITY DEFINER` específicas, pertencentes a `metas_migration_owner`, com `search_path` fixo, retorno mínimo, `EXECUTE` revogado de `PUBLIC` e concedido somente a `metas_app_runtime`. O runtime continua sem acesso global às tabelas e sem `BYPASSRLS`.
 
 O login possui rate limit em memória adequado ao processo único do MVP. Antes de executar múltiplas instâncias, esse armazenamento deverá ser substituído por um mecanismo compartilhado.
+
+## Fundação do administrador da plataforma
+
+O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. A migration 013 cria identidades Google previamente provisionadas, sessões administrativas opacas e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
+
+Rotas desta fase:
+
+```text
+POST /v1/platform-admin/auth/google
+POST /v1/platform-admin/auth/logout
+GET  /v1/platform-admin/me
+```
+
+O primeiro administrador não é criado por HTTP nem por migration. Depois da infraestrutura e da migration 013, um operador autorizado fornece explicitamente nome, e-mail e o `sub` Google por variáveis de ambiente e executa:
+
+```text
+PLATFORM_ADMIN_BOOTSTRAP_DISPLAY_NAME
+PLATFORM_ADMIN_BOOTSTRAP_EMAIL
+PLATFORM_ADMIN_BOOTSTRAP_GOOGLE_SUBJECT
+```
+
+```bash
+npm run platform-admin:bootstrap
+```
+
+O comando é idempotente somente para os mesmos dados e falha diante de conflito. Ele exige a conexão de migration, não imprime os dados fornecidos nem está disponível ao runtime da API.
+
+Configuração da API administrativa:
+
+```text
+PLATFORM_ADMIN_AUTH_ENABLED=false
+PLATFORM_ADMIN_DATABASE_URL
+GOOGLE_ADMIN_ALLOWED_CLIENT_IDS
+PLATFORM_ADMIN_SESSION_TTL_SECONDS
+PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS
+```
+
+Os Client IDs administrativos não podem reutilizar a audience do mobile. A sessão nasce com assurance `GOOGLE_ONLY`; o servidor não permite ativar esse login em produção enquanto MFA/WebAuthn não estiver concluído. Antes de operar com múltiplas instâncias, o rate limit em memória também deve migrar para armazenamento compartilhado ou para a borda.
+
+No futuro `metas-admin`, o BFF deverá manter a credencial somente em cookie `__Host-*`, `HttpOnly`, `Secure`, `SameSite` e `Path=/`, sem expô-la a Client Components. Mutações deverão validar `Origin`/`Host` e usar proteção CSRF vinculada à sessão; `SameSite` não é defesa suficiente isoladamente.
+
+Os eventos de login e logout bem-sucedidos são gravados na mesma transação da mudança de sessão. A auditoria não substitui logs de aplicação ou de segurança e não armazena token, hash do token ou Google ID Token.

@@ -10,6 +10,7 @@ interface ConnectionRoleSecurity {
   canLogin: boolean;
   isMemberMigrationOwner: boolean;
   isMemberMigrationRunner: boolean;
+  isMemberPlatformAdminRuntime: boolean;
   isMemberRuntime: boolean;
   isSuperuser: boolean;
   roleName: string;
@@ -26,6 +27,11 @@ const readConnectionRoleSecurity = async (database: Sequelize): Promise<Connecti
       role.rolreplication AS "canReplicate",
       role.rolbypassrls AS "bypassRls",
       pg_has_role(current_user, :runtimeRole, 'MEMBER') AS "isMemberRuntime",
+      CASE
+        WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :platformAdminRuntimeRole)
+        THEN pg_has_role(current_user, :platformAdminRuntimeRole, 'MEMBER')
+        ELSE FALSE
+      END AS "isMemberPlatformAdminRuntime",
       pg_has_role(current_user, :migrationRunnerRole, 'MEMBER') AS "isMemberMigrationRunner",
       pg_has_role(current_user, :migrationOwnerRole, 'MEMBER') AS "isMemberMigrationOwner"
     FROM pg_roles role
@@ -33,6 +39,7 @@ const readConnectionRoleSecurity = async (database: Sequelize): Promise<Connecti
     {
       replacements: {
         runtimeRole: databaseRoles.runtime,
+        platformAdminRuntimeRole: databaseRoles.platformAdminRuntime,
         migrationRunnerRole: databaseRoles.migrationRunner,
         migrationOwnerRole: databaseRoles.migrationOwner,
       },
@@ -61,6 +68,7 @@ export const assertRuntimeConnectionSecurity = async (database: Sequelize): Prom
     !security.canLogin ||
     security.roleName !== databaseRoles.runtime ||
     !security.isMemberRuntime ||
+    security.isMemberPlatformAdminRuntime ||
     security.isMemberMigrationRunner ||
     security.isMemberMigrationOwner
   ) {
@@ -90,10 +98,42 @@ export const assertMigrationConnectionSecurity = async (database: Sequelize): Pr
     security.roleName !== databaseRoles.migrationRunner ||
     !security.isMemberMigrationRunner ||
     !security.isMemberMigrationOwner ||
-    security.isMemberRuntime
+    security.isMemberRuntime ||
+    security.isMemberPlatformAdminRuntime
   ) {
     throw new Error(
       'PostgreSQL migration login does not satisfy the required least privilege policy.',
     );
+  }
+};
+
+export const assertPlatformAdminRuntimeConnectionSecurity = async (
+  database: Sequelize,
+): Promise<void> => {
+  const security = await readConnectionRoleSecurity(database);
+  if (
+    hasElevatedAttributes(security) ||
+    !security.canLogin ||
+    security.roleName !== databaseRoles.platformAdminRuntime ||
+    !security.isMemberPlatformAdminRuntime ||
+    security.isMemberRuntime ||
+    security.isMemberMigrationRunner ||
+    security.isMemberMigrationOwner
+  ) {
+    throw new Error(
+      'PostgreSQL platform admin runtime login does not satisfy the required least privilege policy.',
+    );
+  }
+
+  const ownedRows = await database.query<{ count: string }>(
+    `SELECT count(*)::TEXT AS count
+     FROM pg_class relation
+     JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+     WHERE namespace.nspname = 'metas'
+       AND relation.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)`,
+    { type: QueryTypes.SELECT },
+  );
+  if (ownedRows[0]?.count !== '0') {
+    throw new Error('PostgreSQL platform admin runtime login must not own application objects.');
   }
 };
