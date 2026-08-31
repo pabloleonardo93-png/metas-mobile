@@ -9,10 +9,15 @@ import { databaseRoles } from '../roles.js';
 
 const expectedTables = [
   'auth_identities',
+  'campaign_progress_entries',
   'campaigns',
   'employees',
   'goal_roles',
   'goals',
+  'platform_admin_audit_events',
+  'platform_admin_identities',
+  'platform_admin_sessions',
+  'platform_admins',
   'schema_migrations',
   'sessions',
   'stores',
@@ -21,10 +26,15 @@ const expectedTables = [
 
 const expectedRlsTables = [
   'auth_identities',
+  'campaign_progress_entries',
   'campaigns',
   'employees',
   'goal_roles',
   'goals',
+  'platform_admin_audit_events',
+  'platform_admin_identities',
+  'platform_admin_sessions',
+  'platform_admins',
   'sessions',
   'stores',
   'users',
@@ -34,11 +44,15 @@ const requiredConstraints = [
   'auth_identities_provider_subject_unique',
   'campaigns_period_valid',
   'campaigns_store_fk',
+  'campaign_progress_entries_campaign_store_fk',
   'employees_creation_actor_valid',
   'employees_store_user_unique',
   'goal_roles_goal_store_fk',
   'goals_business_days_valid',
   'goals_version_period_no_overlap',
+  'platform_admin_identities_provider_subject_unique',
+  'platform_admin_sessions_identity_admin_fk',
+  'platform_admin_sessions_token_hash_unique',
   'sessions_employee_user_fk',
   'sessions_identity_user_fk',
   'sessions_token_hash_length',
@@ -51,22 +65,30 @@ const requiredIndexes = [
   'auth_identities_provider_email_idx',
   'campaigns_store_closed_idx',
   'campaigns_store_period_idx',
+  'campaign_progress_entries_store_campaign_created_idx',
   'employees_store_role_status_idx',
   'employees_store_status_idx',
   'goal_roles_store_role_idx',
   'goals_current_store_period_unique',
+  'platform_admin_audit_events_admin_created_idx',
+  'platform_admin_identities_admin_idx',
+  'platform_admin_sessions_active_expiration_idx',
   'sessions_active_expiration_idx',
   'sessions_token_hash_unique_idx',
 ] as const;
 
 const expectedSecurityDefinerFunctions = [
   'authenticate_google_identity',
+  'authenticate_platform_admin_google',
   'bootstrap_first_manager',
+  'bootstrap_platform_admin',
   'enforce_employee_manager_invariants',
+  'get_platform_admin_me',
   'has_active_database_context',
   'manager_change_employee_access_email',
   'manager_close_campaign',
   'manager_create_campaign',
+  'manager_create_campaign_progress_entry',
   'manager_create_employee',
   'manager_get_employee',
   'manager_get_goal_configuration',
@@ -77,7 +99,10 @@ const expectedSecurityDefinerFunctions = [
   'manager_update_campaign',
   'manager_update_employee',
   'require_manager_store',
+  'require_platform_admin_context',
+  'resolve_platform_admin_session',
   'resolve_session',
+  'revoke_platform_admin_session',
   'revoke_session',
 ] as const;
 
@@ -96,6 +121,8 @@ interface FunctionSecurity {
   hasFixedSearchPath: boolean;
   ownerName: string;
   publicCanExecute: boolean;
+  migrationRunnerCanExecute: boolean;
+  platformAdminRuntimeCanExecute: boolean;
   runtimeCanExecute: boolean;
   securityDefiner: boolean;
 }
@@ -167,7 +194,8 @@ const inspectMigratedSchema = async (): Promise<void> => {
        WHERE namespace.nspname = 'metas'
          AND relation.relname IN (
            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
-           'campaigns'
+           'campaigns', 'campaign_progress_entries', 'platform_admins',
+           'platform_admin_identities', 'platform_admin_sessions', 'platform_admin_audit_events'
          )
        ORDER BY relation.relname`,
       { type: QueryTypes.SELECT },
@@ -182,14 +210,27 @@ const inspectMigratedSchema = async (): Promise<void> => {
            WHERE setting LIKE 'search_path=%'
          ) AS "hasFixedSearchPath",
          has_function_privilege('public', procedure.oid, 'EXECUTE') AS "publicCanExecute",
-         has_function_privilege(:runtime, procedure.oid, 'EXECUTE') AS "runtimeCanExecute"
+         has_function_privilege(:runtime, procedure.oid, 'EXECUTE') AS "runtimeCanExecute",
+         has_function_privilege(
+           :platformAdminRuntime, procedure.oid, 'EXECUTE'
+         ) AS "platformAdminRuntimeCanExecute",
+         has_function_privilege(
+           :migrationRunner, procedure.oid, 'EXECUTE'
+         ) AS "migrationRunnerCanExecute"
        FROM pg_proc procedure
        JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
        JOIN pg_roles owner ON owner.oid = procedure.proowner
        WHERE namespace.nspname = 'metas'
          AND procedure.prosecdef = TRUE
        ORDER BY procedure.proname`,
-      { replacements: { runtime: databaseRoles.runtime }, type: QueryTypes.SELECT },
+      {
+        replacements: {
+          migrationRunner: databaseRoles.migrationRunner,
+          platformAdminRuntime: databaseRoles.platformAdminRuntime,
+          runtime: databaseRoles.runtime,
+        },
+        type: QueryTypes.SELECT,
+      },
     );
     const runtime = await database.query<RuntimeSecurity>(
       `SELECT
@@ -202,28 +243,28 @@ const inspectMigratedSchema = async (): Promise<void> => {
             :runtime, 'metas.' || quote_ident(table_name), 'SELECT'
           )) FROM unnest(ARRAY[
             'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
-            'campaigns'
+            'campaigns', 'campaign_progress_entries'
           ])
           table_name) AS "hasSelect",
          (SELECT bool_or(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'INSERT'
           )) FROM unnest(ARRAY[
             'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
-            'campaigns'
+            'campaigns', 'campaign_progress_entries'
           ])
           table_name) AS "hasInsert",
          (SELECT bool_or(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'UPDATE'
           )) FROM unnest(ARRAY[
             'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
-            'campaigns'
+            'campaigns', 'campaign_progress_entries'
           ])
           table_name) AS "hasUpdate",
          (SELECT bool_or(has_table_privilege(
             :runtime, 'metas.' || quote_ident(table_name), 'DELETE'
           )) FROM unnest(ARRAY[
             'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
-            'campaigns'
+            'campaigns', 'campaign_progress_entries'
           ])
           table_name) AS "hasDelete"
        FROM pg_roles role
@@ -294,6 +335,7 @@ const inspectMigratedSchema = async (): Promise<void> => {
       'manager_change_employee_access_email',
       'manager_close_campaign',
       'manager_create_campaign',
+      'manager_create_campaign_progress_entry',
       'manager_create_employee',
       'manager_get_employee',
       'manager_get_goal_configuration',
@@ -306,12 +348,24 @@ const inspectMigratedSchema = async (): Promise<void> => {
       'resolve_session',
       'revoke_session',
     ]);
+    const platformAdminRuntimeExecutableFunctions = new Set([
+      'authenticate_platform_admin_google',
+      'get_platform_admin_me',
+      'resolve_platform_admin_session',
+      'revoke_platform_admin_session',
+    ]);
+    const migrationRunnerExecutableFunctions = new Set([
+      'bootstrap_first_manager',
+      'bootstrap_platform_admin',
+    ]);
     assert.ok(
       functions.every(
         ({
           functionName,
           hasFixedSearchPath,
+          migrationRunnerCanExecute,
           ownerName,
+          platformAdminRuntimeCanExecute,
           publicCanExecute,
           runtimeCanExecute,
           securityDefiner,
@@ -320,7 +374,10 @@ const inspectMigratedSchema = async (): Promise<void> => {
           hasFixedSearchPath &&
           ownerName === databaseRoles.migrationOwner &&
           !publicCanExecute &&
-          runtimeCanExecute === runtimeExecutableFunctions.has(functionName),
+          runtimeCanExecute === runtimeExecutableFunctions.has(functionName) &&
+          platformAdminRuntimeCanExecute ===
+            platformAdminRuntimeExecutableFunctions.has(functionName) &&
+          migrationRunnerCanExecute === migrationRunnerExecutableFunctions.has(functionName),
       ),
     );
     validationStage = 'runtime-grants';

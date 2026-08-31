@@ -80,7 +80,9 @@ const inspectRoles = async (): Promise<void> => {
         rolreplication AS "canReplicate",
         rolbypassrls AS "bypassRls"
        FROM pg_roles
-       WHERE rolname IN (:migrationOwner, :migrationRunner, :runtime)
+       WHERE rolname IN (
+         :migrationOwner, :migrationRunner, :platformAdminRuntime, :runtime
+       )
        ORDER BY rolname`,
       {
         replacements: databaseRoles,
@@ -97,8 +99,12 @@ const inspectRoles = async (): Promise<void> => {
        FROM pg_auth_members membership
        JOIN pg_roles member ON member.oid = membership.member
        JOIN pg_roles parent ON parent.oid = membership.roleid
-       WHERE member.rolname IN (:migrationOwner, :migrationRunner, :runtime)
-          OR parent.rolname IN (:migrationOwner, :migrationRunner, :runtime)
+       WHERE member.rolname IN (
+         :migrationOwner, :migrationRunner, :platformAdminRuntime, :runtime
+       )
+          OR parent.rolname IN (
+            :migrationOwner, :migrationRunner, :platformAdminRuntime, :runtime
+          )
        ORDER BY member.rolname, parent.rolname`,
       {
         replacements: databaseRoles,

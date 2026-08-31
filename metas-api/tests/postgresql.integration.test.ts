@@ -491,12 +491,13 @@ if (testDatabases === null) {
          WHERE rolname IN (
            'metas_migration_owner',
            'metas_migration_runner',
-           'metas_app_runtime'
+           'metas_app_runtime',
+           'metas_platform_admin_runtime'
          )
          ORDER BY rolname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(roles.length, 3);
+      assert.equal(roles.length, 4);
       for (const role of roles) {
         assert.equal(role.rolsuper, false);
         assert.equal(role.rolcreatedb, false);
