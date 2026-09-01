@@ -42,7 +42,7 @@ jobs:
             const baseBranch = 'main';
             const headBranch = 'develop';
             const migrationRoot = 'metas-api/src/database/migrations/';
-            const requiredJobs = ['Mobile CI', 'API CI', 'PostgreSQL Integration'];
+            const requiredJobs = ['Admin CI', 'Mobile CI', 'API CI', 'PostgreSQL Integration'];
             const testedSha = process.env.TESTED_SHA;
             const workflowEvent = process.env.WORKFLOW_EVENT;
             const workflowRunId = Number(process.env.WORKFLOW_RUN_ID);
