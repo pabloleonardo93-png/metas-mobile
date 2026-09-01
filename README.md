@@ -8,9 +8,12 @@ Gestores podem manter funcionários, configurar metas por cargo e administrar ca
 
 ```text
 .
-├── metas-mobile/   # aplicativo Expo e React Native
-├── metas-api/      # API HTTP, WebSocket e migrations PostgreSQL
-├── AGENTS.md       # orientações de desenvolvimento do repositório
+├── metas-mobile/       # aplicativo Expo e React Native
+├── metas-api/          # API HTTP, WebSocket e migrations PostgreSQL
+├── metas-admin/        # produto administrativo
+│   ├── frontend/       # interface Vite, React e TypeScript
+│   └── bff/            # sessão web segura e comunicação com a API
+├── AGENTS.md           # orientações de desenvolvimento do repositório
 └── README.md
 ```
 
@@ -36,6 +39,13 @@ Na API:
 - WebSocket com o pacote `ws`;
 - autenticação Google no servidor.
 
+No painel administrativo:
+
+- React 19, Vite e TypeScript;
+- React Router e SimpleWebAuthn para o fluxo de passkeys;
+- BFF Express separado, responsável pela sessão web e pela comunicação com a API;
+- nenhuma conexão direta do navegador com o PostgreSQL ou com a `metas-api`.
+
 O PostgreSQL precisa das extensões `citext` e `btree_gist`.
 
 ## Como o sistema está organizado
@@ -45,6 +55,8 @@ O aplicativo separa as funcionalidades por domínio, como autenticação, funcio
 A API expõe rotas autenticadas e isola os dados por loja. O identificador da loja vem da sessão validada no servidor. O contexto da conexão PostgreSQL e as políticas de Row-Level Security reforçam esse isolamento no banco.
 
 A autenticação começa com um ID token do Google. A API valida esse token e emite uma sessão própria. No aplicativo, o token da sessão fica no SecureStore e também autentica a conexão WebSocket. Ele não é enviado na URL da conexão.
+
+No painel web, o navegador chama apenas rotas same-origin em `/api`. O BFF mantém o token administrativo em cookie `HttpOnly`, envia o bearer somente à `metas-api` e aplica validação exata de Origin/Host, CSRF assinado e vinculado à sessão, CSP e respostas `no-store`. O frontend nunca persiste bearer em `localStorage` ou `sessionStorage`.
 
 Os eventos realtime cobrem mudanças em funcionários, configurações de metas e campanhas. O aplicativo agrupa invalidações repetidas, recarrega somente os dados necessários e tenta restabelecer a conexão quando volta ao primeiro plano.
 
@@ -71,6 +83,12 @@ cd metas-api
 npm ci
 
 cd ..\metas-mobile
+npm ci
+
+cd ..\metas-admin\frontend
+npm ci
+
+cd ..\bff
 npm ci
 ```
 
@@ -130,6 +148,22 @@ npm run build
 npm start
 ```
 
+### Painel administrativo e BFF
+
+Em desenvolvimento, configure somente o Client ID público em `metas-admin/frontend/.env`. As configurações privadas ficam em `metas-admin/bff/.env`. Use os respectivos arquivos `.env.example` como referência e inicie os processos separadamente:
+
+```powershell
+cd metas-admin\bff
+npm run dev
+
+cd ..\frontend
+npm run dev
+```
+
+O Vite encaminha `/api` ao BFF local. Em produção, o BFF serve o build de `metas-admin/frontend/dist` e continua sendo o único consumidor do bearer administrativo. O cookie de produção usa o prefixo `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/` e não define `Domain`.
+
+Antes de ativar o Admin em produção ainda são obrigatórios: procedimento controlado para o primeiro enrollment, rate limiting compartilhado ou no edge, recovery seguro, validação do BFF/cookie/CSRF no ambiente final, teste E2E com navegador/autenticador real e aplicação operacional da migration WebAuthn correspondente. Esta fase não habilita o Admin nem acessa produção.
+
 ## Banco de dados e migrations
 
 A API mantém migrations TypeScript numeradas em `metas-api/src/database/migrations/`. Elas criam o schema, as identidades, as sessões, as políticas RLS e as estruturas de funcionários, metas e campanhas.
@@ -169,6 +203,24 @@ npm run build
 npm run format:check
 ```
 
+No painel e no BFF:
+
+```powershell
+cd metas-admin\frontend
+npm test
+npm run typecheck
+npm run lint
+npm run build
+npm run format:check
+
+cd ..\bff
+npm test
+npm run typecheck
+npm run lint
+npm run build
+npm run format:check
+```
+
 Os testes de integração da API precisam de um PostgreSQL exclusivo para testes e das variáveis `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` e `TEST_ADMIN_DATABASE_URL`. As opções de SSL para esse ambiente são `TEST_DATABASE_SSL` e `TEST_DATABASE_SSL_SERVERNAME`.
 
 ## Integração contínua
@@ -177,11 +229,12 @@ O workflow `.github/workflows/ci.yml` executa o CI em Pull Requests para `main` 
 
 - `Mobile CI` valida testes, TypeScript, ESLint, formatação dos arquivos alterados e o export Android do Expo;
 - `API CI` valida testes unitários e HTTP, TypeScript, ESLint, formatação e o build;
-- `PostgreSQL Integration` cria um PostgreSQL descartável, prepara os roles de teste, aplica todas as migrations e executa a integração real com RLS e menor privilégio.
+- `PostgreSQL Integration` cria um PostgreSQL descartável, prepara os roles de teste, aplica todas as migrations e executa a integração real com RLS e menor privilégio;
+- `Admin CI` valida testes, TypeScript, ESLint, formatação e builds do painel e do BFF.
 
 O CI usa somente credenciais descartáveis do próprio runner e não depende de secrets, Northflank, EAS ou bancos externos. Na API, a formatação é verificada por completo. No mobile, enquanto o passivo histórico de Prettier não for corrigido, a verificação é incremental nos arquivos modificados, sem ocultar novos problemas.
 
-O fluxo normal segue `develop → push → Pull Request automático → CI → merge automático → main`. Um novo push para `develop` cria ou atualiza o Pull Request e, depois que os três checks passam, alterações sem migration podem ser integradas automaticamente por Merge, mantendo a `develop` permanente.
+O fluxo normal segue `develop → push → Pull Request automático → CI → merge automático → main`. Um novo push para `develop` cria ou atualiza o Pull Request e, depois que os quatro checks passam, alterações sem migration podem ser integradas automaticamente por Merge, mantendo a `develop` permanente.
 
 Quando algum arquivo em `metas-api/src/database/migrations/` é adicionado, alterado ou removido, o Pull Request continua aberto e o merge automático é bloqueado. O merge deve ocorrer manualmente somente depois do backup, da consulta de status, da aplicação administrativa da migration e da validação do ambiente.
 
