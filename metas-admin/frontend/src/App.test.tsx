@@ -11,9 +11,10 @@ const jsonResponse = (body: unknown, status = 200): Response =>
     status,
   });
 
-const me = (assuranceLevel: 'GOOGLE_ONLY' | 'MFA_VERIFIED') => ({
+const me = (assuranceLevel: 'GOOGLE_ONLY' | 'MFA_VERIFIED', hasWebAuthnCredential = true) => ({
   assuranceLevel,
   displayName: 'Admin Teste',
+  hasWebAuthnCredential,
   primaryEmail: 'admin@example.test',
 });
 
@@ -58,6 +59,42 @@ describe('admin authentication routes', () => {
     ).toBeInTheDocument();
   });
 
+  it('requests controlled first enrollment without polling or browser-stored authority', async () => {
+    const user = userEvent.setup();
+    const requestId = '33333333-3333-4333-8333-333333333333';
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(me('GOOGLE_ONLY', false)))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'session.csrf' }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            approvalExpiresAt: null,
+            expiresAt: '2026-09-01T12:15:00.000Z',
+            requestId,
+            status: 'PENDING',
+          },
+          202,
+        ),
+      );
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Proteja sua conta com uma passkey' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cadastrar passkey autorizada' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Solicitar primeiro cadastro' }));
+
+    expect(await screen.findByText('Aguardando autorização operacional')).toBeInTheDocument();
+    expect(screen.getByText(`Identificador: ${requestId}`)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mfa/first-enrollment/request',
+      expect.objectContaining({ body: '{}', method: 'POST' }),
+    );
+    expect(localStorage).toHaveLength(0);
+    expect(sessionStorage).toHaveLength(0);
+  });
+
   it('routes MFA_VERIFIED sessions to the dashboard shell', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(me('MFA_VERIFIED')));
     render(<App />);
@@ -90,7 +127,11 @@ describe('admin authentication routes', () => {
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'anonymous.csrf' }))
       .mockResolvedValueOnce(
         jsonResponse({
-          admin: me('GOOGLE_ONLY'),
+          admin: {
+            assuranceLevel: 'GOOGLE_ONLY',
+            displayName: 'Admin Teste',
+            primaryEmail: 'admin@example.test',
+          },
           csrfToken: 'session.csrf',
           expiresAt: '2026-09-01T12:00:00.000Z',
         }),

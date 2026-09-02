@@ -11,6 +11,7 @@ import {
   authenticationOptionsResponseSchema,
   authenticationVerificationSchema,
   emptyBodySchema,
+  firstEnrollmentRequestResponseSchema,
   googleLoginSchema,
   loginResponseSchema,
   registrationOptionsResponseSchema,
@@ -50,10 +51,14 @@ const parseUpstream = <Schema extends z.ZodType>(
 const toAdminSessionView = (admin: {
   assuranceLevel: 'GOOGLE_ONLY' | 'MFA_VERIFIED';
   displayName: string;
+  hasWebAuthnCredential?: boolean;
   primaryEmail: string;
 }) => ({
   assuranceLevel: admin.assuranceLevel,
   displayName: admin.displayName,
+  ...(admin.hasWebAuthnCredential === undefined
+    ? {}
+    : { hasWebAuthnCredential: admin.hasWebAuthnCredential }),
   primaryEmail: admin.primaryEmail,
 });
 
@@ -156,6 +161,26 @@ export const createAdminAuthRouter = (
       }
       const csrfToken = issueCsrfToken(response, config, null);
       response.status(200).json({ csrfToken });
+    }),
+  );
+
+  router.post(
+    '/mfa/first-enrollment/request',
+    csrfProtection,
+    asyncHandler(async (request, response) => {
+      parseBody(emptyBodySchema, request.body ?? {});
+      const result = parseUpstream(
+        firstEnrollmentRequestResponseSchema,
+        await requestWithSession(
+          request,
+          config,
+          client,
+          'POST',
+          '/v1/platform-admin/mfa/first-enrollment/request',
+          {},
+        ),
+      );
+      response.status(202).json(result);
     }),
   );
 

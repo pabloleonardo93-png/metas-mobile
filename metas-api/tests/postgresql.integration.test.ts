@@ -7,6 +7,7 @@ import { QueryTypes, type Sequelize, type Transaction } from 'sequelize';
 import { disconnectDatabase } from '../src/config/database.js';
 import {
   assertMigrationConnectionSecurity,
+  assertPlatformAdminOperatorConnectionSecurity,
   assertRuntimeConnectionSecurity,
 } from '../src/database/connectionSecurity.js';
 import { createMigrator } from '../src/database/umzug.js';
@@ -189,12 +190,14 @@ if (testDatabases === null) {
     skip: 'TEST_DATABASE_URL and TEST_MIGRATION_DATABASE_URL are not configured.',
   });
 } else {
-  const { migrationDatabase, runtimeDatabase } = testDatabases;
+  const { migrationDatabase, platformAdminOperatorDatabase, runtimeDatabase } = testDatabases;
 
   try {
     await migrationDatabase.authenticate();
+    await platformAdminOperatorDatabase.authenticate();
     await runtimeDatabase.authenticate();
     await assertMigrationConnectionSecurity(migrationDatabase);
+    await assertPlatformAdminOperatorConnectionSecurity(platformAdminOperatorDatabase);
     await assertRuntimeConnectionSecurity(runtimeDatabase);
     await createMigrator(migrationDatabase).up();
 
@@ -460,6 +463,28 @@ if (testDatabases === null) {
         runtimeDatabase.query('CREATE TABLE public.runtime_forbidden (id INTEGER)'),
       );
       await assert.rejects(
+        platformAdminOperatorDatabase.query('CREATE TABLE metas.operator_forbidden (id INTEGER)'),
+      );
+      await assert.rejects(platformAdminOperatorDatabase.query('CREATE ROLE operator_forbidden'));
+      await assert.rejects(
+        platformAdminOperatorDatabase.query('SELECT * FROM metas.platform_admins'),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query(
+          `UPDATE metas.platform_admin_first_enrollment_requests SET status = 'REVOKED'`,
+        ),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query(
+          `INSERT INTO metas.platform_admin_first_enrollment_requests DEFAULT VALUES`,
+        ),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query(
+          `DELETE FROM metas.platform_admin_first_enrollment_requests`,
+        ),
+      );
+      await assert.rejects(
         runtimeDatabase.query('ALTER TABLE metas.stores ADD COLUMN forbidden INTEGER'),
       );
       await assert.rejects(runtimeDatabase.query('DROP TABLE metas.stores'));
@@ -492,12 +517,13 @@ if (testDatabases === null) {
            'metas_migration_owner',
            'metas_migration_runner',
            'metas_app_runtime',
+           'metas_platform_admin_operator',
            'metas_platform_admin_runtime'
          )
          ORDER BY rolname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(roles.length, 4);
+      assert.equal(roles.length, 5);
       for (const role of roles) {
         assert.equal(role.rolsuper, false);
         assert.equal(role.rolcreatedb, false);
@@ -509,6 +535,10 @@ if (testDatabases === null) {
 
       const memberships = await migrationDatabase.query<{
         runnerCanAssumeOwner: boolean;
+        operatorCanAssumeAppRuntime: boolean;
+        operatorCanAssumeMigrationOwner: boolean;
+        operatorCanAssumeMigrationRunner: boolean;
+        operatorCanAssumePlatformAdminRuntime: boolean;
         runtimeCanAssumeOwner: boolean;
         runtimeCanAssumeRunner: boolean;
       }>(
@@ -521,11 +551,27 @@ if (testDatabases === null) {
           ) AS "runtimeCanAssumeOwner",
           pg_has_role(
             'metas_app_runtime', 'metas_migration_runner', 'MEMBER'
-          ) AS "runtimeCanAssumeRunner"`,
+          ) AS "runtimeCanAssumeRunner",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_migration_owner', 'MEMBER'
+          ) AS "operatorCanAssumeMigrationOwner",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_migration_runner', 'MEMBER'
+          ) AS "operatorCanAssumeMigrationRunner",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_app_runtime', 'MEMBER'
+          ) AS "operatorCanAssumeAppRuntime",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_platform_admin_runtime', 'MEMBER'
+          ) AS "operatorCanAssumePlatformAdminRuntime"`,
         { type: QueryTypes.SELECT },
       );
       assert.deepEqual(memberships[0], {
         runnerCanAssumeOwner: true,
+        operatorCanAssumeAppRuntime: false,
+        operatorCanAssumeMigrationOwner: false,
+        operatorCanAssumeMigrationRunner: false,
+        operatorCanAssumePlatformAdminRuntime: false,
         runtimeCanAssumeOwner: false,
         runtimeCanAssumeRunner: false,
       });
@@ -678,6 +724,10 @@ if (testDatabases === null) {
       assert.equal(rows[0]?.count, '1');
     });
   } finally {
-    await Promise.all([disconnectDatabase(runtimeDatabase), disconnectDatabase(migrationDatabase)]);
+    await Promise.all([
+      disconnectDatabase(platformAdminOperatorDatabase),
+      disconnectDatabase(runtimeDatabase),
+      disconnectDatabase(migrationDatabase),
+    ]);
   }
 }

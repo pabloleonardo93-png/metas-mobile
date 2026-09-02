@@ -24,11 +24,12 @@ Cada finalidade utiliza um login PostgreSQL diferente:
 ```text
 DATABASE_URL             API em runtime
 PLATFORM_ADMIN_DATABASE_URL runtime isolado do domínio administrativo
+PLATFORM_ADMIN_OPERATOR_DATABASE_URL operações controladas de first enrollment
 MIGRATION_DATABASE_URL   execução de migrations
 ADMIN_DATABASE_URL       bootstrap explícito da infraestrutura PostgreSQL
 ```
 
-`metas_migration_owner` é `NOLOGIN` e proprietário do schema e dos objetos. `metas_migration_runner`, `metas_app_runtime` e `metas_platform_admin_runtime` são logins separados usados, respectivamente, por migrations, pela API das farmácias e pelo domínio administrativo. O bootstrap não define senhas; credenciais e permissão de conexão são configuradas localmente pela administração do PostgreSQL e nunca ficam no repositório.
+`metas_migration_owner` é `NOLOGIN` e proprietário do schema e dos objetos. `metas_migration_runner`, `metas_app_runtime`, `metas_platform_admin_runtime` e `metas_platform_admin_operator` são logins separados usados, respectivamente, por migrations, pela API das farmácias, pelo runtime administrativo e pelas duas operações controladas de first enrollment. O bootstrap não define senhas; credenciais e permissão de conexão são configuradas localmente pela administração do PostgreSQL e nunca ficam no repositório.
 
 O bootstrap remove atributos elevados desses logins. A API e o migrator também verificam na conexão real o nome exato do role, `LOGIN`, ausência de superuser, `BYPASSRLS`, criação de roles/bancos e replicação, além das memberships incompatíveis.
 
@@ -46,7 +47,7 @@ npm run db:admin:bootstrap
 
 Esse comando prepara:
 
-- role `NOLOGIN` de ownership e roles `LOGIN` separados para migrations e runtime;
+- role `NOLOGIN` de ownership e roles `LOGIN` separados para migrations, runtimes e operações administrativas;
 - extensões `citext` e `btree_gist` no schema `public`;
 - schema `metas`;
 - tabela de controle `metas.schema_migrations`;
@@ -73,7 +74,7 @@ npm run db:migrate:status:northflank
 npm run db:migrate:northflank
 ```
 
-Antes de aplicar a migration 013 em qualquer ambiente, o bootstrap de roles precisa ter criado `metas_platform_admin_runtime`. A credencial dessa role é configurada fora do repositório e não substitui `metas_app_runtime` nem `metas_migration_runner`.
+Antes de aplicar a migration 013 em qualquer ambiente, o bootstrap de roles precisa ter criado `metas_platform_admin_runtime`. Antes da migration 015, o mesmo bootstrap precisa ter criado `metas_platform_admin_operator`. As credenciais dessas roles são configuradas fora do repositório e não substituem `metas_app_runtime` nem `metas_migration_runner`.
 
 Não há scripts de reset, drop ou force. O projeto não usa `sequelize.sync()`, `sync({ force: true })` ou `sync({ alter: true })`.
 
@@ -113,6 +114,7 @@ Os testes de integração exigem banco dedicado e conexões com privilégios sep
 NODE_ENV diferente de production
 TEST_DATABASE_URL
 TEST_MIGRATION_DATABASE_URL
+TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL
 TEST_PLATFORM_ADMIN_DATABASE_URL
 TEST_ADMIN_DATABASE_URL
 TEST_DATABASE_SSL
@@ -196,6 +198,8 @@ npm run db:migrate:status:northflank lista migrations sem aplicá-las
 npm run db:migrate:northflank aplica migrations pendentes no Northflank
 npm run platform-admin:bootstrap provisiona explicitamente uma identidade administrativa
 npm run platform-admin:bootstrap:northflank provisiona via conexão de migration no Northflank
+npm run platform-admin:first-enrollment:status consulta uma solicitação pela operator dedicada
+npm run platform-admin:first-enrollment:approve aprova temporariamente o primeiro enrollment
 npm run format              formata arquivos
 npm run format:check        verifica formatação
 ```
@@ -247,7 +251,7 @@ O login possui rate limit em memória adequado ao processo único do MVP. Antes 
 
 ## Fundação do administrador da plataforma
 
-O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. As migrations 013 e 014 criam identidades Google previamente provisionadas, sessões administrativas opacas, autenticação WebAuthn/passkeys e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
+O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. As migrations 013 a 015 criam identidades Google previamente provisionadas, sessões administrativas opacas, autenticação WebAuthn/passkeys, controle operacional do primeiro enrollment e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
 
 Rotas desta fase:
 
@@ -255,6 +259,7 @@ Rotas desta fase:
 POST /v1/platform-admin/auth/google
 POST /v1/platform-admin/auth/logout
 GET  /v1/platform-admin/me
+POST /v1/platform-admin/mfa/first-enrollment/request
 POST /v1/platform-admin/mfa/webauthn/registration/options
 POST /v1/platform-admin/mfa/webauthn/registration/verify
 POST /v1/platform-admin/mfa/webauthn/authentication/options
@@ -288,14 +293,40 @@ PLATFORM_ADMIN_WEBAUTHN_RP_NAME
 PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS
 PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS
 PLATFORM_ADMIN_WEBAUTHN_STEP_UP_TTL_SECONDS
+PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS
+PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS
+PLATFORM_ADMIN_RATE_LIMIT_STORE
+PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL
+PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET
+PLATFORM_ADMIN_RATE_LIMIT_WINDOW_SECONDS
+PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX
+PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX
+PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX
+PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX
+PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX
+PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX
 ```
 
 Os Client IDs administrativos não podem reutilizar a audience do mobile. A sessão nasce com assurance `GOOGLE_ONLY` e só muda para `MFA_VERIFIED` depois de uma verificação WebAuthn com `userVerification` obrigatório. O challenge tem validade curta, uso único e vínculo com administrador, sessão e finalidade. O token opaco da sessão é rotacionado após o cadastro ou a autenticação da passkey.
 
-`PLATFORM_ADMIN_AUTH_ENABLED` continua `false` por padrão. Quando habilitado, o startup exige a conexão administrativa, a audience Google própria e a configuração completa do RP ID, nome e allowlist exata de origins; em produção, todos os origins precisam usar HTTPS. O projeto não configura nem habilita esses valores automaticamente. Antes de operar com múltiplas instâncias, os rate limits em memória devem migrar para armazenamento compartilhado ou para a borda.
+`PLATFORM_ADMIN_AUTH_ENABLED` continua `false` por padrão. Quando habilitado, o startup exige a conexão administrativa, a audience Google própria, a configuração completa do RP ID, nome, allowlist exata de origins e uma chave HMAC do rate limiter em base64url que represente pelo menos 32 bytes. Em produção, origins precisam usar HTTPS e `PLATFORM_ADMIN_RATE_LIMIT_STORE=redis` exige uma URL `rediss://`; falha de conexão impede o startup e indisponibilidade posterior retorna 503 apenas nas rotas administrativas. O modo `memory` precisa ser selecionado explicitamente e é restrito a desenvolvimento/testes. As chaves compartilhadas são HMACs e não armazenam IP, administrador ou sessão em texto claro.
 
-O primeiro cadastro de passkey é permitido somente na sessão `GOOGLE_ONLY` de um administrador previamente provisionado. Antes de habilitar o domínio em produção, esse primeiro acesso deve ocorrer em uma janela operacional controlada, confirmando a identidade do administrador por um canal independente; uma conta Google comprometida antes do enrollment poderia registrar a primeira passkey. Passkeys adicionais exigem `MFA_VERIFIED` e step-up recente. Revogação, remoção da última credencial e recuperação administrativa permanecem fora desta fase para evitar um bypass inseguro; devem ser implementadas com step-up e procedimento operacional auditável.
+O componente de rede da chave usa apenas `request.ip`. `TRUST_PROXY_HOPS` deve corresponder exatamente à quantidade de proxies controlados entre o cliente e a API; a API não pode ficar acessível por um caminho alternativo que contorne esses proxies. Headers `Forwarded`/`X-Forwarded-*` não são lidos diretamente pelo limiter. Valide essa topologia no ambiente final antes de habilitar o Admin.
+
+O primeiro cadastro de passkey é permitido somente na sessão `GOOGLE_ONLY` de um administrador previamente provisionado. O administrador solicita uma janela curta pela API; um operador confirma a identidade por canal independente e aprova o UUID exato com a credencial dedicada `metas_platform_admin_operator`. A aprovação fica vinculada ao administrador, sessão e `token_version`, expira em no máximo cinco minutos e é consumida atomicamente ao criar o challenge. Não existe endpoint HTTP de aprovação.
+
+```text
+PLATFORM_ADMIN_FIRST_ENROLLMENT_REQUEST_ID
+PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS
+```
+
+```bash
+npm run platform-admin:first-enrollment:status
+npm run platform-admin:first-enrollment:approve
+```
+
+No Northflank, as variantes `:northflank` dessas operações devem ser executadas futuramente por um Job operacional separado, como `metas-platform-admin-ops`, usando um Secret Group exclusivo e senha diferente da migration runner. O canal `metas-db-admin` continua reservado ao bootstrap privilegiado de roles e a migrations administrativas excepcionais. A API, o BFF e o browser nunca recebem a credencial da operator. Passkeys adicionais exigem `MFA_VERIFIED` e step-up recente. Revogação, remoção da última credencial e recuperação administrativa permanecem fora desta fase para evitar um bypass inseguro.
 
 No futuro `metas-admin`, o BFF deverá manter a credencial somente em cookie `__Host-*`, `HttpOnly`, `Secure`, `SameSite` e `Path=/`, sem expô-la a Client Components. Mutações deverão validar `Origin`/`Host` e usar proteção CSRF vinculada à sessão; `SameSite` não é defesa suficiente isoladamente.
 
-Os eventos de login e logout bem-sucedidos são gravados na mesma transação da mudança de sessão. A auditoria não substitui logs de aplicação ou de segurança e não armazena token, hash do token ou Google ID Token.
+Os eventos de login, logout e transições de first enrollment são gravados na mesma transação da mudança correspondente. A substituição de uma solicitação ativa registra `FIRST_ENROLLMENT_REVOKED` uma única vez com motivo estruturado. A auditoria não substitui logs de aplicação ou de segurança e não armazena token, hash do token ou Google ID Token.

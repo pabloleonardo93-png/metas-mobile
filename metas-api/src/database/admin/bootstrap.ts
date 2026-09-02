@@ -20,6 +20,11 @@ BEGIN
     CREATE ROLE ${databaseRoles.runtime} LOGIN;
   END IF;
   IF NOT EXISTS (
+    SELECT 1 FROM pg_roles WHERE rolname = '${databaseRoles.platformAdminOperator}'
+  ) THEN
+    CREATE ROLE ${databaseRoles.platformAdminOperator} LOGIN;
+  END IF;
+  IF NOT EXISTS (
     SELECT 1 FROM pg_roles WHERE rolname = '${databaseRoles.platformAdminRuntime}'
   ) THEN
     CREATE ROLE ${databaseRoles.platformAdminRuntime} LOGIN;
@@ -31,10 +36,16 @@ $roles$;
 const roleMembershipSql = `
 GRANT ${databaseRoles.migrationOwner} TO ${databaseRoles.migrationRunner};
 REVOKE ${databaseRoles.migrationOwner}, ${databaseRoles.migrationRunner},
-  ${databaseRoles.platformAdminRuntime} FROM ${databaseRoles.runtime};
+  ${databaseRoles.platformAdminOperator}, ${databaseRoles.platformAdminRuntime}
+  FROM ${databaseRoles.runtime};
 REVOKE ${databaseRoles.migrationOwner}, ${databaseRoles.migrationRunner}, ${databaseRoles.runtime}
   FROM ${databaseRoles.platformAdminRuntime};
-REVOKE ${databaseRoles.platformAdminRuntime} FROM ${databaseRoles.migrationRunner};
+REVOKE ${databaseRoles.platformAdminOperator} FROM ${databaseRoles.platformAdminRuntime};
+REVOKE ${databaseRoles.migrationOwner}, ${databaseRoles.migrationRunner}, ${databaseRoles.runtime},
+  ${databaseRoles.platformAdminRuntime} FROM ${databaseRoles.platformAdminOperator};
+REVOKE ${databaseRoles.platformAdminOperator}, ${databaseRoles.platformAdminRuntime}
+  FROM ${databaseRoles.migrationRunner};
+REVOKE ${databaseRoles.platformAdminOperator} FROM ${databaseRoles.migrationOwner};
 `;
 
 const rolesBootstrapSql = `${createRolesSql}
@@ -44,6 +55,8 @@ ALTER ROLE ${databaseRoles.migrationOwner}
 ALTER ROLE ${databaseRoles.migrationRunner}
   NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE ${databaseRoles.runtime}
+  NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN NOINHERIT NOREPLICATION NOBYPASSRLS;
+ALTER ROLE ${databaseRoles.platformAdminOperator}
   NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN NOINHERIT NOREPLICATION NOBYPASSRLS;
 ALTER ROLE ${databaseRoles.platformAdminRuntime}
   NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN NOINHERIT NOREPLICATION NOBYPASSRLS;
@@ -59,6 +72,8 @@ ALTER ROLE ${databaseRoles.migrationOwner}
 ALTER ROLE ${databaseRoles.migrationRunner}
   NOCREATEDB NOCREATEROLE LOGIN NOINHERIT;
 ALTER ROLE ${databaseRoles.runtime}
+  NOCREATEDB NOCREATEROLE LOGIN NOINHERIT;
+ALTER ROLE ${databaseRoles.platformAdminOperator}
   NOCREATEDB NOCREATEROLE LOGIN NOINHERIT;
 ALTER ROLE ${databaseRoles.platformAdminRuntime}
   NOCREATEDB NOCREATEROLE LOGIN NOINHERIT;
@@ -78,6 +93,7 @@ REVOKE CREATE ON SCHEMA ${applicationSchema} FROM PUBLIC;
 REVOKE USAGE ON SCHEMA ${applicationSchema} FROM PUBLIC;
 GRANT USAGE ON SCHEMA ${applicationSchema} TO ${databaseRoles.migrationRunner};
 GRANT USAGE ON SCHEMA ${applicationSchema} TO ${databaseRoles.runtime};
+GRANT USAGE ON SCHEMA ${applicationSchema} TO ${databaseRoles.platformAdminOperator};
 GRANT USAGE ON SCHEMA ${applicationSchema} TO ${databaseRoles.platformAdminRuntime};
 
 SET ROLE ${databaseRoles.migrationOwner};
@@ -88,6 +104,8 @@ CREATE TABLE IF NOT EXISTS ${applicationSchema}.schema_migrations (
 RESET ROLE;
 
 REVOKE ALL ON TABLE ${applicationSchema}.schema_migrations FROM PUBLIC;
+REVOKE ALL ON TABLE ${applicationSchema}.schema_migrations
+  FROM ${databaseRoles.platformAdminOperator};
 GRANT SELECT, INSERT, DELETE ON TABLE ${applicationSchema}.schema_migrations
   TO ${databaseRoles.migrationRunner};
 

@@ -81,7 +81,7 @@ const inspectRoles = async (): Promise<void> => {
         rolbypassrls AS "bypassRls"
        FROM pg_roles
        WHERE rolname IN (
-         :migrationOwner, :migrationRunner, :platformAdminRuntime, :runtime
+         :migrationOwner, :migrationRunner, :platformAdminOperator, :platformAdminRuntime, :runtime
        )
        ORDER BY rolname`,
       {
@@ -100,10 +100,10 @@ const inspectRoles = async (): Promise<void> => {
        JOIN pg_roles member ON member.oid = membership.member
        JOIN pg_roles parent ON parent.oid = membership.roleid
        WHERE member.rolname IN (
-         :migrationOwner, :migrationRunner, :platformAdminRuntime, :runtime
+         :migrationOwner, :migrationRunner, :platformAdminOperator, :platformAdminRuntime, :runtime
        )
           OR parent.rolname IN (
-            :migrationOwner, :migrationRunner, :platformAdminRuntime, :runtime
+            :migrationOwner, :migrationRunner, :platformAdminOperator, :platformAdminRuntime, :runtime
           )
        ORDER BY member.rolname, parent.rolname`,
       {

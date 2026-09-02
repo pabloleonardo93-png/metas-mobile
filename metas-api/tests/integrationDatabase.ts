@@ -5,6 +5,7 @@ import { loadNorthflankIntegrationTestEnv, loadTestDatabaseEnv } from '../src/co
 
 interface IntegrationDatabases {
   migrationDatabase: Sequelize;
+  platformAdminOperatorDatabase: Sequelize;
   platformAdminRuntimeDatabase: Sequelize;
   runtimeDatabase: Sequelize;
 }
@@ -20,6 +21,11 @@ export const createIntegrationDatabases = (
         northflank.migration,
         northflank.migration.sslServerName,
         migrationPoolMax,
+      ),
+      platformAdminOperatorDatabase: createDatabaseFromParameters(
+        northflank.platformAdminOperator,
+        northflank.platformAdminOperator.sslServerName,
+        runtimePoolMax,
       ),
       platformAdminRuntimeDatabase: createDatabaseFromParameters(
         northflank.platformAdminRuntime,
@@ -44,6 +50,12 @@ export const createIntegrationDatabases = (
       local.migrationDatabaseUrl,
       local.databaseSsl,
       migrationPoolMax,
+      local.databaseSslServerName,
+    ),
+    platformAdminOperatorDatabase: createDatabaseFromUrl(
+      local.platformAdminOperatorDatabaseUrl,
+      local.databaseSsl,
+      runtimePoolMax,
       local.databaseSslServerName,
     ),
     platformAdminRuntimeDatabase: createDatabaseFromUrl(

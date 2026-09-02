@@ -145,6 +145,17 @@ jobs:
         working-directory: metas-api
     env:
       CI: "true"
+      TEST_PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL: redis://127.0.0.1:6379
+    services:
+      redis:
+        image: redis:8.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -164,6 +175,9 @@ jobs:
 
       - name: Run unit and HTTP tests
         run: npm test
+
+      - name: Run shared rate limit integration test
+        run: npm run test:rate-limit:integration
 
       - name: Run typecheck
         run: npm run typecheck
@@ -187,6 +201,7 @@ jobs:
     env:
       CI: "true"
       CI_MIGRATION_PASSWORD: ci_migration_password
+      CI_PLATFORM_ADMIN_OPERATOR_PASSWORD: ci_platform_admin_operator_password
       CI_PLATFORM_ADMIN_RUNTIME_PASSWORD: ci_platform_admin_runtime_password
       CI_RUNTIME_PASSWORD: ci_runtime_password
       NODE_ENV: test
@@ -195,6 +210,7 @@ jobs:
       TEST_DATABASE_SSL: "false"
       TEST_DATABASE_URL: postgresql://metas_app_runtime:ci_runtime_password@127.0.0.1:5432/metas_test
       TEST_MIGRATION_DATABASE_URL: postgresql://metas_migration_runner:ci_migration_password@127.0.0.1:5432/metas_test
+      TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL: postgresql://metas_platform_admin_operator:ci_platform_admin_operator_password@127.0.0.1:5432/metas_test
       TEST_PLATFORM_ADMIN_DATABASE_URL: postgresql://metas_platform_admin_runtime:ci_platform_admin_runtime_password@127.0.0.1:5432/metas_test
     services:
       postgres:
@@ -239,9 +255,11 @@ jobs:
             --dbname=metas_test \
             --set=ON_ERROR_STOP=1 \
             --set=migration_password="$CI_MIGRATION_PASSWORD" \
+            --set=platform_admin_operator_password="$CI_PLATFORM_ADMIN_OPERATOR_PASSWORD" \
             --set=platform_admin_runtime_password="$CI_PLATFORM_ADMIN_RUNTIME_PASSWORD" \
             --set=runtime_password="$CI_RUNTIME_PASSWORD" <<'SQL'
           ALTER ROLE metas_migration_runner PASSWORD :'migration_password';
+          ALTER ROLE metas_platform_admin_operator PASSWORD :'platform_admin_operator_password';
           ALTER ROLE metas_platform_admin_runtime PASSWORD :'platform_admin_runtime_password';
           ALTER ROLE metas_app_runtime PASSWORD :'runtime_password';
           SQL

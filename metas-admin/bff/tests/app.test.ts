@@ -231,6 +231,7 @@ describe('Admin BFF security boundary', () => {
       Promise.resolve({
         assuranceLevel: 'MFA_VERIFIED',
         displayName: 'Admin Teste',
+        hasWebAuthnCredential: true,
         id: ADMIN_ID,
         primaryEmail: 'admin@example.test',
         status: 'ACTIVE',
@@ -245,6 +246,7 @@ describe('Admin BFF security boundary', () => {
     expect(bodyFrom<unknown>(me)).toEqual({
       assuranceLevel: 'MFA_VERIFIED',
       displayName: 'Admin Teste',
+      hasWebAuthnCredential: true,
       primaryEmail: 'admin@example.test',
     });
     expect(requestMock).toHaveBeenCalledWith(
@@ -256,6 +258,50 @@ describe('Admin BFF security boundary', () => {
     expect(
       (await request(app).get('/api/arbitrary-proxy').set('host', config.expectedHost)).status,
     ).toBe(404);
+  });
+
+  it('forwards only a CSRF-protected first enrollment request and returns minimal status', async () => {
+    const requestId = '33333333-3333-4333-8333-333333333333';
+    const { client, requestMock } = createClient(() =>
+      Promise.resolve({
+        approvalExpiresAt: null,
+        expiresAt: '2026-09-01T12:15:00.000Z',
+        requestId,
+        status: 'PENDING',
+      }),
+    );
+    const app = createApp({ client, config, logger, staticDirectory: null });
+    const csrf = await establishCsrf(app, SESSION_TOKEN);
+    const response = await postMutation(
+      app,
+      '/api/mfa/first-enrollment/request',
+      csrf,
+      {},
+      SESSION_TOKEN,
+    );
+
+    expect(response.status).toBe(202);
+    expect(bodyFrom<unknown>(response)).toEqual({
+      approvalExpiresAt: null,
+      expiresAt: '2026-09-01T12:15:00.000Z',
+      requestId,
+      status: 'PENDING',
+    });
+    expect(requestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: {},
+        path: '/v1/platform-admin/mfa/first-enrollment/request',
+        sessionToken: SESSION_TOKEN,
+      }),
+    );
+    const massAssignment = await postMutation(
+      app,
+      '/api/mfa/first-enrollment/request',
+      csrf,
+      { platformAdminId: ADMIN_ID },
+      SESSION_TOKEN,
+    );
+    expect(massAssignment.status).toBe(422);
   });
 
   it('rotates the HttpOnly cookie after WebAuthn without returning the bearer', async () => {
@@ -366,5 +412,19 @@ describe('Admin BFF security boundary', () => {
         message: 'Não foi possível concluir a operação.',
       }),
     );
+  });
+
+  it('preserves a bounded Retry-After without exposing limiter internals', async () => {
+    const { client } = createClient(() =>
+      Promise.reject(new BffError(429, 'TOO_MANY_REQUESTS', 'Aguarde antes de tentar.', 42)),
+    );
+    const app = createApp({ client, config, logger, staticDirectory: null });
+    const response = await request(app)
+      .get('/api/auth/me')
+      .set('host', config.expectedHost)
+      .set('cookie', `${config.sessionCookieName}=${SESSION_TOKEN}`);
+    expect(response.status).toBe(429);
+    expect(response.headers['retry-after']).toBe('42');
+    expect(response.text).not.toContain('redis');
   });
 });

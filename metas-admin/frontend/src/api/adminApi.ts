@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type {
   AdminIdentity,
+  FirstEnrollmentRequestResult,
   WebAuthnAuthenticationOptionsResult,
   WebAuthnOptionsResult,
 } from '../types';
@@ -18,12 +19,19 @@ const meSchema = z
   .object({
     assuranceLevel: z.enum(['GOOGLE_ONLY', 'MFA_VERIFIED']),
     displayName: z.string(),
+    hasWebAuthnCredential: z.boolean(),
     primaryEmail: z.string(),
   })
   .strict();
 const loginSchema = z
   .object({
-    admin: meSchema,
+    admin: z
+      .object({
+        assuranceLevel: z.enum(['GOOGLE_ONLY', 'MFA_VERIFIED']),
+        displayName: z.string(),
+        primaryEmail: z.string(),
+      })
+      .strict(),
     csrfToken: z.string().min(1),
     expiresAt: z.string(),
   })
@@ -47,12 +55,21 @@ const verificationSchema = z
     stepUpVerifiedAt: z.string(),
   })
   .strict();
+const firstEnrollmentRequestSchema = z
+  .object({
+    approvalExpiresAt: z.string().nullable(),
+    expiresAt: z.string(),
+    requestId: z.string().uuid(),
+    status: z.enum(['APPROVED', 'PENDING']),
+  })
+  .strict();
 
 export class AdminApiError extends Error {
   public constructor(
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'AdminApiError';
@@ -83,6 +100,14 @@ const request = async (path: string, init: RequestInit = {}): Promise<unknown> =
       response.status,
       parsed.success ? parsed.data.code : 'REQUEST_FAILED',
       parsed.success ? parsed.data.message : 'Não foi possível concluir a operação.',
+      (() => {
+        const value = response.headers.get('retry-after');
+        if (!value || !/^\d+$/u.test(value)) return undefined;
+        const seconds = Number(value);
+        return Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 3_600
+          ? seconds
+          : undefined;
+      })(),
     );
   }
   return body;
@@ -134,6 +159,12 @@ export const adminApi = {
 
   async createRegistrationOptions(): Promise<WebAuthnOptionsResult> {
     return optionsSchema.parse(await mutation('/api/mfa/webauthn/registration/options', {}));
+  },
+
+  async requestFirstEnrollment(): Promise<FirstEnrollmentRequestResult> {
+    return firstEnrollmentRequestSchema.parse(
+      await mutation('/api/mfa/first-enrollment/request', {}),
+    );
   },
 
   async verifyRegistration(input: {

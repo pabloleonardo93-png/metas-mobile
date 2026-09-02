@@ -25,6 +25,15 @@ export interface PlatformAdminWebAuthnVerificationResult {
   stepUpVerifiedAt: string;
 }
 
+export type PlatformAdminFirstEnrollmentRequestStatus = 'APPROVED' | 'PENDING';
+
+export interface PlatformAdminFirstEnrollmentRequestResult {
+  approvalExpiresAt: string | null;
+  expiresAt: string;
+  requestId: string;
+  status: PlatformAdminFirstEnrollmentRequestStatus;
+}
+
 export interface PlatformAdminWebAuthnService {
   createAuthenticationOptions(
     session: PlatformAdminSession,
@@ -32,6 +41,10 @@ export interface PlatformAdminWebAuthnService {
   createRegistrationOptions(
     session: PlatformAdminSession,
   ): Promise<PlatformAdminWebAuthnOptionsResult<PublicKeyCredentialCreationOptionsJSON>>;
+  requestFirstEnrollment(
+    session: PlatformAdminSession,
+    metadata: PlatformAdminRequestMetadata,
+  ): Promise<PlatformAdminFirstEnrollmentRequestResult>;
   verifyAuthentication(
     session: PlatformAdminSession,
     challengeId: string,
