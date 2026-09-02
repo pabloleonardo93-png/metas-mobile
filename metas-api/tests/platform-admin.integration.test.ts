@@ -6,9 +6,10 @@ import request from 'supertest';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { QueryTypes, type Sequelize, type Transaction } from 'sequelize';
 
-import { createApp } from '../src/app.js';
+import { createApp, type AppOptions } from '../src/app.js';
 import { disconnectDatabase } from '../src/config/database.js';
 import {
+  assertPlatformAdminOperatorConnectionSecurity,
   assertPlatformAdminRuntimeConnectionSecurity,
   assertRuntimeConnectionSecurity,
 } from '../src/database/connectionSecurity.js';
@@ -19,6 +20,10 @@ import type {
 } from '../src/modules/auth/auth.types.js';
 import { hashSessionToken } from '../src/modules/auth/sessionToken.js';
 import { PostgresPlatformAdminAuthenticationService } from '../src/modules/platformAdmin/platformAdminAuthenticationService.js';
+import {
+  MemoryPlatformAdminRateLimiter,
+  type PlatformAdminRateLimitPolicies,
+} from '../src/modules/platformAdmin/platformAdminRateLimiter.js';
 import type { PlatformAdminWebAuthnAdapter } from '../src/modules/platformAdmin/platformAdminWebAuthnAdapter.js';
 import { PostgresPlatformAdminWebAuthnService } from '../src/modules/platformAdmin/platformAdminWebAuthnService.js';
 import type {
@@ -31,6 +36,22 @@ import { withPlatformAdminDatabaseContext } from '../src/shared/database/withPla
 import { createIntegrationDatabases } from './integrationDatabase.js';
 
 const silentLogger: Logger = { error: () => undefined, info: () => undefined };
+const integrationRateLimitPolicies: PlatformAdminRateLimitPolicies = {
+  FIRST_ENROLLMENT_REQUEST: { limit: 1_000, windowMs: 60_000 },
+  GOOGLE_LOGIN: { limit: 1_000, windowMs: 60_000 },
+  WEBAUTHN_AUTHENTICATION_OPTIONS: { limit: 1_000, windowMs: 60_000 },
+  WEBAUTHN_AUTHENTICATION_VERIFY: { limit: 1_000, windowMs: 60_000 },
+  WEBAUTHN_REGISTRATION_OPTIONS: { limit: 1_000, windowMs: 60_000 },
+  WEBAUTHN_REGISTRATION_VERIFY: { limit: 1_000, windowMs: 60_000 },
+};
+const createPlatformAdminTestApp = (options: AppOptions) =>
+  createApp({
+    platformAdminRateLimiter: new MemoryPlatformAdminRateLimiter(
+      randomBytes(32).toString('base64url'),
+      integrationRateLimitPolicies,
+    ),
+    ...options,
+  });
 
 class FakeGoogleVerifier implements GoogleIdTokenVerifier {
   public constructor(private readonly identity: VerifiedGoogleIdentity) {}
@@ -243,7 +264,7 @@ const login = async (
   identity: VerifiedGoogleIdentity,
 ): Promise<PlatformAdminLoginResult> => {
   const response = await request(
-    createApp({
+    createPlatformAdminTestApp({
       logger: silentLogger,
       platformAdminAuthenticationService: createService(database, identity),
     }),
@@ -254,6 +275,34 @@ const login = async (
   return JSON.parse(response.text) as PlatformAdminLoginResult;
 };
 
+const authorizeFirstEnrollment = async (
+  platformAdminOperatorDatabase: Sequelize,
+  service: PostgresPlatformAdminWebAuthnService,
+  session: PlatformAdminSession,
+): Promise<string> => {
+  const enrollmentRequest = await service.requestFirstEnrollment(session, {
+    ipAddress: null,
+    requestId: randomUUID(),
+    userAgent: 'integration-test',
+  });
+  const rows = await platformAdminOperatorDatabase.query<{ status: string }>(
+    `SELECT request_status AS status
+     FROM metas.approve_platform_admin_first_enrollment(
+       CAST(:requestId AS UUID), :approvalExpiresAt, CAST(:operationRequestId AS UUID)
+     )`,
+    {
+      replacements: {
+        approvalExpiresAt: new Date(Date.now() + 300_000),
+        operationRequestId: randomUUID(),
+        requestId: enrollmentRequest.requestId,
+      },
+      type: QueryTypes.SELECT,
+    },
+  );
+  assert.equal(rows[0]?.status, 'APPROVED');
+  return enrollmentRequest.requestId;
+};
+
 const testDatabases = createIntegrationDatabases(3, 2);
 
 if (testDatabases === null) {
@@ -261,13 +310,20 @@ if (testDatabases === null) {
     skip: 'Dedicated runtime, migration and platform admin test URLs are not configured.',
   });
 } else {
-  const { migrationDatabase, platformAdminRuntimeDatabase, runtimeDatabase } = testDatabases;
+  const {
+    migrationDatabase,
+    platformAdminOperatorDatabase,
+    platformAdminRuntimeDatabase,
+    runtimeDatabase,
+  } = testDatabases;
 
   try {
     await migrationDatabase.authenticate();
     await runtimeDatabase.authenticate();
+    await platformAdminOperatorDatabase.authenticate();
     await platformAdminRuntimeDatabase.authenticate();
     await assertRuntimeConnectionSecurity(runtimeDatabase);
+    await assertPlatformAdminOperatorConnectionSecurity(platformAdminOperatorDatabase);
     await assertPlatformAdminRuntimeConnectionSecurity(platformAdminRuntimeDatabase);
     await createMigrator(migrationDatabase).up();
 
@@ -366,7 +422,7 @@ if (testDatabases === null) {
         subject: `missing-${randomUUID()}`,
       };
       await request(
-        createApp({
+        createPlatformAdminTestApp({
           logger: silentLogger,
           platformAdminAuthenticationService: createService(
             platformAdminRuntimeDatabase,
@@ -386,7 +442,7 @@ if (testDatabases === null) {
         ),
       );
       await request(
-        createApp({
+        createPlatformAdminTestApp({
           logger: silentLogger,
           platformAdminAuthenticationService: createService(platformAdminRuntimeDatabase, disabled),
         }),
@@ -428,7 +484,10 @@ if (testDatabases === null) {
       await assert.rejects(service.authenticateSession(secondLogin.sessionToken));
 
       const thirdLogin = await login(platformAdminRuntimeDatabase, admin);
-      const app = createApp({ logger: silentLogger, platformAdminAuthenticationService: service });
+      const app = createPlatformAdminTestApp({
+        logger: silentLogger,
+        platformAdminAuthenticationService: service,
+      });
       await request(app)
         .post('/v1/platform-admin/auth/logout')
         .set('Authorization', `Bearer ${thirdLogin.sessionToken}`)
@@ -546,6 +605,409 @@ if (testDatabases === null) {
       );
     });
 
+    await test('first passkey enrollment requires one idempotent out-of-band approval', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'first-enrollment-control');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+      const secondLogin = await login(platformAdminRuntimeDatabase, admin);
+      const firstSession = await authenticationService.authenticateSession(firstLogin.sessionToken);
+      const secondSession = await authenticationService.authenticateSession(
+        secondLogin.sessionToken,
+      );
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        new FakeWebAuthnAdapter(),
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const requestMetadata = {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      };
+      const requests = await Promise.all([
+        service.requestFirstEnrollment(firstSession, requestMetadata),
+        service.requestFirstEnrollment(firstSession, {
+          ...requestMetadata,
+          requestId: randomUUID(),
+        }),
+      ]);
+      assert.equal(requests[0]?.requestId, requests[1]?.requestId);
+      assert.equal(requests[0]?.status, 'PENDING');
+      const enrollmentRequestId = requests[0]?.requestId;
+      assert.ok(enrollmentRequestId);
+
+      const approvalStatement = `SELECT request_status AS status
+        FROM metas.approve_platform_admin_first_enrollment(
+          CAST(:requestId AS UUID), :approvalExpiresAt, CAST(:operationRequestId AS UUID)
+        )`;
+      const approvalExpiresAt = new Date(Date.now() + 300_000);
+      const approvals = await Promise.all(
+        Array.from({ length: 2 }, () =>
+          platformAdminOperatorDatabase.query<{ status: string }>(approvalStatement, {
+            replacements: {
+              approvalExpiresAt,
+              operationRequestId: randomUUID(),
+              requestId: enrollmentRequestId,
+            },
+            type: QueryTypes.SELECT,
+          }),
+        ),
+      );
+      assert.deepEqual(
+        approvals.map((rows) => rows[0]?.status),
+        ['APPROVED', 'APPROVED'],
+      );
+
+      const operationalStatus = await platformAdminOperatorDatabase.query<{ status: string }>(
+        `SELECT request_status AS status
+         FROM metas.get_platform_admin_first_enrollment_request_status(
+           CAST(:requestId AS UUID)
+         )`,
+        {
+          replacements: { requestId: enrollmentRequestId },
+          type: QueryTypes.SELECT,
+        },
+      );
+      assert.equal(operationalStatus[0]?.status, 'APPROVED');
+
+      await assert.rejects(
+        migrationDatabase.query(approvalStatement, {
+          replacements: {
+            approvalExpiresAt,
+            operationRequestId: randomUUID(),
+            requestId: enrollmentRequestId,
+          },
+        }),
+      );
+      await assert.rejects(
+        withMigrationOwner(migrationDatabase, (transaction) =>
+          migrationDatabase.query(approvalStatement, {
+            replacements: {
+              approvalExpiresAt,
+              operationRequestId: randomUUID(),
+              requestId: enrollmentRequestId,
+            },
+            transaction,
+          }),
+        ),
+      );
+      await assert.rejects(
+        withMigrationOwner(migrationDatabase, (transaction) =>
+          migrationDatabase.query(
+            `SELECT * FROM metas.get_platform_admin_first_enrollment_request_status(
+              CAST(:requestId AS UUID)
+            )`,
+            {
+              replacements: { requestId: enrollmentRequestId },
+              transaction,
+            },
+          ),
+        ),
+      );
+
+      await assert.rejects(
+        platformAdminRuntimeDatabase.query(approvalStatement, {
+          replacements: {
+            approvalExpiresAt,
+            operationRequestId: randomUUID(),
+            requestId: enrollmentRequestId,
+          },
+        }),
+      );
+      await assert.rejects(
+        runtimeDatabase.query(approvalStatement, {
+          replacements: {
+            approvalExpiresAt,
+            operationRequestId: randomUUID(),
+            requestId: enrollmentRequestId,
+          },
+        }),
+      );
+      await assert.rejects(service.createRegistrationOptions(secondSession));
+
+      const options = await service.createRegistrationOptions(firstSession);
+      await assert.rejects(service.createRegistrationOptions(firstSession));
+      const persisted = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          approvalAuditCount: string;
+          consumptionAuditCount: string;
+          firstEnrollmentRequestId: string;
+          requestAuditCount: string;
+          status: string;
+        }>(
+          `SELECT
+             enrollment_request.status,
+             challenge.first_enrollment_request_id AS "firstEnrollmentRequestId",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+               WHERE audit.action = 'FIRST_ENROLLMENT_REQUESTED'
+                 AND audit.target_id = enrollment_request.id) AS "requestAuditCount",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+               WHERE audit.action = 'FIRST_ENROLLMENT_APPROVED'
+                 AND audit.target_id = enrollment_request.id) AS "approvalAuditCount",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+               WHERE audit.action = 'FIRST_ENROLLMENT_CONSUMED'
+                 AND audit.target_id = enrollment_request.id) AS "consumptionAuditCount"
+           FROM metas.platform_admin_first_enrollment_requests enrollment_request
+           JOIN metas.platform_admin_webauthn_challenges challenge
+             ON challenge.first_enrollment_request_id = enrollment_request.id
+           WHERE enrollment_request.id = :requestId`,
+          {
+            replacements: { requestId: enrollmentRequestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(persisted[0], {
+        approvalAuditCount: '1',
+        consumptionAuditCount: '1',
+        firstEnrollmentRequestId: enrollmentRequestId,
+        requestAuditCount: '1',
+        status: 'CONSUMED',
+      });
+      assert.ok(options.challengeId);
+    });
+
+    await test('superseded first enrollment requests are revoked once and audited atomically', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'first-enrollment-revocation');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+      const secondLogin = await login(platformAdminRuntimeDatabase, admin);
+      const thirdLogin = await login(platformAdminRuntimeDatabase, admin);
+      const firstSession = await authenticationService.authenticateSession(firstLogin.sessionToken);
+      const secondSession = await authenticationService.authenticateSession(
+        secondLogin.sessionToken,
+      );
+      const thirdSession = await authenticationService.authenticateSession(thirdLogin.sessionToken);
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        new FakeWebAuthnAdapter(),
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      const first = await service.requestFirstEnrollment(firstSession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      const second = await service.requestFirstEnrollment(secondSession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      const concurrent = await Promise.all([
+        service.requestFirstEnrollment(thirdSession, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: 'integration-test',
+        }),
+        service.requestFirstEnrollment(thirdSession, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: 'integration-test',
+        }),
+      ]);
+      assert.equal(concurrent[0]?.requestId, concurrent[1]?.requestId);
+
+      const persisted = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          reason: string;
+          requestId: string;
+          revokeAuditCount: string;
+          status: string;
+        }>(
+          `SELECT enrollment_request.id AS "requestId", enrollment_request.status,
+             count(audit.id)::TEXT AS "revokeAuditCount",
+             COALESCE(max(audit.metadata->>'reason'), '') AS reason
+           FROM metas.platform_admin_first_enrollment_requests enrollment_request
+           LEFT JOIN metas.platform_admin_audit_events audit
+             ON audit.target_id = enrollment_request.id
+            AND audit.action = 'FIRST_ENROLLMENT_REVOKED'
+           WHERE enrollment_request.id IN (:firstRequestId, :secondRequestId)
+           GROUP BY enrollment_request.id, enrollment_request.status
+           ORDER BY enrollment_request.id`,
+          {
+            replacements: { firstRequestId: first.requestId, secondRequestId: second.requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(
+        persisted.map(({ reason, revokeAuditCount, status }) => ({
+          reason,
+          revokeAuditCount,
+          status,
+        })),
+        [
+          {
+            reason: 'SUPERSEDED_BY_NEW_SESSION',
+            revokeAuditCount: '1',
+            status: 'REVOKED',
+          },
+          {
+            reason: 'SUPERSEDED_BY_NEW_SESSION',
+            revokeAuditCount: '1',
+            status: 'REVOKED',
+          },
+        ],
+      );
+
+      const rollbackLogin = await login(platformAdminRuntimeDatabase, admin);
+      const rollbackSession = await authenticationService.authenticateSession(
+        rollbackLogin.sessionToken,
+      );
+      await assert.rejects(
+        withPlatformAdminDatabaseContext(
+          platformAdminRuntimeDatabase,
+          {
+            platformAdminId: rollbackSession.platformAdminId,
+            sessionId: rollbackSession.sessionId,
+          },
+          async (transaction) => {
+            await platformAdminRuntimeDatabase.query(
+              `SELECT * FROM metas.request_platform_admin_first_enrollment(
+                CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                CAST(:operationRequestId AS UUID), NULL, 'integration-test'
+              )`,
+              {
+                replacements: {
+                  operationRequestId: randomUUID(),
+                },
+                transaction,
+              },
+            );
+            throw new Error('rollback-test');
+          },
+        ),
+        /rollback-test/u,
+      );
+      const afterRollback = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ auditCount: string; status: string }>(
+          `SELECT enrollment_request.status,
+             count(audit.id)::TEXT AS "auditCount"
+           FROM metas.platform_admin_first_enrollment_requests enrollment_request
+           LEFT JOIN metas.platform_admin_audit_events audit
+             ON audit.target_id = enrollment_request.id
+            AND audit.action = 'FIRST_ENROLLMENT_REVOKED'
+           WHERE enrollment_request.id = :requestId
+           GROUP BY enrollment_request.status`,
+          {
+            replacements: { requestId: concurrent[0]?.requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(afterRollback[0], { auditCount: '0', status: 'PENDING' });
+
+      await service.requestFirstEnrollment(rollbackSession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      const afterRetry = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ auditCount: string; reason: string; status: string }>(
+          `SELECT enrollment_request.status,
+             count(audit.id)::TEXT AS "auditCount",
+             COALESCE(max(audit.metadata->>'reason'), '') AS reason
+           FROM metas.platform_admin_first_enrollment_requests enrollment_request
+           LEFT JOIN metas.platform_admin_audit_events audit
+             ON audit.target_id = enrollment_request.id
+            AND audit.action = 'FIRST_ENROLLMENT_REVOKED'
+           WHERE enrollment_request.id = :requestId
+           GROUP BY enrollment_request.status`,
+          {
+            replacements: { requestId: concurrent[0]?.requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(afterRetry[0], {
+        auditCount: '1',
+        reason: 'SUPERSEDED_BY_NEW_SESSION',
+        status: 'REVOKED',
+      });
+    });
+
+    await test('expired or stale first enrollment approvals cannot create a challenge', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'first-enrollment-expiry');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const loginResult = await login(platformAdminRuntimeDatabase, admin);
+      const session = await authenticationService.authenticateSession(loginResult.sessionToken);
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        new FakeWebAuthnAdapter(),
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+
+      const expiredRequestId = await authorizeFirstEnrollment(
+        platformAdminOperatorDatabase,
+        service,
+        session,
+      );
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admin_first_enrollment_requests
+           SET created_at = now() - interval '10 minutes',
+               expires_at = now() + interval '4 minutes',
+               approved_at = now() - interval '6 minutes',
+               approval_expires_at = now() - interval '1 minute'
+           WHERE id = :requestId`,
+          { replacements: { requestId: expiredRequestId }, transaction },
+        ),
+      );
+      await assert.rejects(service.createRegistrationOptions(session));
+
+      const staleRequestId = await authorizeFirstEnrollment(
+        platformAdminOperatorDatabase,
+        service,
+        session,
+      );
+      await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query(
+          `UPDATE metas.platform_admin_sessions
+           SET token_version = token_version + 1
+           WHERE id = :sessionId`,
+          { replacements: { sessionId: session.sessionId }, transaction },
+        ),
+      );
+      await assert.rejects(service.createRegistrationOptions(session));
+      const status = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ status: string }>(
+          `SELECT status FROM metas.platform_admin_first_enrollment_requests
+           WHERE id = :requestId`,
+          {
+            replacements: { requestId: staleRequestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.equal(status[0]?.status, 'APPROVED');
+    });
+
     await test('WebAuthn enrollment, MFA, replay protection and token rotation are enforced', async () => {
       const admin = await provisionAdmin(migrationDatabase, 'webauthn');
       const authenticationService = createService(platformAdminRuntimeDatabase, admin);
@@ -560,6 +1022,7 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
@@ -567,6 +1030,16 @@ if (testDatabases === null) {
       );
 
       await assert.rejects(webAuthnService.createAuthenticationOptions(googleOnlySession));
+      await assert.rejects(
+        webAuthnService.createRegistrationOptions(googleOnlySession),
+        (error: unknown) =>
+          error instanceof AppError && error.code === 'FIRST_ENROLLMENT_APPROVAL_REQUIRED',
+      );
+      await authorizeFirstEnrollment(
+        platformAdminOperatorDatabase,
+        webAuthnService,
+        googleOnlySession,
+      );
       const options = await webAuthnService.createRegistrationOptions(googleOnlySession);
       const registration = await webAuthnService.verifyRegistration(
         googleOnlySession,
@@ -733,11 +1206,13 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
         },
       );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, webAuthnService, firstSession);
       const options = await webAuthnService.createRegistrationOptions(firstSession);
       await assert.rejects(
         webAuthnService.verifyRegistration(
@@ -762,11 +1237,13 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
         },
       );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, webAuthnService, session);
       const wrongPurpose = await webAuthnService.createRegistrationOptions(session);
       await assert.rejects(
         withPlatformAdminDatabaseContext(
@@ -785,6 +1262,7 @@ if (testDatabases === null) {
         ),
       );
 
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, webAuthnService, session);
       const expired = await webAuthnService.createRegistrationOptions(session);
       await withMigrationOwner(migrationDatabase, (transaction) =>
         migrationDatabase.query(
@@ -805,6 +1283,7 @@ if (testDatabases === null) {
         ),
       );
 
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, webAuthnService, session);
       const concurrent = await webAuthnService.createRegistrationOptions(session);
       const attempts = await Promise.allSettled(
         Array.from({ length: 2 }, () =>
@@ -835,11 +1314,13 @@ if (testDatabases === null) {
           {
             allowedOrigins: ['https://admin.example.test'],
             challengeTtlSeconds: 300,
+            firstEnrollmentPendingTtlSeconds: 900,
             rpId: 'admin.example.test',
             rpName: 'Metas Admin',
             stepUpTtlSeconds: 300,
           },
         );
+        await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, session);
         const options = await service.createRegistrationOptions(session);
         try {
           const value = await service.verifyRegistration(
@@ -879,11 +1360,13 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
         },
       );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, googleOnlySession);
       const registrationOptions = await service.createRegistrationOptions(googleOnlySession);
       const enrollment = await service.verifyRegistration(
         googleOnlySession,
@@ -952,6 +1435,7 @@ if (testDatabases === null) {
       const configuration = {
         allowedOrigins: ['https://admin.example.test'],
         challengeTtlSeconds: 300,
+        firstEnrollmentPendingTtlSeconds: 900,
         rpId: 'admin.example.test',
         rpName: 'Metas Admin',
         stepUpTtlSeconds: 300,
@@ -960,6 +1444,11 @@ if (testDatabases === null) {
         platformAdminRuntimeDatabase,
         enrollmentAdapter,
         configuration,
+      );
+      await authorizeFirstEnrollment(
+        platformAdminOperatorDatabase,
+        enrollmentService,
+        googleOnlySession,
       );
       const enrollmentOptions =
         await enrollmentService.createRegistrationOptions(googleOnlySession);
@@ -1030,11 +1519,13 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
         },
       );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, session);
       const options = await service.createRegistrationOptions(session);
       await withMigrationOwner(migrationDatabase, (transaction) =>
         migrationDatabase.query(
@@ -1075,11 +1566,13 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
         },
       );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, session);
       const options = await service.createRegistrationOptions(session);
       const enrollment = await service.verifyRegistration(
         session,
@@ -1115,11 +1608,13 @@ if (testDatabases === null) {
         {
           allowedOrigins: ['https://admin.example.test'],
           challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
           rpId: 'admin.example.test',
           rpName: 'Metas Admin',
           stepUpTtlSeconds: 300,
         },
       );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, session);
       const options = await service.createRegistrationOptions(session);
       await assert.rejects(
         service.verifyRegistration(session, options.challengeId, registrationResponse, null, {
@@ -1135,6 +1630,7 @@ if (testDatabases === null) {
 
       adapter.rejectRegistration = false;
       adapter.registrationUserVerified = false;
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, session);
       const registrationWithoutUserVerification = await service.createRegistrationOptions(session);
       await assert.rejects(
         service.verifyRegistration(
@@ -1151,6 +1647,7 @@ if (testDatabases === null) {
       );
 
       adapter.registrationUserVerified = true;
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, session);
       const validRegistrationOptions = await service.createRegistrationOptions(session);
       await service.verifyRegistration(
         session,
@@ -1186,6 +1683,14 @@ if (testDatabases === null) {
     });
 
     await test('platform admin role, RLS, function grants and audit log remain least-privileged', async () => {
+      await assert.rejects(assertPlatformAdminOperatorConnectionSecurity(migrationDatabase));
+      await assert.rejects(assertPlatformAdminOperatorConnectionSecurity(runtimeDatabase));
+      await assert.rejects(
+        assertPlatformAdminOperatorConnectionSecurity(platformAdminRuntimeDatabase),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query('SELECT * FROM metas.get_platform_admin_me()'),
+      );
       const roles = await migrationDatabase.query<{
         bypassRls: boolean;
         canCreateDatabase: boolean;
@@ -1234,7 +1739,7 @@ if (testDatabases === null) {
          ORDER BY relation.relname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(tables.length, 6);
+      assert.equal(tables.length, 7);
       assert.ok(
         tables.every(
           ({ forceRls, owner, rls }) => forceRls && rls && owner === 'metas_migration_owner',
@@ -1246,6 +1751,7 @@ if (testDatabases === null) {
         'platform_admin_identities',
         'platform_admin_sessions',
         'platform_admin_audit_events',
+        'platform_admin_first_enrollment_requests',
         'platform_admin_webauthn_challenges',
         'platform_admin_webauthn_credentials',
       ]) {
@@ -1270,6 +1776,7 @@ if (testDatabases === null) {
         appCanExecute: boolean;
         functionName: string;
         migrationCanExecute: boolean;
+        operatorCanExecute: boolean;
         owner: string;
         platformCanExecute: boolean;
         publicCanExecute: boolean;
@@ -1288,6 +1795,9 @@ if (testDatabases === null) {
           has_function_privilege(
             'metas_migration_runner', procedure.oid, 'EXECUTE'
           ) AS "migrationCanExecute",
+          has_function_privilege(
+            'metas_platform_admin_operator', procedure.oid, 'EXECUTE'
+          ) AS "operatorCanExecute",
           procedure.proconfig AS "searchPath"
          FROM pg_proc procedure
          JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
@@ -1305,12 +1815,15 @@ if (testDatabases === null) {
              'consume_platform_admin_webauthn_challenge',
              'register_platform_admin_webauthn_credential',
              'complete_platform_admin_webauthn_authentication',
-             'record_platform_admin_webauthn_failure'
+             'record_platform_admin_webauthn_failure',
+             'request_platform_admin_first_enrollment',
+             'get_platform_admin_first_enrollment_request_status',
+             'approve_platform_admin_first_enrollment'
            )
          ORDER BY procedure.proname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(functions.length, 12);
+      assert.equal(functions.length, 15);
       assert.ok(
         functions.every(
           ({ appCanExecute, owner, publicCanExecute, searchPath }) =>
@@ -1322,9 +1835,18 @@ if (testDatabases === null) {
       );
       const byName = new Map(functions.map((item) => [item.functionName, item]));
       assert.equal(byName.get('bootstrap_platform_admin')?.migrationCanExecute, true);
+      assert.equal(byName.get('bootstrap_platform_admin')?.operatorCanExecute, false);
       assert.equal(byName.get('bootstrap_platform_admin')?.platformCanExecute, false);
       assert.equal(byName.get('require_platform_admin_context')?.migrationCanExecute, false);
       assert.equal(byName.get('require_platform_admin_context')?.platformCanExecute, false);
+      for (const functionName of [
+        'approve_platform_admin_first_enrollment',
+        'get_platform_admin_first_enrollment_request_status',
+      ]) {
+        assert.equal(byName.get(functionName)?.migrationCanExecute, false);
+        assert.equal(byName.get(functionName)?.operatorCanExecute, true);
+        assert.equal(byName.get(functionName)?.platformCanExecute, false);
+      }
       for (const functionName of [
         'authenticate_platform_admin_google',
         'get_platform_admin_me',
@@ -1336,9 +1858,11 @@ if (testDatabases === null) {
         'register_platform_admin_webauthn_credential',
         'complete_platform_admin_webauthn_authentication',
         'record_platform_admin_webauthn_failure',
+        'request_platform_admin_first_enrollment',
       ]) {
         assert.equal(byName.get(functionName)?.platformCanExecute, true);
         assert.equal(byName.get(functionName)?.migrationCanExecute, false);
+        assert.equal(byName.get(functionName)?.operatorCanExecute, false);
       }
     });
 
@@ -1374,6 +1898,7 @@ if (testDatabases === null) {
     });
   } finally {
     await Promise.all([
+      disconnectDatabase(platformAdminOperatorDatabase),
       disconnectDatabase(platformAdminRuntimeDatabase),
       disconnectDatabase(runtimeDatabase),
       disconnectDatabase(migrationDatabase),

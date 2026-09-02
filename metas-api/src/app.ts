@@ -17,11 +17,8 @@ import { createEmployeeRouter } from './modules/employees/employee.routes.js';
 import type { EmployeeService } from './modules/employees/employee.types.js';
 import { createGoalRouter } from './modules/goals/goal.routes.js';
 import type { GoalService } from './modules/goals/goal.types.js';
-import {
-  createPlatformAdminRouter,
-  type PlatformAdminRateLimitOptions,
-  type PlatformAdminWebAuthnRateLimitOptions,
-} from './modules/platformAdmin/platformAdmin.routes.js';
+import { createPlatformAdminRouter } from './modules/platformAdmin/platformAdmin.routes.js';
+import type { PlatformAdminRateLimiter } from './modules/platformAdmin/platformAdminRateLimiter.js';
 import type { PlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdmin.types.js';
 import type { PlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthn.types.js';
 import type { RealtimePublisher } from './realtime/realtime.types.js';
@@ -38,9 +35,8 @@ export interface AppOptions {
   goalService?: GoalService;
   logger?: Logger;
   platformAdminAuthenticationService?: PlatformAdminAuthenticationService;
-  platformAdminRateLimit?: PlatformAdminRateLimitOptions;
+  platformAdminRateLimiter?: PlatformAdminRateLimiter;
   platformAdminWebAuthnService?: PlatformAdminWebAuthnService;
-  platformAdminWebAuthnRateLimit?: PlatformAdminWebAuthnRateLimitOptions;
   realtimePublisher?: RealtimePublisher;
   trustProxyHops?: number;
 }
@@ -71,19 +67,17 @@ export const createApp = (options: AppOptions = {}): express.Express => {
 
   app.use('/health', healthRouter);
   if (options.platformAdminAuthenticationService) {
+    if (!options.platformAdminRateLimiter) {
+      throw new Error('Platform admin rate limiter is required.');
+    }
     app.use(
       '/v1/platform-admin',
       createPlatformAdminRouter({
         authenticationService: options.platformAdminAuthenticationService,
         logger,
+        rateLimiter: options.platformAdminRateLimiter,
         ...(options.platformAdminWebAuthnService
           ? { webAuthnService: options.platformAdminWebAuthnService }
-          : {}),
-        ...(options.platformAdminWebAuthnRateLimit
-          ? { webAuthnRateLimitOptions: options.platformAdminWebAuthnRateLimit }
-          : {}),
-        ...(options.platformAdminRateLimit
-          ? { rateLimitOptions: options.platformAdminRateLimit }
           : {}),
       }),
     );

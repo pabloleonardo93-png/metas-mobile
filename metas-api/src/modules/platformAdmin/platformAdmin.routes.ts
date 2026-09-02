@@ -1,5 +1,4 @@
 import { Router, type Request, type RequestHandler } from 'express';
-import { rateLimit } from 'express-rate-limit';
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import { z } from 'zod';
 
@@ -11,6 +10,11 @@ import type {
   PlatformAdminRequestMetadata,
   PlatformAdminSession,
 } from './platformAdmin.types.js';
+import {
+  PlatformAdminRateLimitStoreUnavailableError,
+  type PlatformAdminRateLimiter,
+  type PlatformAdminRateLimitOperation,
+} from './platformAdminRateLimiter.js';
 import type { PlatformAdminWebAuthnService } from './platformAdminWebAuthn.types.js';
 
 const googleLoginSchema = z
@@ -80,22 +84,11 @@ const authenticationVerificationSchema = z
   })
   .strict();
 
-export interface PlatformAdminRateLimitOptions {
-  limit: number;
-  windowMs: number;
-}
-
-export interface PlatformAdminWebAuthnRateLimitOptions {
-  options: PlatformAdminRateLimitOptions;
-  verification: PlatformAdminRateLimitOptions;
-}
-
 interface PlatformAdminRouterOptions {
   authenticationService: PlatformAdminAuthenticationService;
   logger: Logger;
-  rateLimitOptions?: PlatformAdminRateLimitOptions;
+  rateLimiter: PlatformAdminRateLimiter;
   webAuthnService?: PlatformAdminWebAuthnService;
-  webAuthnRateLimitOptions?: PlatformAdminWebAuthnRateLimitOptions;
 }
 
 const asyncHandler =
@@ -119,55 +112,66 @@ const metadataFromRequest = (request: Request): PlatformAdminRequestMetadata => 
   userAgent: request.get('user-agent')?.slice(0, 512) ?? null,
 });
 
+const clientNetworkIdentity = (request: Request): string => request.ip || 'unresolved';
+
+const authenticatedRateLimitIdentity = (request: Request): readonly string[] => {
+  const session = requireSession(request);
+  return [session.platformAdminId, session.sessionId, clientNetworkIdentity(request)];
+};
+
 export const createPlatformAdminRouter = ({
   authenticationService,
   logger,
-  rateLimitOptions = { limit: 5, windowMs: 15 * 60 * 1000 },
+  rateLimiter,
   webAuthnService,
-  webAuthnRateLimitOptions = {
-    options: { limit: 20, windowMs: 15 * 60 * 1000 },
-    verification: { limit: 10, windowMs: 15 * 60 * 1000 },
-  },
 }: PlatformAdminRouterOptions): Router => {
   const router = Router();
   const authenticateSession = createAuthenticatePlatformAdminSession(authenticationService);
-  const loginRateLimit = rateLimit({
-    legacyHeaders: false,
-    limit: rateLimitOptions.limit,
-    standardHeaders: 'draft-8',
-    windowMs: rateLimitOptions.windowMs,
-    handler: (request, response) => {
-      logger.info('PLATFORM_ADMIN_LOGIN_RATE_LIMITED', { requestId: request.requestId });
-      response.status(429).json({
-        code: 'TOO_MANY_REQUESTS',
-        message: 'Muitas tentativas. Tente novamente mais tarde.',
-        requestId: request.requestId,
-      });
-    },
-  });
-
-  const createWebAuthnRateLimit = (
-    event: string,
-    options: PlatformAdminRateLimitOptions,
-  ): RequestHandler =>
-    rateLimit({
-      legacyHeaders: false,
-      limit: options.limit,
-      standardHeaders: 'draft-8',
-      windowMs: options.windowMs,
-      handler: (request, response) => {
-        logger.info(event, { requestId: request.requestId });
-        response.status(429).json({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Muitas tentativas. Tente novamente mais tarde.',
-          requestId: request.requestId,
+  const createRateLimitGuard =
+    (
+      operation: PlatformAdminRateLimitOperation,
+      identity: (request: Request) => readonly string[],
+    ): RequestHandler =>
+    (request, response, next) => {
+      void rateLimiter
+        .consume(operation, identity(request))
+        .then((decision) => {
+          if (decision.allowed) {
+            next();
+            return;
+          }
+          logger.info('PLATFORM_ADMIN_RATE_LIMITED', {
+            operation,
+            requestId: request.requestId,
+          });
+          response.setHeader('Retry-After', String(decision.retryAfterSeconds));
+          response.status(429).json({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Muitas tentativas. Tente novamente mais tarde.',
+            requestId: request.requestId,
+          });
+        })
+        .catch((error: unknown) => {
+          if (error instanceof PlatformAdminRateLimitStoreUnavailableError) {
+            next(
+              new AppError(
+                503,
+                'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE',
+                'A autentica\u00e7\u00e3o administrativa est\u00e1 temporariamente indispon\u00edvel.',
+              ),
+            );
+            return;
+          }
+          next(error);
         });
-      },
-    });
+    };
+
+  const authenticatedRateLimit = (operation: PlatformAdminRateLimitOperation): RequestHandler =>
+    createRateLimitGuard(operation, authenticatedRateLimitIdentity);
 
   router.post(
     '/auth/google',
-    loginRateLimit,
+    createRateLimitGuard('GOOGLE_LOGIN', (request) => [clientNetworkIdentity(request)]),
     asyncHandler(async (request, response) => {
       const parsed = googleLoginSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -218,12 +222,37 @@ export const createPlatformAdminRouter = ({
 
   if (webAuthnService) {
     router.post(
+      '/mfa/first-enrollment/request',
+      authenticateSession,
+      authenticatedRateLimit('FIRST_ENROLLMENT_REQUEST'),
+      asyncHandler(async (request, response) => {
+        if (
+          !z
+            .object({})
+            .strict()
+            .safeParse(request.body ?? {}).success
+        ) {
+          throw new AppError(
+            422,
+            'INVALID_INPUT',
+            'Dados da solicita\u00e7\u00e3o inv\u00e1lidos.',
+          );
+        }
+        response
+          .status(202)
+          .json(
+            await webAuthnService.requestFirstEnrollment(
+              requireSession(request),
+              metadataFromRequest(request),
+            ),
+          );
+      }),
+    );
+
+    router.post(
       '/mfa/webauthn/registration/options',
       authenticateSession,
-      createWebAuthnRateLimit(
-        'PLATFORM_ADMIN_WEBAUTHN_REGISTRATION_OPTIONS_RATE_LIMITED',
-        webAuthnRateLimitOptions.options,
-      ),
+      authenticatedRateLimit('WEBAUTHN_REGISTRATION_OPTIONS'),
       asyncHandler(async (request, response) => {
         if (
           !z
@@ -242,10 +271,7 @@ export const createPlatformAdminRouter = ({
     router.post(
       '/mfa/webauthn/registration/verify',
       authenticateSession,
-      createWebAuthnRateLimit(
-        'PLATFORM_ADMIN_WEBAUTHN_REGISTRATION_VERIFY_RATE_LIMITED',
-        webAuthnRateLimitOptions.verification,
-      ),
+      authenticatedRateLimit('WEBAUTHN_REGISTRATION_VERIFY'),
       asyncHandler(async (request, response) => {
         const parsed = registrationVerificationSchema.safeParse(request.body);
         if (!parsed.success) {
@@ -269,10 +295,7 @@ export const createPlatformAdminRouter = ({
     router.post(
       '/mfa/webauthn/authentication/options',
       authenticateSession,
-      createWebAuthnRateLimit(
-        'PLATFORM_ADMIN_WEBAUTHN_AUTHENTICATION_OPTIONS_RATE_LIMITED',
-        webAuthnRateLimitOptions.options,
-      ),
+      authenticatedRateLimit('WEBAUTHN_AUTHENTICATION_OPTIONS'),
       asyncHandler(async (request, response) => {
         if (
           !z
@@ -291,10 +314,7 @@ export const createPlatformAdminRouter = ({
     router.post(
       '/mfa/webauthn/authentication/verify',
       authenticateSession,
-      createWebAuthnRateLimit(
-        'PLATFORM_ADMIN_WEBAUTHN_AUTHENTICATION_VERIFY_RATE_LIMITED',
-        webAuthnRateLimitOptions.verification,
-      ),
+      authenticatedRateLimit('WEBAUTHN_AUTHENTICATION_VERIFY'),
       asyncHandler(async (request, response) => {
         const parsed = authenticationVerificationSchema.safeParse(request.body);
         if (!parsed.success) {

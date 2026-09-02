@@ -18,6 +18,7 @@ import type {
 import type { PlatformAdminWebAuthnAdapter } from './platformAdminWebAuthnAdapter.js';
 import type {
   PlatformAdminWebAuthnAuthenticationOptionsResult,
+  PlatformAdminFirstEnrollmentRequestResult,
   PlatformAdminWebAuthnOptionsResult,
   PlatformAdminWebAuthnPurpose,
   PlatformAdminWebAuthnService,
@@ -47,9 +48,17 @@ interface VerificationDatabaseRow {
 export interface PlatformAdminWebAuthnConfiguration {
   allowedOrigins: readonly string[];
   challengeTtlSeconds: number;
+  firstEnrollmentPendingTtlSeconds: number;
   rpId: string;
   rpName: string;
   stepUpTtlSeconds: number;
+}
+
+interface FirstEnrollmentRequestDatabaseRow {
+  approvalExpiresAt: Date | null;
+  expiresAt: Date;
+  requestId: string;
+  status: 'APPROVED' | 'PENDING';
 }
 
 const unauthorized = (): AppError =>
@@ -93,6 +102,58 @@ export class PostgresPlatformAdminWebAuthnService implements PlatformAdminWebAut
     private readonly adapter: PlatformAdminWebAuthnAdapter,
     private readonly configuration: PlatformAdminWebAuthnConfiguration,
   ) {}
+
+  public async requestFirstEnrollment(
+    session: PlatformAdminSession,
+    metadata: PlatformAdminRequestMetadata,
+  ): Promise<PlatformAdminFirstEnrollmentRequestResult> {
+    const expiresAt = new Date(
+      Date.now() + this.configuration.firstEnrollmentPendingTtlSeconds * 1000,
+    );
+    try {
+      const rows = await this.withSessionContext(session, (transaction) =>
+        this.database.query<FirstEnrollmentRequestDatabaseRow>(
+          `SELECT
+             enrollment_request_id AS "requestId",
+             request_status AS status,
+             request_expires_at AS "expiresAt",
+             approval_expires_at AS "approvalExpiresAt"
+           FROM metas.request_platform_admin_first_enrollment(
+             :expiresAt, CAST(:requestId AS UUID), CAST(:ipAddress AS INET), :userAgent
+           )`,
+          {
+            replacements: {
+              expiresAt,
+              ipAddress: metadata.ipAddress,
+              requestId: metadata.requestId,
+              userAgent: metadata.userAgent,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      const enrollmentRequest = rows[0];
+      if (!enrollmentRequest) {
+        throw unauthorized();
+      }
+      return {
+        approvalExpiresAt: enrollmentRequest.approvalExpiresAt?.toISOString() ?? null,
+        expiresAt: enrollmentRequest.expiresAt.toISOString(),
+        requestId: enrollmentRequest.requestId,
+        status: enrollmentRequest.status,
+      };
+    } catch (error: unknown) {
+      if (databaseErrorContains(error, 'FIRST_ENROLLMENT_NOT_ALLOWED')) {
+        throw new AppError(
+          409,
+          'FIRST_ENROLLMENT_NOT_ALLOWED',
+          'O primeiro cadastro de passkey n\u00e3o est\u00e1 dispon\u00edvel para esta sess\u00e3o.',
+        );
+      }
+      throw error;
+    }
+  }
 
   public async createRegistrationOptions(
     session: PlatformAdminSession,
@@ -323,23 +384,35 @@ export class PostgresPlatformAdminWebAuthnService implements PlatformAdminWebAut
     rawChallenge: string,
   ): Promise<string> {
     const expiresAt = new Date(Date.now() + this.configuration.challengeTtlSeconds * 1000);
-    const rows = await this.withSessionContext(session, (transaction) =>
-      this.database.query<{ challengeId: string }>(
-        `SELECT metas.create_platform_admin_webauthn_challenge(
+    let rows: { challengeId: string }[];
+    try {
+      rows = await this.withSessionContext(session, (transaction) =>
+        this.database.query<{ challengeId: string }>(
+          `SELECT metas.create_platform_admin_webauthn_challenge(
           :purpose, :challengeHash, :expiresAt, :stepUpTtlSeconds
         ) AS "challengeId"`,
-        {
-          replacements: {
-            challengeHash: challengeHash(rawChallenge),
-            expiresAt,
-            purpose,
-            stepUpTtlSeconds: this.configuration.stepUpTtlSeconds,
+          {
+            replacements: {
+              challengeHash: challengeHash(rawChallenge),
+              expiresAt,
+              purpose,
+              stepUpTtlSeconds: this.configuration.stepUpTtlSeconds,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
           },
-          transaction,
-          type: QueryTypes.SELECT,
-        },
-      ),
-    );
+        ),
+      );
+    } catch (error: unknown) {
+      if (databaseErrorContains(error, 'WEBAUTHN_FIRST_ENROLLMENT_APPROVAL_REQUIRED')) {
+        throw new AppError(
+          403,
+          'FIRST_ENROLLMENT_APPROVAL_REQUIRED',
+          'A autoriza\u00e7\u00e3o operacional do primeiro cadastro de passkey \u00e9 necess\u00e1ria.',
+        );
+      }
+      throw error;
+    }
     const challengeId = rows[0]?.challengeId;
     if (!challengeId) {
       throw unauthorized();

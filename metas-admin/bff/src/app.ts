@@ -98,6 +98,9 @@ const createErrorHandler =
       return;
     }
     if (error instanceof BffError) {
+      if (error.retryAfterSeconds !== undefined) {
+        response.setHeader('retry-after', String(error.retryAfterSeconds));
+      }
       response.status(error.statusCode).json({
         code: error.code,
         message: error.message,

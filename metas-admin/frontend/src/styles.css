@@ -304,6 +304,20 @@ button {
   gap: 12px;
   margin-top: 8px;
 }
+.enrollment-status {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 0.82rem;
+}
+.enrollment-status strong {
+  color: var(--ink);
+}
 
 .admin-shell {
   display: grid;

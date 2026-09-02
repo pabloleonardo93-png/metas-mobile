@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import request from 'supertest';
 
-import { createApp } from '../src/app.js';
+import { createApp, type AppOptions } from '../src/app.js';
 import type {
   PlatformAdminAuthenticationService,
   PlatformAdminLoginResult,
@@ -11,7 +11,13 @@ import type {
   PlatformAdminRequestMetadata,
   PlatformAdminSession,
 } from '../src/modules/platformAdmin/platformAdmin.types.js';
+import {
+  MemoryPlatformAdminRateLimiter,
+  PlatformAdminRateLimitStoreUnavailableError,
+  type PlatformAdminRateLimitPolicies,
+} from '../src/modules/platformAdmin/platformAdminRateLimiter.js';
 import type {
+  PlatformAdminFirstEnrollmentRequestResult,
   PlatformAdminWebAuthnAuthenticationOptionsResult,
   PlatformAdminWebAuthnService,
   PlatformAdminWebAuthnVerificationResult,
@@ -42,6 +48,7 @@ const loginResult: PlatformAdminLoginResult = {
 const meResult: PlatformAdminMeResult = {
   assuranceLevel: 'GOOGLE_ONLY',
   displayName: 'Admin Teste',
+  hasWebAuthnCredential: false,
   id: platformSession.platformAdminId,
   primaryEmail: 'admin@example.test',
   status: 'ACTIVE',
@@ -90,6 +97,15 @@ class FakePlatformAdminWebAuthnService implements PlatformAdminWebAuthnService {
   public authenticationVerifications = 0;
   public registrationVerifications = 0;
 
+  public requestFirstEnrollment(): Promise<PlatformAdminFirstEnrollmentRequestResult> {
+    return Promise.resolve({
+      approvalExpiresAt: null,
+      expiresAt: '2026-09-01T12:15:00.000Z',
+      requestId: '018f47a1-3d11-7c14-a8bf-0242ac120022',
+      status: 'PENDING',
+    });
+  }
+
   public createAuthenticationOptions(): Promise<PlatformAdminWebAuthnAuthenticationOptionsResult> {
     return Promise.resolve({
       challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120020',
@@ -131,6 +147,24 @@ const logger: Logger = {
   info: (event, context) => logEntries.push({ event, ...(context ? { context } : {}) }),
 };
 
+const createRateLimiter = (
+  overrides: Partial<PlatformAdminRateLimitPolicies> = {},
+): MemoryPlatformAdminRateLimiter => {
+  const policy = { limit: 100, windowMs: 60_000 };
+  return new MemoryPlatformAdminRateLimiter('test-rate-limit-key-secret-32-bytes', {
+    FIRST_ENROLLMENT_REQUEST: policy,
+    GOOGLE_LOGIN: policy,
+    WEBAUTHN_AUTHENTICATION_OPTIONS: policy,
+    WEBAUTHN_AUTHENTICATION_VERIFY: policy,
+    WEBAUTHN_REGISTRATION_OPTIONS: policy,
+    WEBAUTHN_REGISTRATION_VERIFY: policy,
+    ...overrides,
+  });
+};
+
+const createPlatformAdminTestApp = (options: AppOptions) =>
+  createApp({ platformAdminRateLimiter: createRateLimiter(), ...options });
+
 const parseJson = <Result extends object>(text: string): Result => {
   const value: unknown = JSON.parse(text);
   assert.equal(typeof value, 'object');
@@ -139,7 +173,7 @@ const parseJson = <Result extends object>(text: string): Result => {
 };
 
 await test('platform admin login accepts only the strict Google token contract', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
   });
@@ -155,7 +189,9 @@ await test('platform admin login accepts only the strict Google token contract',
 await test('platform admin login returns a minimal contract without logging credentials', async () => {
   logEntries.length = 0;
   const service = new FakePlatformAdminAuthenticationService();
-  const response = await request(createApp({ logger, platformAdminAuthenticationService: service }))
+  const response = await request(
+    createPlatformAdminTestApp({ logger, platformAdminAuthenticationService: service }),
+  )
     .post('/v1/platform-admin/auth/google')
     .send({ idToken: 'google-admin-id-token-private' })
     .expect(200);
@@ -172,7 +208,9 @@ await test('unprovisioned or invalid administrative identities receive a control
     'PLATFORM_ADMIN_ACCESS_NOT_AUTHORIZED',
     'Não foi possível autorizar o acesso administrativo.',
   );
-  const response = await request(createApp({ logger, platformAdminAuthenticationService: service }))
+  const response = await request(
+    createPlatformAdminTestApp({ logger, platformAdminAuthenticationService: service }),
+  )
     .post('/v1/platform-admin/auth/google')
     .send({ idToken: 'x'.repeat(20) })
     .expect(403);
@@ -184,7 +222,7 @@ await test('unprovisioned or invalid administrative identities receive a control
 });
 
 await test('employee sessions cannot authenticate platform admin routes', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
   });
@@ -197,7 +235,7 @@ await test('employee sessions cannot authenticate platform admin routes', async 
 
 await test('platform admin me returns only the administrative DTO', async () => {
   const response = await request(
-    createApp({
+    createPlatformAdminTestApp({
       logger,
       platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
     }),
@@ -215,7 +253,7 @@ await test('platform admin me returns only the administrative DTO', async () => 
 
 await test('platform admin logout authenticates and revokes through its own service', async () => {
   const service = new FakePlatformAdminAuthenticationService();
-  await request(createApp({ logger, platformAdminAuthenticationService: service }))
+  await request(createPlatformAdminTestApp({ logger, platformAdminAuthenticationService: service }))
     .post('/v1/platform-admin/auth/logout')
     .set('Authorization', `Bearer ${platformToken}`)
     .expect(204);
@@ -223,10 +261,12 @@ await test('platform admin logout authenticates and revokes through its own serv
 });
 
 await test('platform admin login uses a dedicated stricter rate limit', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
-    platformAdminRateLimit: { limit: 1, windowMs: 60_000 },
+    platformAdminRateLimiter: createRateLimiter({
+      GOOGLE_LOGIN: { limit: 1, windowMs: 60_000 },
+    }),
   });
 
   await request(app)
@@ -241,7 +281,7 @@ await test('platform admin login uses a dedicated stricter rate limit', async ()
 });
 
 await test('no public HTTP route provisions a platform admin', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
   });
@@ -250,7 +290,7 @@ await test('no public HTTP route provisions a platform admin', async () => {
 });
 
 await test('WebAuthn routes require the dedicated administrative session', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
     platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
@@ -267,7 +307,7 @@ await test('WebAuthn routes require the dedicated administrative session', async
 });
 
 await test('WebAuthn option endpoints reject mass assignment and return server challenges', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
     platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
@@ -285,9 +325,50 @@ await test('WebAuthn option endpoints reject mass assignment and return server c
   assert.equal(parseJson<{ purpose: string }>(response.text).purpose, 'AUTHENTICATION');
 });
 
+await test('first enrollment request is strict and exposes only operational status', async () => {
+  const app = createPlatformAdminTestApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
+  });
+  const path = '/v1/platform-admin/mfa/first-enrollment/request';
+  await request(app)
+    .post(path)
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send({ platformAdminId: platformSession.platformAdminId })
+    .expect(422);
+  const response = await request(app)
+    .post(path)
+    .set('Authorization', `Bearer ${platformToken}`)
+    .send({})
+    .expect(202);
+  const body = parseJson<PlatformAdminFirstEnrollmentRequestResult>(response.text);
+  assert.equal(body.status, 'PENDING');
+  assert.equal(body.requestId, '018f47a1-3d11-7c14-a8bf-0242ac120022');
+  assert.doesNotMatch(response.text, /token|challenge|google|subject|secret/iu);
+});
+
+await test('platform admin routes fail closed when the shared limiter is unavailable', async () => {
+  const app = createPlatformAdminTestApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminRateLimiter: {
+      consume: () => Promise.reject(new PlatformAdminRateLimitStoreUnavailableError()),
+    },
+  });
+  const response = await request(app)
+    .post('/v1/platform-admin/auth/google')
+    .send({ idToken: 'x'.repeat(20) })
+    .expect(503);
+  assert.equal(
+    parseJson<{ code: string }>(response.text).code,
+    'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE',
+  );
+});
+
 await test('WebAuthn verification contracts are strict and never accept authority fields', async () => {
   const webAuthnService = new FakePlatformAdminWebAuthnService();
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
     platformAdminWebAuthnService: webAuthnService,
@@ -323,7 +404,7 @@ await test('WebAuthn verification contracts are strict and never accept authorit
 
 await test('WebAuthn registration verification returns only rotated session assurance data', async () => {
   const webAuthnService = new FakePlatformAdminWebAuthnService();
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
     platformAdminWebAuthnService: webAuthnService,
@@ -355,14 +436,14 @@ await test('WebAuthn registration verification returns only rotated session assu
 });
 
 await test('WebAuthn endpoints have independent administrative rate limiters', async () => {
-  const app = createApp({
+  const app = createPlatformAdminTestApp({
     logger,
     platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
     platformAdminWebAuthnService: new FakePlatformAdminWebAuthnService(),
-    platformAdminWebAuthnRateLimit: {
-      options: { limit: 1, windowMs: 60_000 },
-      verification: { limit: 1, windowMs: 60_000 },
-    },
+    platformAdminRateLimiter: createRateLimiter({
+      WEBAUTHN_AUTHENTICATION_OPTIONS: { limit: 1, windowMs: 60_000 },
+      WEBAUTHN_REGISTRATION_OPTIONS: { limit: 1, windowMs: 60_000 },
+    }),
   });
   const authorization = `Bearer ${platformToken}`;
   await request(app)

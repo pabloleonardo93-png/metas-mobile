@@ -91,4 +91,31 @@ describe('server-side Metas API client', () => {
       expect(String(error)).not.toContain('private.internal');
     }
   });
+
+  it('maps a safe integer Retry-After from the API', async () => {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: 'TOO_MANY_REQUESTS' }), {
+          headers: { 'retry-after': '17' },
+          status: 429,
+        }),
+      ),
+    );
+    const client = createMetasApiClient(config, fetchMock);
+
+    await expect(
+      client.request({
+        method: 'POST',
+        path: '/v1/platform-admin/mfa/first-enrollment/request',
+        requestId: 'request-id',
+        sessionToken: 'opaque-session-token',
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        code: 'TOO_MANY_REQUESTS',
+        retryAfterSeconds: 17,
+        statusCode: 429,
+      }),
+    );
+  });
 });

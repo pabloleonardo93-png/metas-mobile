@@ -62,4 +62,21 @@ describe('adminApi browser boundary', () => {
     await adminApi.logout();
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
+
+  it('returns bounded Retry-After metadata without persisting limiter identity', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'session.csrf' }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: 'TOO_MANY_REQUESTS', message: 'Muitas tentativas.' }), {
+          headers: { 'retry-after': '21' },
+          status: 429,
+        }),
+      );
+
+    await expect(adminApi.requestFirstEnrollment()).rejects.toEqual(
+      expect.objectContaining({ code: 'TOO_MANY_REQUESTS', retryAfterSeconds: 21 }),
+    );
+    expect(localStorage).toHaveLength(0);
+    expect(sessionStorage).toHaveLength(0);
+  });
 });

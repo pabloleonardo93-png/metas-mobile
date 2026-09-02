@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { isIP } from 'node:net';
 
 import dotenv from 'dotenv';
@@ -8,6 +9,23 @@ const splitCommaSeparated = (value: string): string[] =>
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+
+const redisUrlSchema = z
+  .url()
+  .refine((value) => /^rediss?:\/\//u.test(value), 'must be a Redis URL');
+
+const platformAdminRateLimitValueSchema = z.coerce.number().int().min(1).max(100);
+
+const platformAdminRateLimitKeySecretSchema = z
+  .string()
+  .trim()
+  .min(43)
+  .max(512)
+  .regex(/^[A-Za-z0-9_-]+$/u, 'must be an unpadded base64url value')
+  .refine((value) => {
+    const decoded = Buffer.from(value, 'base64url');
+    return decoded.byteLength >= 32 && decoded.toString('base64url') === value;
+  }, 'must encode at least 32 bytes');
 
 const webAuthnRpIdSchema = z
   .string()
@@ -94,6 +112,37 @@ const rawEnvSchema = z
       .min(60)
       .max(900)
       .default(300),
+    PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(300)
+      .max(900)
+      .default(900),
+    PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(300)
+      .default(300),
+    PLATFORM_ADMIN_RATE_LIMIT_STORE: z.enum(['memory', 'redis']).optional(),
+    PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL: redisUrlSchema.optional(),
+    PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: platformAdminRateLimitKeySecretSchema.optional(),
+    PLATFORM_ADMIN_RATE_LIMIT_WINDOW_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(3_600)
+      .default(900),
+    PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX: platformAdminRateLimitValueSchema.default(5),
+    PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX:
+      platformAdminRateLimitValueSchema.default(10),
+    PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX: platformAdminRateLimitValueSchema.default(5),
+    PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX:
+      platformAdminRateLimitValueSchema.default(10),
+    PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX:
+      platformAdminRateLimitValueSchema.default(5),
+    PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX:
+      platformAdminRateLimitValueSchema.default(3),
     SESSION_TTL_SECONDS: z.coerce.number().int().min(300).max(2_592_000).default(604_800),
   })
   .superRefine((environment, context) => {
@@ -120,6 +169,51 @@ const rawEnvSchema = z
           code: 'custom',
           message: 'is required when platform admin authentication is enabled',
           path: ['PLATFORM_ADMIN_DATABASE_URL'],
+        });
+      }
+      if (!environment.PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET) {
+        context.addIssue({
+          code: 'custom',
+          message: 'is required when platform admin authentication is enabled',
+          path: ['PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET'],
+        });
+      }
+      if (!environment.PLATFORM_ADMIN_RATE_LIMIT_STORE) {
+        context.addIssue({
+          code: 'custom',
+          message: 'is required when platform admin authentication is enabled',
+          path: ['PLATFORM_ADMIN_RATE_LIMIT_STORE'],
+        });
+      }
+      if (
+        environment.NODE_ENV === 'production' &&
+        environment.PLATFORM_ADMIN_RATE_LIMIT_STORE !== 'redis'
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must use the shared Redis store in production',
+          path: ['PLATFORM_ADMIN_RATE_LIMIT_STORE'],
+        });
+      }
+      if (
+        environment.PLATFORM_ADMIN_RATE_LIMIT_STORE === 'redis' &&
+        !environment.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'is required when the Redis rate limit store is selected',
+          path: ['PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL'],
+        });
+      }
+      if (
+        environment.NODE_ENV === 'production' &&
+        environment.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL &&
+        !environment.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL.startsWith('rediss://')
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'must use TLS in production',
+          path: ['PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL'],
         });
       }
       const adminClientIds = splitCommaSeparated(environment.GOOGLE_ADMIN_ALLOWED_CLIENT_IDS);
@@ -253,7 +347,19 @@ export interface AppEnv {
   port: number;
   platformAdminAuthEnabled: boolean;
   platformAdminDatabaseUrl: string | undefined;
+  platformAdminFirstEnrollmentApprovalTtlSeconds: number;
+  platformAdminFirstEnrollmentPendingTtlSeconds: number;
   platformAdminIdleTimeoutSeconds: number;
+  platformAdminRateLimitAuthenticationOptionsMax: number;
+  platformAdminRateLimitAuthenticationVerifyMax: number;
+  platformAdminRateLimitFirstEnrollmentRequestMax: number;
+  platformAdminRateLimitGoogleLoginMax: number;
+  platformAdminRateLimitKeySecret: string | undefined;
+  platformAdminRateLimitRedisUrl: string | undefined;
+  platformAdminRateLimitRegistrationOptionsMax: number;
+  platformAdminRateLimitRegistrationVerifyMax: number;
+  platformAdminRateLimitStore: 'memory' | 'redis';
+  platformAdminRateLimitWindowSeconds: number;
   platformAdminSessionTtlSeconds: number;
   platformAdminWebAuthnAllowedOrigins: readonly string[];
   platformAdminWebAuthnChallengeTtlSeconds: number;
@@ -276,6 +382,12 @@ export interface MigrationDatabaseEnv {
   migrationDatabaseUrl: string;
 }
 
+export interface PlatformAdminOperatorDatabaseEnv {
+  databaseSsl: boolean;
+  databaseSslServerName: string | undefined;
+  platformAdminOperatorDatabaseUrl: string;
+}
+
 export interface NorthflankAdminDatabaseEnv {
   database: string;
   host: string;
@@ -296,6 +408,7 @@ export interface NorthflankRoleDatabaseEnv {
 
 export interface NorthflankIntegrationTestEnv {
   migration: NorthflankRoleDatabaseEnv;
+  platformAdminOperator: NorthflankRoleDatabaseEnv;
   platformAdminRuntime: NorthflankRoleDatabaseEnv;
   runtime: NorthflankRoleDatabaseEnv;
 }
@@ -304,6 +417,7 @@ export interface TestDatabaseEnv {
   databaseSsl: boolean;
   databaseSslServerName: string | undefined;
   migrationDatabaseUrl: string;
+  platformAdminOperatorDatabaseUrl: string;
   platformAdminRuntimeDatabaseUrl: string;
   runtimeDatabaseUrl: string;
 }
@@ -344,7 +458,26 @@ export const loadEnv = (): AppEnv => {
     googleAdminAllowedClientIds: splitCommaSeparated(parsed.data.GOOGLE_ADMIN_ALLOWED_CLIENT_IDS),
     platformAdminAuthEnabled: parsed.data.PLATFORM_ADMIN_AUTH_ENABLED,
     platformAdminDatabaseUrl: parsed.data.PLATFORM_ADMIN_DATABASE_URL,
+    platformAdminFirstEnrollmentApprovalTtlSeconds:
+      parsed.data.PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS,
+    platformAdminFirstEnrollmentPendingTtlSeconds:
+      parsed.data.PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS,
     platformAdminIdleTimeoutSeconds: parsed.data.PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS,
+    platformAdminRateLimitAuthenticationOptionsMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX,
+    platformAdminRateLimitAuthenticationVerifyMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX,
+    platformAdminRateLimitFirstEnrollmentRequestMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX,
+    platformAdminRateLimitGoogleLoginMax: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX,
+    platformAdminRateLimitKeySecret: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET,
+    platformAdminRateLimitRedisUrl: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL,
+    platformAdminRateLimitRegistrationOptionsMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX,
+    platformAdminRateLimitRegistrationVerifyMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX,
+    platformAdminRateLimitStore: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_STORE ?? 'memory',
+    platformAdminRateLimitWindowSeconds: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_WINDOW_SECONDS,
     platformAdminSessionTtlSeconds: parsed.data.PLATFORM_ADMIN_SESSION_TTL_SECONDS,
     platformAdminWebAuthnAllowedOrigins: parseWebAuthnOrigins(
       parsed.data.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS,
@@ -444,6 +577,27 @@ export const loadMigrationDatabaseEnv = (): MigrationDatabaseEnv => {
   };
 };
 
+export const loadPlatformAdminOperatorDatabaseEnv = (): PlatformAdminOperatorDatabaseEnv => {
+  loadDotEnv();
+  const parsed = z
+    .object({
+      PLATFORM_ADMIN_OPERATOR_DATABASE_URL: databaseUrlSchema,
+      DATABASE_SSL: booleanStringSchema,
+      DATABASE_SSL_SERVERNAME: sslServerNameSchema,
+    })
+    .safeParse(process.env);
+
+  if (!parsed.success) {
+    return throwInvalidEnvironment(parsed.error);
+  }
+
+  return {
+    platformAdminOperatorDatabaseUrl: parsed.data.PLATFORM_ADMIN_OPERATOR_DATABASE_URL,
+    databaseSsl: parsed.data.DATABASE_SSL,
+    databaseSslServerName: parsed.data.DATABASE_SSL_SERVERNAME,
+  };
+};
+
 export const loadNorthflankAdminDatabaseEnv = (): NorthflankAdminDatabaseEnv => {
   loadNorthflankDotEnv();
 
@@ -474,7 +628,7 @@ export const loadNorthflankAdminDatabaseEnv = (): NorthflankAdminDatabaseEnv => 
 };
 
 const loadNorthflankRoleDatabaseEnv = (
-  role: 'migration' | 'platform-admin-runtime' | 'runtime',
+  role: 'migration' | 'platform-admin-operator' | 'platform-admin-runtime' | 'runtime',
 ): NorthflankRoleDatabaseEnv => {
   loadNorthflankDotEnv();
 
@@ -482,9 +636,11 @@ const loadNorthflankRoleDatabaseEnv = (
     username: z.literal(
       role === 'migration'
         ? 'metas_migration_runner'
-        : role === 'platform-admin-runtime'
-          ? 'metas_platform_admin_runtime'
-          : 'metas_app_runtime',
+        : role === 'platform-admin-operator'
+          ? 'metas_platform_admin_operator'
+          : role === 'platform-admin-runtime'
+            ? 'metas_platform_admin_runtime'
+            : 'metas_app_runtime',
     ),
     password: z.string().min(1),
   });
@@ -501,15 +657,19 @@ const loadNorthflankRoleDatabaseEnv = (
     password:
       role === 'migration'
         ? process.env.NORTHFLANK_MIGRATION_DB_PASSWORD
-        : role === 'platform-admin-runtime'
-          ? process.env.NORTHFLANK_PLATFORM_ADMIN_RUNTIME_DB_PASSWORD
-          : process.env.NORTHFLANK_RUNTIME_DB_PASSWORD,
+        : role === 'platform-admin-operator'
+          ? process.env.NORTHFLANK_PLATFORM_ADMIN_OPERATOR_DB_PASSWORD
+          : role === 'platform-admin-runtime'
+            ? process.env.NORTHFLANK_PLATFORM_ADMIN_RUNTIME_DB_PASSWORD
+            : process.env.NORTHFLANK_RUNTIME_DB_PASSWORD,
     username:
       role === 'migration'
         ? process.env.NORTHFLANK_MIGRATION_DB_USER
-        : role === 'platform-admin-runtime'
-          ? process.env.NORTHFLANK_PLATFORM_ADMIN_RUNTIME_DB_USER
-          : process.env.NORTHFLANK_RUNTIME_DB_USER,
+        : role === 'platform-admin-operator'
+          ? process.env.NORTHFLANK_PLATFORM_ADMIN_OPERATOR_DB_USER
+          : role === 'platform-admin-runtime'
+            ? process.env.NORTHFLANK_PLATFORM_ADMIN_RUNTIME_DB_USER
+            : process.env.NORTHFLANK_RUNTIME_DB_USER,
   });
 
   if (!parsedCommon.success) {
@@ -532,6 +692,9 @@ const loadNorthflankRoleDatabaseEnv = (
 export const loadNorthflankMigrationDatabaseEnv = (): NorthflankRoleDatabaseEnv =>
   loadNorthflankRoleDatabaseEnv('migration');
 
+export const loadNorthflankPlatformAdminOperatorDatabaseEnv = (): NorthflankRoleDatabaseEnv =>
+  loadNorthflankRoleDatabaseEnv('platform-admin-operator');
+
 export const loadNorthflankRuntimeDatabaseEnv = (): NorthflankRoleDatabaseEnv =>
   loadNorthflankRoleDatabaseEnv('runtime');
 
@@ -553,6 +716,7 @@ export const loadNorthflankIntegrationTestEnv = (): NorthflankIntegrationTestEnv
 
   return {
     migration: loadNorthflankMigrationDatabaseEnv(),
+    platformAdminOperator: loadNorthflankPlatformAdminOperatorDatabaseEnv(),
     platformAdminRuntime: loadNorthflankPlatformAdminRuntimeDatabaseEnv(),
     runtime: loadNorthflankRuntimeDatabaseEnv(),
   };
@@ -574,6 +738,7 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
   if (
     !process.env.TEST_DATABASE_URL &&
     !process.env.TEST_MIGRATION_DATABASE_URL &&
+    !process.env.TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL &&
     !process.env.TEST_PLATFORM_ADMIN_DATABASE_URL
   ) {
     return null;
@@ -584,11 +749,13 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
       NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
       TEST_DATABASE_URL: databaseUrlSchema,
       TEST_MIGRATION_DATABASE_URL: databaseUrlSchema,
+      TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL: databaseUrlSchema,
       TEST_PLATFORM_ADMIN_DATABASE_URL: databaseUrlSchema,
       TEST_DATABASE_SSL: booleanStringSchema,
       TEST_DATABASE_SSL_SERVERNAME: sslServerNameSchema,
       DATABASE_URL: databaseUrlSchema.optional(),
       MIGRATION_DATABASE_URL: databaseUrlSchema.optional(),
+      PLATFORM_ADMIN_OPERATOR_DATABASE_URL: databaseUrlSchema.optional(),
       PLATFORM_ADMIN_DATABASE_URL: databaseUrlSchema.optional(),
     })
     .safeParse(process.env);
@@ -601,11 +768,16 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
     throw new Error('PostgreSQL integration tests are forbidden in production.');
   }
 
-  const { TEST_DATABASE_URL, TEST_MIGRATION_DATABASE_URL, TEST_PLATFORM_ADMIN_DATABASE_URL } =
-    parsed.data;
+  const {
+    TEST_DATABASE_URL,
+    TEST_MIGRATION_DATABASE_URL,
+    TEST_PLATFORM_ADMIN_DATABASE_URL,
+    TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL,
+  } = parsed.data;
   if (
     !databaseNameContainsTest(TEST_DATABASE_URL) ||
     !databaseNameContainsTest(TEST_MIGRATION_DATABASE_URL) ||
+    !databaseNameContainsTest(TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL) ||
     !databaseNameContainsTest(TEST_PLATFORM_ADMIN_DATABASE_URL)
   ) {
     throw new Error('PostgreSQL integration tests require database names containing "test".');
@@ -617,6 +789,9 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
     (parsed.data.MIGRATION_DATABASE_URL !== undefined &&
       databaseIdentity(TEST_MIGRATION_DATABASE_URL) ===
         databaseIdentity(parsed.data.MIGRATION_DATABASE_URL)) ||
+    (parsed.data.PLATFORM_ADMIN_OPERATOR_DATABASE_URL !== undefined &&
+      databaseIdentity(TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL) ===
+        databaseIdentity(parsed.data.PLATFORM_ADMIN_OPERATOR_DATABASE_URL)) ||
     (parsed.data.PLATFORM_ADMIN_DATABASE_URL !== undefined &&
       databaseIdentity(TEST_PLATFORM_ADMIN_DATABASE_URL) ===
         databaseIdentity(parsed.data.PLATFORM_ADMIN_DATABASE_URL))
@@ -627,6 +802,7 @@ export const loadTestDatabaseEnv = (): TestDatabaseEnv | null => {
   return {
     runtimeDatabaseUrl: TEST_DATABASE_URL,
     migrationDatabaseUrl: TEST_MIGRATION_DATABASE_URL,
+    platformAdminOperatorDatabaseUrl: TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL,
     platformAdminRuntimeDatabaseUrl: TEST_PLATFORM_ADMIN_DATABASE_URL,
     databaseSsl: parsed.data.TEST_DATABASE_SSL,
     databaseSslServerName: parsed.data.TEST_DATABASE_SSL_SERVERNAME,

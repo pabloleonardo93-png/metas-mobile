@@ -41,6 +41,7 @@ interface PlatformAdminSessionDatabaseRow {
 
 interface PlatformAdminMeDatabaseRow {
   displayName: string;
+  hasWebAuthnCredential: boolean;
   id: string;
   primaryEmail: string;
   status: 'ACTIVE' | 'DISABLED';
@@ -191,11 +192,14 @@ export class PostgresPlatformAdminAuthenticationService implements PlatformAdmin
     const rows = await this.withSessionContext(session, (transaction) =>
       this.database.query<PlatformAdminMeDatabaseRow>(
         `SELECT
-          id,
-          display_name AS "displayName",
-          primary_email AS "primaryEmail",
-          status
-         FROM metas.get_platform_admin_me()`,
+          admin.id,
+          admin.display_name AS "displayName",
+          admin.primary_email AS "primaryEmail",
+          admin.status,
+          EXISTS (
+            SELECT 1 FROM metas.list_platform_admin_webauthn_credentials()
+          ) AS "hasWebAuthnCredential"
+         FROM metas.get_platform_admin_me() admin`,
         { transaction, type: QueryTypes.SELECT },
       ),
     );

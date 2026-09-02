@@ -7,6 +7,7 @@ export type MetasApiPath =
   | '/v1/platform-admin/auth/google'
   | '/v1/platform-admin/auth/logout'
   | '/v1/platform-admin/me'
+  | '/v1/platform-admin/mfa/first-enrollment/request'
   | '/v1/platform-admin/mfa/webauthn/authentication/options'
   | '/v1/platform-admin/mfa/webauthn/authentication/verify'
   | '/v1/platform-admin/mfa/webauthn/registration/options'
@@ -27,9 +28,12 @@ const upstreamErrorSchema = z
   .passthrough();
 
 const allowedErrorCodes = new Set([
+  'FIRST_ENROLLMENT_APPROVAL_REQUIRED',
+  'FIRST_ENROLLMENT_NOT_ALLOWED',
   'INVALID_GOOGLE_TOKEN',
   'INVALID_INPUT',
   'PLATFORM_ADMIN_ACCESS_NOT_AUTHORIZED',
+  'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE',
   'TOO_MANY_REQUESTS',
   'UNAUTHORIZED',
   'WEBAUTHN_CREDENTIAL_REQUIRED',
@@ -42,6 +46,15 @@ const errorMessageFor = (status: number, code: string): string => {
   }
   if (code === 'WEBAUTHN_CREDENTIAL_REQUIRED') return 'Nenhuma passkey está cadastrada.';
   if (code === 'WEBAUTHN_VERIFICATION_DENIED') return 'Não foi possível validar a passkey.';
+  if (code === 'FIRST_ENROLLMENT_APPROVAL_REQUIRED') {
+    return 'A autorização operacional do primeiro cadastro ainda é necessária.';
+  }
+  if (code === 'FIRST_ENROLLMENT_NOT_ALLOWED') {
+    return 'O primeiro cadastro de passkey não está disponível para esta sessão.';
+  }
+  if (code === 'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE') {
+    return 'A autenticação administrativa está temporariamente indisponível.';
+  }
   if (status === 401) return 'Sua sessão expirou. Entre novamente.';
   if (status === 403) return 'Você não tem permissão para esta operação.';
   if (status === 409) return 'A operação não pôde ser concluída no estado atual.';
@@ -50,7 +63,13 @@ const errorMessageFor = (status: number, code: string): string => {
   return 'Não foi possível concluir a operação.';
 };
 
-const mapUpstreamError = (status: number, body: unknown): BffError => {
+const parseRetryAfter = (value: string | null): number | undefined => {
+  if (!value || !/^\d+$/u.test(value)) return undefined;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 3_600 ? seconds : undefined;
+};
+
+const mapUpstreamError = (status: number, body: unknown, retryAfter: string | null): BffError => {
   const parsed = upstreamErrorSchema.safeParse(body);
   const upstreamCode = parsed.success ? parsed.data.code : '';
   const code = allowedErrorCodes.has(upstreamCode)
@@ -64,6 +83,7 @@ const mapUpstreamError = (status: number, body: unknown): BffError => {
     status >= 400 && status < 500 ? status : 502,
     code,
     errorMessageFor(status, code),
+    parseRetryAfter(retryAfter),
   );
 };
 
@@ -110,7 +130,9 @@ export const createMetasApiClient = (
     }
 
     const body = await readJsonBody(response);
-    if (!response.ok) throw mapUpstreamError(response.status, body);
+    if (!response.ok) {
+      throw mapUpstreamError(response.status, body, response.headers.get('retry-after'));
+    }
     return body;
   },
 });

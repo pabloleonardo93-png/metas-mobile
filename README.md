@@ -132,6 +132,7 @@ Migrations e tarefas administrativas usam conexões separadas:
 
 ```env
 MIGRATION_DATABASE_URL=
+PLATFORM_ADMIN_OPERATOR_DATABASE_URL=
 ADMIN_DATABASE_URL=
 ```
 
@@ -162,7 +163,9 @@ npm run dev
 
 O Vite encaminha `/api` ao BFF local. Em produção, o BFF serve o build de `metas-admin/frontend/dist` e continua sendo o único consumidor do bearer administrativo. O cookie de produção usa o prefixo `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/` e não define `Domain`.
 
-Antes de ativar o Admin em produção ainda são obrigatórios: procedimento controlado para o primeiro enrollment, rate limiting compartilhado ou no edge, recovery seguro, validação do BFF/cookie/CSRF no ambiente final, teste E2E com navegador/autenticador real e aplicação operacional da migration WebAuthn correspondente. Esta fase não habilita o Admin nem acessa produção.
+O primeiro enrollment agora exige solicitação pela sessão `GOOGLE_ONLY` e aprovação temporária, fora do HTTP público, por um operador com a credencial de migration. O rate limiter administrativo usa Redis/Valkey compartilhado em produção e falha fechado; o modo em memória fica restrito a desenvolvimento/testes.
+
+Antes de ativar o Admin em produção ainda são obrigatórios: aplicar e inspecionar a migration 015 pelo fluxo manual, configurar Redis/Valkey com TLS, ensaiar o procedimento de aprovação por canal independente, definir recovery seguro, validar BFF/cookie/CSRF no ambiente final e executar E2E com navegador/autenticador real. Esta fase não habilita o Admin nem acessa produção.
 
 ## Banco de dados e migrations
 
@@ -221,7 +224,7 @@ npm run build
 npm run format:check
 ```
 
-Os testes de integração da API precisam de um PostgreSQL exclusivo para testes e das variáveis `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` e `TEST_ADMIN_DATABASE_URL`. As opções de SSL para esse ambiente são `TEST_DATABASE_SSL` e `TEST_DATABASE_SSL_SERVERNAME`.
+Os testes de integração da API precisam de um PostgreSQL exclusivo para testes e das variáveis `TEST_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL`, `TEST_PLATFORM_ADMIN_DATABASE_URL`, `TEST_PLATFORM_ADMIN_OPERATOR_DATABASE_URL` e `TEST_ADMIN_DATABASE_URL`. As opções de SSL para esse ambiente são `TEST_DATABASE_SSL` e `TEST_DATABASE_SSL_SERVERNAME`.
 
 ## Integração contínua
 

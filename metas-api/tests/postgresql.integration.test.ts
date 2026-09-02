@@ -7,8 +7,10 @@ import { QueryTypes, type Sequelize, type Transaction } from 'sequelize';
 import { disconnectDatabase } from '../src/config/database.js';
 import {
   assertMigrationConnectionSecurity,
+  assertPlatformAdminOperatorConnectionSecurity,
   assertRuntimeConnectionSecurity,
 } from '../src/database/connectionSecurity.js';
+import { hasFirstEnrollmentRequestUniqueIndex } from '../src/database/admin/inspectFirstEnrollmentRequestIndex.js';
 import { createMigrator } from '../src/database/umzug.js';
 import { withDatabaseContext } from '../src/shared/database/withDatabaseContext.js';
 import { createIntegrationDatabases } from './integrationDatabase.js';
@@ -184,23 +186,110 @@ const createEmployee = async (
 
 const testDatabases = createIntegrationDatabases(5, 2);
 
+const inspectReplacementFirstEnrollmentRequestIndex = async (
+  database: Sequelize,
+  replacementDdl?: string,
+): Promise<boolean> => {
+  const transaction = await database.transaction();
+  try {
+    await database.query('SET LOCAL ROLE metas_migration_owner', { transaction });
+    await database.query(
+      'DROP INDEX metas.platform_admin_webauthn_challenges_first_enrollment_request_uni',
+      { transaction },
+    );
+    if (replacementDdl) {
+      await database.query(replacementDdl, { transaction });
+    }
+    return await hasFirstEnrollmentRequestUniqueIndex(database, transaction);
+  } finally {
+    await transaction.rollback();
+  }
+};
+
 if (testDatabases === null) {
   await test('PostgreSQL integration tests require dedicated test URLs', {
     skip: 'TEST_DATABASE_URL and TEST_MIGRATION_DATABASE_URL are not configured.',
   });
 } else {
-  const { migrationDatabase, runtimeDatabase } = testDatabases;
+  const { migrationDatabase, platformAdminOperatorDatabase, runtimeDatabase } = testDatabases;
 
   try {
     await migrationDatabase.authenticate();
+    await platformAdminOperatorDatabase.authenticate();
     await runtimeDatabase.authenticate();
     await assertMigrationConnectionSecurity(migrationDatabase);
+    await assertPlatformAdminOperatorConnectionSecurity(platformAdminOperatorDatabase);
     await assertRuntimeConnectionSecurity(runtimeDatabase);
     await createMigrator(migrationDatabase).up();
 
     await test('migrations are fully applied', async () => {
       const pending = await createMigrator(migrationDatabase).pending();
       assert.equal(pending.length, 0);
+    });
+
+    await test('inspector accepts the structurally correct truncated first-enrollment index', async () => {
+      const indexes = await migrationDatabase.query<{ name: string }>(
+        `SELECT index_relation.relname::TEXT AS name
+         FROM pg_catalog.pg_index index_metadata
+         JOIN pg_catalog.pg_class table_relation
+           ON table_relation.oid = index_metadata.indrelid
+         JOIN pg_catalog.pg_namespace table_namespace
+           ON table_namespace.oid = table_relation.relnamespace
+         JOIN pg_catalog.pg_class index_relation
+           ON index_relation.oid = index_metadata.indexrelid
+         WHERE table_namespace.nspname = 'metas'
+           AND table_relation.relname = 'platform_admin_webauthn_challenges'
+           AND index_metadata.indisunique = TRUE
+           AND index_metadata.indpred IS NOT NULL`,
+        { type: QueryTypes.SELECT },
+      );
+      const actualName = indexes.find(({ name }) =>
+        name.startsWith('platform_admin_webauthn_challenges_first_enrollment_request_'),
+      )?.name;
+
+      assert.equal(actualName, 'platform_admin_webauthn_challenges_first_enrollment_request_uni');
+      assert.equal(Buffer.byteLength(actualName), 63);
+      assert.equal(await hasFirstEnrollmentRequestUniqueIndex(migrationDatabase), true);
+    });
+
+    await test('inspector rejects a first-enrollment unique index on the wrong column', async () => {
+      assert.equal(
+        await inspectReplacementFirstEnrollmentRequestIndex(
+          migrationDatabase,
+          `CREATE UNIQUE INDEX first_enrollment_wrong_column_test_idx
+           ON metas.platform_admin_webauthn_challenges (id)
+           WHERE first_enrollment_request_id IS NOT NULL`,
+        ),
+        false,
+      );
+    });
+
+    await test('inspector rejects a non-unique first-enrollment index', async () => {
+      assert.equal(
+        await inspectReplacementFirstEnrollmentRequestIndex(
+          migrationDatabase,
+          `CREATE INDEX first_enrollment_non_unique_test_idx
+           ON metas.platform_admin_webauthn_challenges (first_enrollment_request_id)
+           WHERE first_enrollment_request_id IS NOT NULL`,
+        ),
+        false,
+      );
+    });
+
+    await test('inspector rejects a first-enrollment index with the wrong predicate', async () => {
+      assert.equal(
+        await inspectReplacementFirstEnrollmentRequestIndex(
+          migrationDatabase,
+          `CREATE UNIQUE INDEX first_enrollment_wrong_predicate_test_idx
+           ON metas.platform_admin_webauthn_challenges (first_enrollment_request_id)
+           WHERE first_enrollment_request_id IS NULL`,
+        ),
+        false,
+      );
+    });
+
+    await test('inspector rejects a missing first-enrollment index', async () => {
+      assert.equal(await inspectReplacementFirstEnrollmentRequestIndex(migrationDatabase), false);
     });
 
     await test('database constraints reject duplicate email and employee membership', async () => {
@@ -460,6 +549,28 @@ if (testDatabases === null) {
         runtimeDatabase.query('CREATE TABLE public.runtime_forbidden (id INTEGER)'),
       );
       await assert.rejects(
+        platformAdminOperatorDatabase.query('CREATE TABLE metas.operator_forbidden (id INTEGER)'),
+      );
+      await assert.rejects(platformAdminOperatorDatabase.query('CREATE ROLE operator_forbidden'));
+      await assert.rejects(
+        platformAdminOperatorDatabase.query('SELECT * FROM metas.platform_admins'),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query(
+          `UPDATE metas.platform_admin_first_enrollment_requests SET status = 'REVOKED'`,
+        ),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query(
+          `INSERT INTO metas.platform_admin_first_enrollment_requests DEFAULT VALUES`,
+        ),
+      );
+      await assert.rejects(
+        platformAdminOperatorDatabase.query(
+          `DELETE FROM metas.platform_admin_first_enrollment_requests`,
+        ),
+      );
+      await assert.rejects(
         runtimeDatabase.query('ALTER TABLE metas.stores ADD COLUMN forbidden INTEGER'),
       );
       await assert.rejects(runtimeDatabase.query('DROP TABLE metas.stores'));
@@ -492,12 +603,13 @@ if (testDatabases === null) {
            'metas_migration_owner',
            'metas_migration_runner',
            'metas_app_runtime',
+           'metas_platform_admin_operator',
            'metas_platform_admin_runtime'
          )
          ORDER BY rolname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(roles.length, 4);
+      assert.equal(roles.length, 5);
       for (const role of roles) {
         assert.equal(role.rolsuper, false);
         assert.equal(role.rolcreatedb, false);
@@ -509,6 +621,10 @@ if (testDatabases === null) {
 
       const memberships = await migrationDatabase.query<{
         runnerCanAssumeOwner: boolean;
+        operatorCanAssumeAppRuntime: boolean;
+        operatorCanAssumeMigrationOwner: boolean;
+        operatorCanAssumeMigrationRunner: boolean;
+        operatorCanAssumePlatformAdminRuntime: boolean;
         runtimeCanAssumeOwner: boolean;
         runtimeCanAssumeRunner: boolean;
       }>(
@@ -521,11 +637,27 @@ if (testDatabases === null) {
           ) AS "runtimeCanAssumeOwner",
           pg_has_role(
             'metas_app_runtime', 'metas_migration_runner', 'MEMBER'
-          ) AS "runtimeCanAssumeRunner"`,
+          ) AS "runtimeCanAssumeRunner",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_migration_owner', 'MEMBER'
+          ) AS "operatorCanAssumeMigrationOwner",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_migration_runner', 'MEMBER'
+          ) AS "operatorCanAssumeMigrationRunner",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_app_runtime', 'MEMBER'
+          ) AS "operatorCanAssumeAppRuntime",
+          pg_has_role(
+            'metas_platform_admin_operator', 'metas_platform_admin_runtime', 'MEMBER'
+          ) AS "operatorCanAssumePlatformAdminRuntime"`,
         { type: QueryTypes.SELECT },
       );
       assert.deepEqual(memberships[0], {
         runnerCanAssumeOwner: true,
+        operatorCanAssumeAppRuntime: false,
+        operatorCanAssumeMigrationOwner: false,
+        operatorCanAssumeMigrationRunner: false,
+        operatorCanAssumePlatformAdminRuntime: false,
         runtimeCanAssumeOwner: false,
         runtimeCanAssumeRunner: false,
       });
@@ -678,6 +810,10 @@ if (testDatabases === null) {
       assert.equal(rows[0]?.count, '1');
     });
   } finally {
-    await Promise.all([disconnectDatabase(runtimeDatabase), disconnectDatabase(migrationDatabase)]);
+    await Promise.all([
+      disconnectDatabase(platformAdminOperatorDatabase),
+      disconnectDatabase(runtimeDatabase),
+      disconnectDatabase(migrationDatabase),
+    ]);
   }
 }

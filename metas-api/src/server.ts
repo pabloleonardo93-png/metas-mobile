@@ -15,6 +15,12 @@ import { PostgresCampaignService } from './modules/campaigns/campaignService.js'
 import { PostgresEmployeeService } from './modules/employees/employeeService.js';
 import { PostgresGoalService } from './modules/goals/goalService.js';
 import { PostgresPlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdminAuthenticationService.js';
+import {
+  createPlatformAdminRedisClient,
+  MemoryPlatformAdminRateLimiter,
+  RedisPlatformAdminRateLimiter,
+  type PlatformAdminRateLimitPolicies,
+} from './modules/platformAdmin/platformAdminRateLimiter.js';
 import { officialPlatformAdminWebAuthnAdapter } from './modules/platformAdmin/platformAdminWebAuthnAdapter.js';
 import { PostgresPlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthnService.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
@@ -51,11 +57,25 @@ const bootstrap = async (): Promise<void> => {
   const platformAdminDatabase = env.platformAdminAuthEnabled
     ? createPlatformAdminDatabase(env)
     : null;
+  const platformAdminRedisClient =
+    env.platformAdminAuthEnabled &&
+    env.platformAdminRateLimitStore === 'redis' &&
+    env.platformAdminRateLimitRedisUrl
+      ? createPlatformAdminRedisClient(env.platformAdminRateLimitRedisUrl)
+      : null;
+
+  platformAdminRedisClient?.on('error', (error: Error) => {
+    logger.error('platform_admin_rate_limit_store_error', { errorType: error.name });
+  });
 
   try {
     await connectDatabase(database);
     if (platformAdminDatabase) {
       await connectPlatformAdminDatabase(platformAdminDatabase);
+    }
+    if (platformAdminRedisClient) {
+      await platformAdminRedisClient.connect();
+      await platformAdminRedisClient.ping();
     }
   } catch (error: unknown) {
     logger.error('database_connection_failed', {
@@ -63,6 +83,7 @@ const bootstrap = async (): Promise<void> => {
     });
     await disconnectDatabase(database).catch(() => undefined);
     await platformAdminDatabase?.close().catch(() => undefined);
+    await platformAdminRedisClient?.close().catch(() => undefined);
     throw new Error('Server bootstrap failed', { cause: error });
   }
 
@@ -79,6 +100,50 @@ const bootstrap = async (): Promise<void> => {
         env.platformAdminIdleTimeoutSeconds,
       )
     : undefined;
+  const rateLimitWindowMs = env.platformAdminRateLimitWindowSeconds * 1000;
+  const platformAdminRateLimitPolicies: PlatformAdminRateLimitPolicies = {
+    FIRST_ENROLLMENT_REQUEST: {
+      limit: env.platformAdminRateLimitFirstEnrollmentRequestMax,
+      windowMs: rateLimitWindowMs,
+    },
+    GOOGLE_LOGIN: {
+      limit: env.platformAdminRateLimitGoogleLoginMax,
+      windowMs: rateLimitWindowMs,
+    },
+    WEBAUTHN_AUTHENTICATION_OPTIONS: {
+      limit: env.platformAdminRateLimitAuthenticationOptionsMax,
+      windowMs: rateLimitWindowMs,
+    },
+    WEBAUTHN_AUTHENTICATION_VERIFY: {
+      limit: env.platformAdminRateLimitAuthenticationVerifyMax,
+      windowMs: rateLimitWindowMs,
+    },
+    WEBAUTHN_REGISTRATION_OPTIONS: {
+      limit: env.platformAdminRateLimitRegistrationOptionsMax,
+      windowMs: rateLimitWindowMs,
+    },
+    WEBAUTHN_REGISTRATION_VERIFY: {
+      limit: env.platformAdminRateLimitRegistrationVerifyMax,
+      windowMs: rateLimitWindowMs,
+    },
+  };
+  const platformAdminRateLimiter = platformAdminAuthenticationService
+    ? (() => {
+        if (!env.platformAdminRateLimitKeySecret) {
+          throw new Error('Platform admin rate limit key secret is required.');
+        }
+        return platformAdminRedisClient
+          ? new RedisPlatformAdminRateLimiter(
+              platformAdminRedisClient,
+              env.platformAdminRateLimitKeySecret,
+              platformAdminRateLimitPolicies,
+            )
+          : new MemoryPlatformAdminRateLimiter(
+              env.platformAdminRateLimitKeySecret,
+              platformAdminRateLimitPolicies,
+            );
+      })()
+    : undefined;
   const platformAdminWebAuthnService =
     platformAdminDatabase &&
     env.platformAdminWebAuthnRpId &&
@@ -90,6 +155,7 @@ const bootstrap = async (): Promise<void> => {
           {
             allowedOrigins: env.platformAdminWebAuthnAllowedOrigins,
             challengeTtlSeconds: env.platformAdminWebAuthnChallengeTtlSeconds,
+            firstEnrollmentPendingTtlSeconds: env.platformAdminFirstEnrollmentPendingTtlSeconds,
             rpId: env.platformAdminWebAuthnRpId,
             rpName: env.platformAdminWebAuthnRpName,
             stepUpTtlSeconds: env.platformAdminWebAuthnStepUpTtlSeconds,
@@ -105,6 +171,7 @@ const bootstrap = async (): Promise<void> => {
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),
     ...(platformAdminAuthenticationService ? { platformAdminAuthenticationService } : {}),
+    ...(platformAdminRateLimiter ? { platformAdminRateLimiter } : {}),
     ...(platformAdminWebAuthnService ? { platformAdminWebAuthnService } : {}),
     realtimePublisher: realtimeServer,
     trustProxyHops: env.trustProxyHops,
@@ -125,6 +192,7 @@ const bootstrap = async (): Promise<void> => {
       await closeServer(server);
       await disconnectDatabase(database);
       await platformAdminDatabase?.close();
+      await platformAdminRedisClient?.close();
       logger.info('server_shutdown_completed', { signal });
     } catch (error: unknown) {
       logger.error('server_shutdown_failed', {
@@ -153,6 +221,7 @@ const bootstrap = async (): Promise<void> => {
     await realtimeServer.close().catch(() => undefined);
     await disconnectDatabase(database).catch(() => undefined);
     await platformAdminDatabase?.close().catch(() => undefined);
+    await platformAdminRedisClient?.close().catch(() => undefined);
     throw error;
   }
 };

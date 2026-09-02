@@ -29,6 +29,7 @@ export interface PlatformAdminLoginResult {
 export interface PlatformAdminMeResult {
   assuranceLevel: PlatformAdminAssuranceLevel;
   displayName: string;
+  hasWebAuthnCredential: boolean;
   id: string;
   primaryEmail: string;
   status: 'ACTIVE' | 'DISABLED';

@@ -6,6 +6,7 @@ import { createDatabaseFromParameters, disconnectDatabase } from '../../config/d
 import { loadNorthflankMigrationDatabaseEnv } from '../../config/env.js';
 import { logger } from '../../shared/logging/logger.js';
 import { databaseRoles } from '../roles.js';
+import { hasFirstEnrollmentRequestUniqueIndex } from './inspectFirstEnrollmentRequestIndex.js';
 
 const expectedTables = [
   'auth_identities',
@@ -15,6 +16,7 @@ const expectedTables = [
   'goal_roles',
   'goals',
   'platform_admin_audit_events',
+  'platform_admin_first_enrollment_requests',
   'platform_admin_identities',
   'platform_admin_sessions',
   'platform_admin_webauthn_challenges',
@@ -34,6 +36,7 @@ const expectedRlsTables = [
   'goal_roles',
   'goals',
   'platform_admin_audit_events',
+  'platform_admin_first_enrollment_requests',
   'platform_admin_identities',
   'platform_admin_sessions',
   'platform_admin_webauthn_challenges',
@@ -58,6 +61,9 @@ const requiredConstraints = [
   'platform_admin_sessions_identity_admin_fk',
   'platform_admin_sessions_token_hash_unique',
   'platform_admin_sessions_token_version_valid',
+  'platform_admin_first_enrollment_requests_session_admin_fk',
+  'platform_admin_first_enrollment_requests_state_valid',
+  'platform_admin_webauthn_challenges_first_enrollment_request_fk',
   'platform_admin_webauthn_challenges_hash_unique',
   'platform_admin_webauthn_challenges_timestamps_valid',
   'platform_admin_webauthn_challenges_token_version_valid',
@@ -80,6 +86,9 @@ const requiredIndexes = [
   'goal_roles_store_role_idx',
   'goals_current_store_period_unique',
   'platform_admin_audit_events_admin_created_idx',
+  'platform_admin_first_enrollment_requests_active_admin_idx',
+  'platform_admin_first_enrollment_requests_session_idx',
+  'platform_admin_first_enrollment_requests_status_expiry_idx',
   'platform_admin_identities_admin_idx',
   'platform_admin_sessions_active_expiration_idx',
   'platform_admin_webauthn_challenges_expiration_idx',
@@ -90,6 +99,7 @@ const requiredIndexes = [
 ] as const;
 
 const expectedSecurityDefinerFunctions = [
+  'approve_platform_admin_first_enrollment',
   'authenticate_google_identity',
   'authenticate_platform_admin_google',
   'bootstrap_first_manager',
@@ -98,6 +108,7 @@ const expectedSecurityDefinerFunctions = [
   'consume_platform_admin_webauthn_challenge',
   'create_platform_admin_webauthn_challenge',
   'enforce_employee_manager_invariants',
+  'get_platform_admin_first_enrollment_request_status',
   'get_platform_admin_me',
   'has_active_database_context',
   'list_platform_admin_webauthn_credentials',
@@ -116,6 +127,7 @@ const expectedSecurityDefinerFunctions = [
   'manager_update_employee',
   'record_platform_admin_webauthn_failure',
   'register_platform_admin_webauthn_credential',
+  'request_platform_admin_first_enrollment',
   'require_manager_store',
   'require_platform_admin_context',
   'resolve_platform_admin_session',
@@ -140,6 +152,7 @@ interface FunctionSecurity {
   ownerName: string;
   publicCanExecute: boolean;
   migrationRunnerCanExecute: boolean;
+  platformAdminOperatorCanExecute: boolean;
   platformAdminRuntimeCanExecute: boolean;
   runtimeCanExecute: boolean;
   securityDefiner: boolean;
@@ -214,7 +227,8 @@ const inspectMigratedSchema = async (): Promise<void> => {
            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
            'campaigns', 'campaign_progress_entries', 'platform_admins',
            'platform_admin_identities', 'platform_admin_sessions', 'platform_admin_audit_events',
-           'platform_admin_webauthn_challenges', 'platform_admin_webauthn_credentials'
+           'platform_admin_first_enrollment_requests', 'platform_admin_webauthn_challenges',
+           'platform_admin_webauthn_credentials'
          )
        ORDER BY relation.relname`,
       { type: QueryTypes.SELECT },
@@ -235,7 +249,10 @@ const inspectMigratedSchema = async (): Promise<void> => {
          ) AS "platformAdminRuntimeCanExecute",
          has_function_privilege(
            :migrationRunner, procedure.oid, 'EXECUTE'
-         ) AS "migrationRunnerCanExecute"
+         ) AS "migrationRunnerCanExecute",
+         has_function_privilege(
+           :platformAdminOperator, procedure.oid, 'EXECUTE'
+         ) AS "platformAdminOperatorCanExecute"
        FROM pg_proc procedure
        JOIN pg_namespace namespace ON namespace.oid = procedure.pronamespace
        JOIN pg_roles owner ON owner.oid = procedure.proowner
@@ -245,6 +262,7 @@ const inspectMigratedSchema = async (): Promise<void> => {
       {
         replacements: {
           migrationRunner: databaseRoles.migrationRunner,
+          platformAdminOperator: databaseRoles.platformAdminOperator,
           platformAdminRuntime: databaseRoles.platformAdminRuntime,
           runtime: databaseRoles.runtime,
         },
@@ -313,13 +331,19 @@ const inspectMigratedSchema = async (): Promise<void> => {
         type: QueryTypes.SELECT,
       },
     );
+    const hasFirstEnrollmentRequestIndex = await hasFirstEnrollmentRequestUniqueIndex(database);
 
     validationStage = 'tables';
     const tableNames = names(tables);
     const constraintNames = new Set(names(constraints));
     const indexNames = new Set(names(indexes));
     const missingConstraints = requiredConstraints.filter((name) => !constraintNames.has(name));
-    const missingIndexes = requiredIndexes.filter((name) => !indexNames.has(name));
+    const missingIndexes: string[] = requiredIndexes.filter((name) => !indexNames.has(name));
+    if (!hasFirstEnrollmentRequestIndex) {
+      missingIndexes.push(
+        'unique partial index on platform_admin_webauthn_challenges(first_enrollment_request_id)',
+      );
+    }
     assert.deepEqual(tableNames, [...expectedTables]);
     validationStage = 'constraints';
     if (missingConstraints.length > 0) {
@@ -376,12 +400,17 @@ const inspectMigratedSchema = async (): Promise<void> => {
       'list_platform_admin_webauthn_credentials',
       'record_platform_admin_webauthn_failure',
       'register_platform_admin_webauthn_credential',
+      'request_platform_admin_first_enrollment',
       'resolve_platform_admin_session',
       'revoke_platform_admin_session',
     ]);
     const migrationRunnerExecutableFunctions = new Set([
       'bootstrap_first_manager',
       'bootstrap_platform_admin',
+    ]);
+    const platformAdminOperatorExecutableFunctions = new Set([
+      'approve_platform_admin_first_enrollment',
+      'get_platform_admin_first_enrollment_request_status',
     ]);
     assert.ok(
       functions.every(
@@ -390,6 +419,7 @@ const inspectMigratedSchema = async (): Promise<void> => {
           hasFixedSearchPath,
           migrationRunnerCanExecute,
           ownerName,
+          platformAdminOperatorCanExecute,
           platformAdminRuntimeCanExecute,
           publicCanExecute,
           runtimeCanExecute,
@@ -402,7 +432,9 @@ const inspectMigratedSchema = async (): Promise<void> => {
           runtimeCanExecute === runtimeExecutableFunctions.has(functionName) &&
           platformAdminRuntimeCanExecute ===
             platformAdminRuntimeExecutableFunctions.has(functionName) &&
-          migrationRunnerCanExecute === migrationRunnerExecutableFunctions.has(functionName),
+          migrationRunnerCanExecute === migrationRunnerExecutableFunctions.has(functionName) &&
+          platformAdminOperatorCanExecute ===
+            platformAdminOperatorExecutableFunctions.has(functionName),
       ),
     );
     validationStage = 'runtime-grants';

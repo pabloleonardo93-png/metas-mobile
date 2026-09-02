@@ -5,6 +5,7 @@ import type { Sequelize, Transaction } from 'sequelize';
 
 import { loadEnv } from '../src/config/env.js';
 import { parsePlatformAdminBootstrapInput } from '../src/database/admin/platformAdminBootstrapInput.js';
+import { assertPlatformAdminOperatorConnectionSecurity } from '../src/database/connectionSecurity.js';
 import { databaseRoles } from '../src/database/roles.js';
 import { generateSessionToken, hashSessionToken } from '../src/modules/auth/sessionToken.js';
 import { InvalidGoogleIdTokenError } from '../src/modules/auth/googleIdTokenVerifier.js';
@@ -12,6 +13,8 @@ import { PostgresPlatformAdminAuthenticationService } from '../src/modules/platf
 import { requireRecentPlatformAdminStepUp } from '../src/modules/platformAdmin/requireRecentPlatformAdminStepUp.js';
 import { AppError } from '../src/shared/errors/AppError.js';
 import { withPlatformAdminDatabaseContext } from '../src/shared/database/withPlatformAdminDatabaseContext.js';
+
+const testRateLimitKeySecret = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 await test('platform admin database context rejects invalid authority before transaction', async () => {
   let transactionOpened = false;
@@ -97,7 +100,53 @@ await test('platform admin remains outside employee roles and has a dedicated da
   const employeeRoles = ['BALCONISTA', 'CAIXA', 'FARMACEUTICO', 'GESTOR'];
   assert.equal(employeeRoles.includes('PLATFORM_ADMIN'), false);
   assert.equal(databaseRoles.platformAdminRuntime, 'metas_platform_admin_runtime');
+  assert.equal(databaseRoles.platformAdminOperator, 'metas_platform_admin_operator');
+  assert.notEqual(databaseRoles.platformAdminOperator, databaseRoles.migrationRunner);
   assert.notEqual(databaseRoles.platformAdminRuntime, databaseRoles.runtime);
+});
+
+await test('first enrollment operator guard accepts only the dedicated current_user', async () => {
+  const createRoleDatabase = (roleName: string) =>
+    ({
+      query: (sql: string): Promise<unknown> =>
+        Promise.resolve(
+          sql.includes('current_user::TEXT')
+            ? [
+                {
+                  bypassRls: false,
+                  canCreateDatabase: false,
+                  canCreateRole: false,
+                  canLogin: true,
+                  canReplicate: false,
+                  isMemberMigrationOwner: roleName === databaseRoles.migrationRunner,
+                  isMemberMigrationRunner: roleName === databaseRoles.migrationRunner,
+                  isMemberPlatformAdminOperator: roleName === databaseRoles.platformAdminOperator,
+                  isMemberPlatformAdminRuntime: roleName === databaseRoles.platformAdminRuntime,
+                  isMemberRuntime: roleName === databaseRoles.runtime,
+                  isSuperuser: roleName === 'postgres',
+                  roleName,
+                },
+              ]
+            : [{ count: '0' }],
+        ),
+    }) as unknown as Sequelize;
+
+  await assert.doesNotReject(
+    assertPlatformAdminOperatorConnectionSecurity(
+      createRoleDatabase(databaseRoles.platformAdminOperator),
+    ),
+  );
+  for (const roleName of [
+    'postgres',
+    databaseRoles.migrationRunner,
+    databaseRoles.runtime,
+    databaseRoles.platformAdminRuntime,
+    'arbitrary_login',
+  ]) {
+    await assert.rejects(
+      assertPlatformAdminOperatorConnectionSecurity(createRoleDatabase(roleName)),
+    );
+  }
 });
 
 await test('platform admin configuration keeps audiences separate and TTL below mobile sessions', () => {
@@ -110,7 +159,19 @@ await test('platform admin configuration keeps audiences separate and TTL below 
     'NODE_ENV',
     'PLATFORM_ADMIN_AUTH_ENABLED',
     'PLATFORM_ADMIN_DATABASE_URL',
+    'PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS',
+    'PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS',
     'PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS',
+    'PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET',
+    'PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL',
+    'PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_STORE',
+    'PLATFORM_ADMIN_RATE_LIMIT_WINDOW_SECONDS',
     'PLATFORM_ADMIN_SESSION_TTL_SECONDS',
     'PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS',
     'PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS',
@@ -133,7 +194,18 @@ await test('platform admin configuration keeps audiences separate and TTL below 
       PLATFORM_ADMIN_AUTH_ENABLED: 'true',
       PLATFORM_ADMIN_DATABASE_URL:
         'postgresql://platform-admin:placeholder@localhost:5432/metas_test',
+      PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS: '300',
+      PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS: '900',
       PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS: '1800',
+      PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX: '10',
+      PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX: '5',
+      PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX: '3',
+      PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX: '5',
+      PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: testRateLimitKeySecret,
+      PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX: '10',
+      PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX: '5',
+      PLATFORM_ADMIN_RATE_LIMIT_STORE: 'memory',
+      PLATFORM_ADMIN_RATE_LIMIT_WINDOW_SECONDS: '900',
       PLATFORM_ADMIN_SESSION_TTL_SECONDS: '28800',
       PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS: 'https://admin.example.test',
       PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS: '300',
@@ -159,7 +231,31 @@ await test('platform admin configuration keeps audiences separate and TTL below 
     process.env.GOOGLE_ADMIN_ALLOWED_CLIENT_IDS = 'admin.apps.googleusercontent.com';
     process.env.DATABASE_SSL = 'true';
     process.env.NODE_ENV = 'production';
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL = 'rediss://redis.example.test:6379';
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'redis';
     assert.doesNotThrow(loadEnv);
+
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'memory';
+    assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_STORE/u);
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'redis';
+
+    delete process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE;
+    assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_STORE/u);
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'redis';
+
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL = 'redis://redis.example.test:6379';
+    assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL/u);
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL = 'rediss://redis.example.test:6379';
+
+    delete process.env.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL;
+    assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL/u);
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL = 'rediss://redis.example.test:6379';
+
+    delete process.env.PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET;
+    assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET/u);
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET = 'short-secret';
+    assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET/u);
+    process.env.PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET = testRateLimitKeySecret;
 
     for (const invalidOrigin of [
       '',
