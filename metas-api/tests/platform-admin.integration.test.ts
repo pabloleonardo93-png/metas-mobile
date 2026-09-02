@@ -880,11 +880,11 @@ if (testDatabases === null) {
           async (transaction) => {
             await platformAdminRuntimeDatabase.query(
               `SELECT * FROM metas.request_platform_admin_first_enrollment(
-                :expiresAt, CAST(:operationRequestId AS UUID), NULL, 'integration-test'
+                CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                CAST(:operationRequestId AS UUID), NULL, 'integration-test'
               )`,
               {
                 replacements: {
-                  expiresAt: new Date(Date.now() + 900_000),
                   operationRequestId: randomUUID(),
                 },
                 transaction,
@@ -913,6 +913,35 @@ if (testDatabases === null) {
         ),
       );
       assert.deepEqual(afterRollback[0], { auditCount: '0', status: 'PENDING' });
+
+      await service.requestFirstEnrollment(rollbackSession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      const afterRetry = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{ auditCount: string; reason: string; status: string }>(
+          `SELECT enrollment_request.status,
+             count(audit.id)::TEXT AS "auditCount",
+             COALESCE(max(audit.metadata->>'reason'), '') AS reason
+           FROM metas.platform_admin_first_enrollment_requests enrollment_request
+           LEFT JOIN metas.platform_admin_audit_events audit
+             ON audit.target_id = enrollment_request.id
+            AND audit.action = 'FIRST_ENROLLMENT_REVOKED'
+           WHERE enrollment_request.id = :requestId
+           GROUP BY enrollment_request.status`,
+          {
+            replacements: { requestId: concurrent[0]?.requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(afterRetry[0], {
+        auditCount: '1',
+        reason: 'SUPERSEDED_BY_NEW_SESSION',
+        status: 'REVOKED',
+      });
     });
 
     await test('expired or stale first enrollment approvals cannot create a challenge', async () => {
