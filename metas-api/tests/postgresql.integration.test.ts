@@ -10,6 +10,7 @@ import {
   assertPlatformAdminOperatorConnectionSecurity,
   assertRuntimeConnectionSecurity,
 } from '../src/database/connectionSecurity.js';
+import { hasFirstEnrollmentRequestUniqueIndex } from '../src/database/admin/inspectFirstEnrollmentRequestIndex.js';
 import { createMigrator } from '../src/database/umzug.js';
 import { withDatabaseContext } from '../src/shared/database/withDatabaseContext.js';
 import { createIntegrationDatabases } from './integrationDatabase.js';
@@ -185,6 +186,26 @@ const createEmployee = async (
 
 const testDatabases = createIntegrationDatabases(5, 2);
 
+const inspectReplacementFirstEnrollmentRequestIndex = async (
+  database: Sequelize,
+  replacementDdl?: string,
+): Promise<boolean> => {
+  const transaction = await database.transaction();
+  try {
+    await database.query('SET LOCAL ROLE metas_migration_owner', { transaction });
+    await database.query(
+      'DROP INDEX metas.platform_admin_webauthn_challenges_first_enrollment_request_uni',
+      { transaction },
+    );
+    if (replacementDdl) {
+      await database.query(replacementDdl, { transaction });
+    }
+    return await hasFirstEnrollmentRequestUniqueIndex(database, transaction);
+  } finally {
+    await transaction.rollback();
+  }
+};
+
 if (testDatabases === null) {
   await test('PostgreSQL integration tests require dedicated test URLs', {
     skip: 'TEST_DATABASE_URL and TEST_MIGRATION_DATABASE_URL are not configured.',
@@ -204,6 +225,71 @@ if (testDatabases === null) {
     await test('migrations are fully applied', async () => {
       const pending = await createMigrator(migrationDatabase).pending();
       assert.equal(pending.length, 0);
+    });
+
+    await test('inspector accepts the structurally correct truncated first-enrollment index', async () => {
+      const indexes = await migrationDatabase.query<{ name: string }>(
+        `SELECT index_relation.relname::TEXT AS name
+         FROM pg_catalog.pg_index index_metadata
+         JOIN pg_catalog.pg_class table_relation
+           ON table_relation.oid = index_metadata.indrelid
+         JOIN pg_catalog.pg_namespace table_namespace
+           ON table_namespace.oid = table_relation.relnamespace
+         JOIN pg_catalog.pg_class index_relation
+           ON index_relation.oid = index_metadata.indexrelid
+         WHERE table_namespace.nspname = 'metas'
+           AND table_relation.relname = 'platform_admin_webauthn_challenges'
+           AND index_metadata.indisunique = TRUE
+           AND index_metadata.indpred IS NOT NULL`,
+        { type: QueryTypes.SELECT },
+      );
+      const actualName = indexes.find(({ name }) =>
+        name.startsWith('platform_admin_webauthn_challenges_first_enrollment_request_'),
+      )?.name;
+
+      assert.equal(actualName, 'platform_admin_webauthn_challenges_first_enrollment_request_uni');
+      assert.equal(Buffer.byteLength(actualName), 63);
+      assert.equal(await hasFirstEnrollmentRequestUniqueIndex(migrationDatabase), true);
+    });
+
+    await test('inspector rejects a first-enrollment unique index on the wrong column', async () => {
+      assert.equal(
+        await inspectReplacementFirstEnrollmentRequestIndex(
+          migrationDatabase,
+          `CREATE UNIQUE INDEX first_enrollment_wrong_column_test_idx
+           ON metas.platform_admin_webauthn_challenges (id)
+           WHERE first_enrollment_request_id IS NOT NULL`,
+        ),
+        false,
+      );
+    });
+
+    await test('inspector rejects a non-unique first-enrollment index', async () => {
+      assert.equal(
+        await inspectReplacementFirstEnrollmentRequestIndex(
+          migrationDatabase,
+          `CREATE INDEX first_enrollment_non_unique_test_idx
+           ON metas.platform_admin_webauthn_challenges (first_enrollment_request_id)
+           WHERE first_enrollment_request_id IS NOT NULL`,
+        ),
+        false,
+      );
+    });
+
+    await test('inspector rejects a first-enrollment index with the wrong predicate', async () => {
+      assert.equal(
+        await inspectReplacementFirstEnrollmentRequestIndex(
+          migrationDatabase,
+          `CREATE UNIQUE INDEX first_enrollment_wrong_predicate_test_idx
+           ON metas.platform_admin_webauthn_challenges (first_enrollment_request_id)
+           WHERE first_enrollment_request_id IS NULL`,
+        ),
+        false,
+      );
+    });
+
+    await test('inspector rejects a missing first-enrollment index', async () => {
+      assert.equal(await inspectReplacementFirstEnrollmentRequestIndex(migrationDatabase), false);
     });
 
     await test('database constraints reject duplicate email and employee membership', async () => {

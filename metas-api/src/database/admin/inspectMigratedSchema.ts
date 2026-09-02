@@ -6,6 +6,7 @@ import { createDatabaseFromParameters, disconnectDatabase } from '../../config/d
 import { loadNorthflankMigrationDatabaseEnv } from '../../config/env.js';
 import { logger } from '../../shared/logging/logger.js';
 import { databaseRoles } from '../roles.js';
+import { hasFirstEnrollmentRequestUniqueIndex } from './inspectFirstEnrollmentRequestIndex.js';
 
 const expectedTables = [
   'auth_identities',
@@ -91,7 +92,6 @@ const requiredIndexes = [
   'platform_admin_identities_admin_idx',
   'platform_admin_sessions_active_expiration_idx',
   'platform_admin_webauthn_challenges_expiration_idx',
-  'platform_admin_webauthn_challenges_first_enrollment_request_unique',
   'platform_admin_webauthn_challenges_session_active_idx',
   'platform_admin_webauthn_credentials_admin_active_idx',
   'sessions_active_expiration_idx',
@@ -331,13 +331,19 @@ const inspectMigratedSchema = async (): Promise<void> => {
         type: QueryTypes.SELECT,
       },
     );
+    const hasFirstEnrollmentRequestIndex = await hasFirstEnrollmentRequestUniqueIndex(database);
 
     validationStage = 'tables';
     const tableNames = names(tables);
     const constraintNames = new Set(names(constraints));
     const indexNames = new Set(names(indexes));
     const missingConstraints = requiredConstraints.filter((name) => !constraintNames.has(name));
-    const missingIndexes = requiredIndexes.filter((name) => !indexNames.has(name));
+    const missingIndexes: string[] = requiredIndexes.filter((name) => !indexNames.has(name));
+    if (!hasFirstEnrollmentRequestIndex) {
+      missingIndexes.push(
+        'unique partial index on platform_admin_webauthn_challenges(first_enrollment_request_id)',
+      );
+    }
     assert.deepEqual(tableNames, [...expectedTables]);
     validationStage = 'constraints';
     if (missingConstraints.length > 0) {
