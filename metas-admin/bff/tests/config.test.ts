@@ -18,6 +18,17 @@ describe('BFF configuration', () => {
     expect(config.isProduction).toBe(true);
   });
 
+  it('accepts an exact Vercel production origin without deriving preview hosts', () => {
+    const config = loadConfig({
+      ...baseEnvironment,
+      METAS_ADMIN_EXPECTED_HOST: 'project-name.vercel.app',
+      METAS_ADMIN_PUBLIC_ORIGIN: 'https://project-name.vercel.app',
+    });
+
+    expect(config.expectedHost).toBe('project-name.vercel.app');
+    expect(config.publicOrigin).toBe('https://project-name.vercel.app');
+  });
+
   it('fails closed when Host differs from the trusted Origin', () => {
     expect(() =>
       loadConfig({ ...baseEnvironment, METAS_ADMIN_EXPECTED_HOST: 'evil.example.test' }),
@@ -32,6 +43,21 @@ describe('BFF configuration', () => {
         METAS_ADMIN_PUBLIC_ORIGIN: 'http://localhost:5173',
       }),
     ).toThrow(/HTTPS/u);
+  });
+
+  it.each([
+    ['localhost', 'https://localhost'],
+    ['127.0.0.1', 'https://127.0.0.1'],
+    ['project-name.vercel.app:8443', 'https://project-name.vercel.app:8443'],
+    ['*.vercel.app', 'https://*.vercel.app'],
+  ])('rejects non-production or wildcard host %s in production', (host, origin) => {
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        METAS_ADMIN_EXPECTED_HOST: host,
+        METAS_ADMIN_PUBLIC_ORIGIN: origin,
+      }),
+    ).toThrow(/hostname de produção sem porta/u);
   });
 
   it('requires a sufficiently strong CSRF secret', () => {

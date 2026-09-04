@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 import { z } from 'zod';
 
 const rawEnvironmentSchema = z.object({
@@ -38,6 +40,13 @@ const parseOrigin = (value: string, field: string): URL => {
   return url;
 };
 
+const isProductionHostname = (hostname: string): boolean =>
+  hostname !== 'localhost' &&
+  isIP(hostname) === 0 &&
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(
+    hostname,
+  );
+
 export const loadConfig = (environment: NodeJS.ProcessEnv = process.env): AdminBffConfig => {
   const parsed = rawEnvironmentSchema.parse(environment);
   const publicOrigin = parseOrigin(parsed.METAS_ADMIN_PUBLIC_ORIGIN, 'METAS_ADMIN_PUBLIC_ORIGIN');
@@ -49,6 +58,9 @@ export const loadConfig = (environment: NodeJS.ProcessEnv = process.env): AdminB
   }
   if (isProduction && (publicOrigin.protocol !== 'https:' || apiBaseUrl.protocol !== 'https:')) {
     throw new Error('As origens do Admin e da API devem usar HTTPS em produção.');
+  }
+  if (isProduction && (publicOrigin.port || !isProductionHostname(publicOrigin.hostname))) {
+    throw new Error('METAS_ADMIN_PUBLIC_ORIGIN deve usar um hostname de produção sem porta.');
   }
 
   return {
