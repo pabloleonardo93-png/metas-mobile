@@ -5,6 +5,7 @@ import type { Sequelize, Transaction } from 'sequelize';
 
 import { loadEnv } from '../src/config/env.js';
 import { parsePlatformAdminBootstrapInput } from '../src/database/admin/platformAdminBootstrapInput.js';
+import { parsePlatformAdminMfaRecoveryOperationalInput } from '../src/database/admin/platformAdminMfaRecoveryInput.js';
 import { assertPlatformAdminOperatorConnectionSecurity } from '../src/database/connectionSecurity.js';
 import { databaseRoles } from '../src/database/roles.js';
 import { generateSessionToken, hashSessionToken } from '../src/modules/auth/sessionToken.js';
@@ -149,6 +150,24 @@ await test('first enrollment operator guard accepts only the dedicated current_u
   }
 });
 
+await test('MFA recovery operator input requires an explicit request and bounded approval TTL', () => {
+  const requestId = '11111111-1111-4111-8111-111111111111';
+  assert.deepEqual(
+    parsePlatformAdminMfaRecoveryOperationalInput({
+      PLATFORM_ADMIN_MFA_RECOVERY_APPROVAL_TTL_SECONDS: '180',
+      PLATFORM_ADMIN_MFA_RECOVERY_REQUEST_ID: requestId,
+    }),
+    { approvalTtlSeconds: 180, requestId },
+  );
+  assert.throws(() => parsePlatformAdminMfaRecoveryOperationalInput({}));
+  assert.throws(() =>
+    parsePlatformAdminMfaRecoveryOperationalInput({
+      PLATFORM_ADMIN_MFA_RECOVERY_APPROVAL_TTL_SECONDS: '301',
+      PLATFORM_ADMIN_MFA_RECOVERY_REQUEST_ID: requestId,
+    }),
+  );
+});
+
 await test('platform admin configuration keeps audiences separate and TTL below mobile sessions', () => {
   const keys = [
     'DATABASE_SSL',
@@ -162,10 +181,14 @@ await test('platform admin configuration keeps audiences separate and TTL below 
     'PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS',
     'PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS',
     'PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS',
+    'PLATFORM_ADMIN_MFA_RECOVERY_PENDING_TTL_SECONDS',
     'PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX',
     'PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX',
     'PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX',
     'PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_OPTIONS_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_REQUEST_MAX',
+    'PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_VERIFY_MAX',
     'PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET',
     'PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL',
     'PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX',
@@ -197,10 +220,14 @@ await test('platform admin configuration keeps audiences separate and TTL below 
       PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS: '300',
       PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS: '900',
       PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS: '1800',
+      PLATFORM_ADMIN_MFA_RECOVERY_PENDING_TTL_SECONDS: '900',
       PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX: '10',
       PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX: '5',
       PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX: '3',
       PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX: '5',
+      PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_OPTIONS_MAX: '3',
+      PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_REQUEST_MAX: '2',
+      PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_VERIFY_MAX: '3',
       PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: testRateLimitKeySecret,
       PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX: '10',
       PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX: '5',

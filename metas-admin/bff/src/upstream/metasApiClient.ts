@@ -8,6 +8,9 @@ export type MetasApiPath =
   | '/v1/platform-admin/auth/logout'
   | '/v1/platform-admin/me'
   | '/v1/platform-admin/mfa/first-enrollment/request'
+  | '/v1/platform-admin/mfa/recovery/request'
+  | '/v1/platform-admin/mfa/recovery/webauthn/options'
+  | '/v1/platform-admin/mfa/recovery/webauthn/verify'
   | '/v1/platform-admin/mfa/webauthn/authentication/options'
   | '/v1/platform-admin/mfa/webauthn/authentication/verify'
   | '/v1/platform-admin/mfa/webauthn/registration/options'
@@ -32,6 +35,9 @@ const allowedErrorCodes = new Set([
   'FIRST_ENROLLMENT_NOT_ALLOWED',
   'INVALID_GOOGLE_TOKEN',
   'INVALID_INPUT',
+  'MFA_RECOVERY_APPROVAL_REQUIRED',
+  'MFA_RECOVERY_NOT_ALLOWED',
+  'MFA_RECOVERY_REQUEST_ALREADY_ACTIVE',
   'PLATFORM_ADMIN_ACCESS_NOT_AUTHORIZED',
   'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE',
   'TOO_MANY_REQUESTS',
@@ -51,6 +57,15 @@ const errorMessageFor = (status: number, code: string): string => {
   }
   if (code === 'FIRST_ENROLLMENT_NOT_ALLOWED') {
     return 'O primeiro cadastro de passkey não está disponível para esta sessão.';
+  }
+  if (code === 'MFA_RECOVERY_APPROVAL_REQUIRED') {
+    return 'A aprovação operacional da recuperação ainda é necessária.';
+  }
+  if (code === 'MFA_RECOVERY_NOT_ALLOWED') {
+    return 'A recuperação de MFA não está disponível para esta sessão.';
+  }
+  if (code === 'MFA_RECOVERY_REQUEST_ALREADY_ACTIVE') {
+    return 'Já existe uma recuperação ativa para este administrador.';
   }
   if (code === 'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE') {
     return 'A autenticação administrativa está temporariamente indisponível.';

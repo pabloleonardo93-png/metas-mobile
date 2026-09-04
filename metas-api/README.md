@@ -24,12 +24,12 @@ Cada finalidade utiliza um login PostgreSQL diferente:
 ```text
 DATABASE_URL             API em runtime
 PLATFORM_ADMIN_DATABASE_URL runtime isolado do domínio administrativo
-PLATFORM_ADMIN_OPERATOR_DATABASE_URL operações controladas de first enrollment
+PLATFORM_ADMIN_OPERATOR_DATABASE_URL operações controladas de enrollment e recovery
 MIGRATION_DATABASE_URL   execução de migrations
 ADMIN_DATABASE_URL       bootstrap explícito da infraestrutura PostgreSQL
 ```
 
-`metas_migration_owner` é `NOLOGIN` e proprietário do schema e dos objetos. `metas_migration_runner`, `metas_app_runtime`, `metas_platform_admin_runtime` e `metas_platform_admin_operator` são logins separados usados, respectivamente, por migrations, pela API das farmácias, pelo runtime administrativo e pelas duas operações controladas de first enrollment. O bootstrap não define senhas; credenciais e permissão de conexão são configuradas localmente pela administração do PostgreSQL e nunca ficam no repositório.
+`metas_migration_owner` é `NOLOGIN` e proprietário do schema e dos objetos. `metas_migration_runner`, `metas_app_runtime`, `metas_platform_admin_runtime` e `metas_platform_admin_operator` são logins separados usados, respectivamente, por migrations, pela API das farmácias, pelo runtime administrativo e pelas operações controladas de enrollment/recovery. O bootstrap não define senhas; credenciais e permissão de conexão são configuradas localmente pela administração do PostgreSQL e nunca ficam no repositório.
 
 O bootstrap remove atributos elevados desses logins. A API e o migrator também verificam na conexão real o nome exato do role, `LOGIN`, ausência de superuser, `BYPASSRLS`, criação de roles/bancos e replicação, além das memberships incompatíveis.
 
@@ -200,6 +200,8 @@ npm run platform-admin:bootstrap provisiona explicitamente uma identidade admini
 npm run platform-admin:bootstrap:northflank provisiona via conexão de migration no Northflank
 npm run platform-admin:first-enrollment:status consulta uma solicitação pela operator dedicada
 npm run platform-admin:first-enrollment:approve aprova temporariamente o primeiro enrollment
+npm run platform-admin:recovery:status consulta uma solicitação de recovery
+npm run platform-admin:recovery:approve aprova temporariamente o recovery
 npm run format              formata arquivos
 npm run format:check        verifica formatação
 ```
@@ -251,7 +253,7 @@ O login possui rate limit em memória adequado ao processo único do MVP. Antes 
 
 ## Fundação do administrador da plataforma
 
-O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. As migrations 013 a 015 criam identidades Google previamente provisionadas, sessões administrativas opacas, autenticação WebAuthn/passkeys, controle operacional do primeiro enrollment e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
+O domínio `platform-admin` é independente de usuários, funcionários, cargos e sessões das farmácias. As migrations 013 a 016 criam identidades Google previamente provisionadas, sessões administrativas opacas, autenticação WebAuthn/passkeys, controle operacional do primeiro enrollment, recovery de MFA e uma trilha de auditoria append-only. A role `metas_platform_admin_runtime` não tem acesso direto às tabelas: ela executa apenas funções administrativas explícitas, com RLS forçada e contexto transacional próprio.
 
 Rotas desta fase:
 
@@ -260,6 +262,9 @@ POST /v1/platform-admin/auth/google
 POST /v1/platform-admin/auth/logout
 GET  /v1/platform-admin/me
 POST /v1/platform-admin/mfa/first-enrollment/request
+POST /v1/platform-admin/mfa/recovery/request
+POST /v1/platform-admin/mfa/recovery/webauthn/options
+POST /v1/platform-admin/mfa/recovery/webauthn/verify
 POST /v1/platform-admin/mfa/webauthn/registration/options
 POST /v1/platform-admin/mfa/webauthn/registration/verify
 POST /v1/platform-admin/mfa/webauthn/authentication/options
@@ -295,6 +300,8 @@ PLATFORM_ADMIN_WEBAUTHN_CHALLENGE_TTL_SECONDS
 PLATFORM_ADMIN_WEBAUTHN_STEP_UP_TTL_SECONDS
 PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS
 PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS
+PLATFORM_ADMIN_MFA_RECOVERY_PENDING_TTL_SECONDS
+PLATFORM_ADMIN_MFA_RECOVERY_APPROVAL_TTL_SECONDS
 PLATFORM_ADMIN_RATE_LIMIT_STORE
 PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL
 PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET
@@ -323,9 +330,13 @@ PLATFORM_ADMIN_FIRST_ENROLLMENT_APPROVAL_TTL_SECONDS
 ```bash
 npm run platform-admin:first-enrollment:status
 npm run platform-admin:first-enrollment:approve
+npm run platform-admin:recovery:status
+npm run platform-admin:recovery:approve
 ```
 
-No Northflank, as variantes `:northflank` dessas operações devem ser executadas futuramente por um Job operacional separado, como `metas-platform-admin-ops`, usando um Secret Group exclusivo e senha diferente da migration runner. O canal `metas-db-admin` continua reservado ao bootstrap privilegiado de roles e a migrations administrativas excepcionais. A API, o BFF e o browser nunca recebem a credencial da operator. Passkeys adicionais exigem `MFA_VERIFIED` e step-up recente. Revogação, remoção da última credencial e recuperação administrativa permanecem fora desta fase para evitar um bypass inseguro.
+No Northflank, as variantes `:northflank` dessas operações devem ser executadas futuramente por um Job operacional separado, como `metas-platform-admin-ops`, usando um Secret Group exclusivo e senha diferente da migration runner. O canal `metas-db-admin` continua reservado ao bootstrap privilegiado de roles e a migrations administrativas excepcionais. A API, o BFF e o browser nunca recebem a credencial da operator. Passkeys adicionais exigem `MFA_VERIFIED` e step-up recente.
+
+O recovery inicial exige uma sessão Google válida com passkey ativa, uma solicitação curta e aprovação independente. Ao consumir a aprovação, a API revoga atomicamente as passkeys anteriores e as demais sessões, mantendo a sessão vinculada como `GOOGLE_ONLY`. A nova passkey e a rotação do bearer só são concluídas após verificação WebAuthn. Se a cerimônia for cancelada, falhar ou expirar, uma nova solicitação de recovery encerra o fluxo anterior, invalida seu challenge e volta a `PENDING`; toda tentativa exige nova aprovação da operator. O banco permite esse retry somente quando existe histórico de recovery iniciado, enquanto o first enrollment exige ausência total de histórico de credentials. Passkeys e sessões revogadas nunca são reativadas. A identidade do operador ainda é representada honestamente como `PLATFORM_ADMIN_OPERATOR_CLI`, até existir identidade operacional individual.
 
 No futuro `metas-admin`, o BFF deverá manter a credencial somente em cookie `__Host-*`, `HttpOnly`, `Secure`, `SameSite` e `Path=/`, sem expô-la a Client Components. Mutações deverão validar `Origin`/`Host` e usar proteção CSRF vinculada à sessão; `SameSite` não é defesa suficiente isoladamente.
 

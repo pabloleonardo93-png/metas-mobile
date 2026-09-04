@@ -18,6 +18,7 @@ import {
 } from '../src/modules/platformAdmin/platformAdminRateLimiter.js';
 import type {
   PlatformAdminFirstEnrollmentRequestResult,
+  PlatformAdminMfaRecoveryRequestResult,
   PlatformAdminWebAuthnAuthenticationOptionsResult,
   PlatformAdminWebAuthnService,
   PlatformAdminWebAuthnVerificationResult,
@@ -49,6 +50,7 @@ const meResult: PlatformAdminMeResult = {
   assuranceLevel: 'GOOGLE_ONLY',
   displayName: 'Admin Teste',
   hasWebAuthnCredential: false,
+  hasWebAuthnCredentialHistory: false,
   id: platformSession.platformAdminId,
   primaryEmail: 'admin@example.test',
   status: 'ACTIVE',
@@ -106,6 +108,15 @@ class FakePlatformAdminWebAuthnService implements PlatformAdminWebAuthnService {
     });
   }
 
+  public requestMfaRecovery(): Promise<PlatformAdminMfaRecoveryRequestResult> {
+    return Promise.resolve({
+      approvalExpiresAt: null,
+      expiresAt: '2026-09-01T12:15:00.000Z',
+      requestId: '018f47a1-3d11-7c14-a8bf-0242ac120023',
+      status: 'PENDING',
+    });
+  }
+
   public createAuthenticationOptions(): Promise<PlatformAdminWebAuthnAuthenticationOptionsResult> {
     return Promise.resolve({
       challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120020',
@@ -130,12 +141,23 @@ class FakePlatformAdminWebAuthnService implements PlatformAdminWebAuthnService {
     });
   }
 
+  public createRecoveryRegistrationOptions(): ReturnType<
+    PlatformAdminWebAuthnService['createRecoveryRegistrationOptions']
+  > {
+    return this.createRegistrationOptions();
+  }
+
   public verifyAuthentication(): Promise<PlatformAdminWebAuthnVerificationResult> {
     this.authenticationVerifications += 1;
     return Promise.resolve(webAuthnVerificationResult);
   }
 
   public verifyRegistration(): Promise<PlatformAdminWebAuthnVerificationResult> {
+    this.registrationVerifications += 1;
+    return Promise.resolve(webAuthnVerificationResult);
+  }
+
+  public verifyRecoveryRegistration(): Promise<PlatformAdminWebAuthnVerificationResult> {
     this.registrationVerifications += 1;
     return Promise.resolve(webAuthnVerificationResult);
   }
@@ -154,6 +176,9 @@ const createRateLimiter = (
   return new MemoryPlatformAdminRateLimiter('test-rate-limit-key-secret-32-bytes', {
     FIRST_ENROLLMENT_REQUEST: policy,
     GOOGLE_LOGIN: policy,
+    MFA_RECOVERY_OPTIONS: policy,
+    MFA_RECOVERY_REQUEST: policy,
+    MFA_RECOVERY_VERIFY: policy,
     WEBAUTHN_AUTHENTICATION_OPTIONS: policy,
     WEBAUTHN_AUTHENTICATION_VERIFY: policy,
     WEBAUTHN_REGISTRATION_OPTIONS: policy,
@@ -346,6 +371,59 @@ await test('first enrollment request is strict and exposes only operational stat
   assert.equal(body.status, 'PENDING');
   assert.equal(body.requestId, '018f47a1-3d11-7c14-a8bf-0242ac120022');
   assert.doesNotMatch(response.text, /token|challenge|google|subject|secret/iu);
+});
+
+await test('MFA recovery routes are explicit, strict and return only controlled contracts', async () => {
+  const webAuthnService = new FakePlatformAdminWebAuthnService();
+  const app = createPlatformAdminTestApp({
+    logger,
+    platformAdminAuthenticationService: new FakePlatformAdminAuthenticationService(),
+    platformAdminWebAuthnService: webAuthnService,
+  });
+  const authorization = `Bearer ${platformToken}`;
+  const requestPath = '/v1/platform-admin/mfa/recovery/request';
+  await request(app)
+    .post(requestPath)
+    .set('Authorization', authorization)
+    .send({ approved: true, platformAdminId: platformSession.platformAdminId })
+    .expect(422);
+  const recoveryRequest = await request(app)
+    .post(requestPath)
+    .set('Authorization', authorization)
+    .send({})
+    .expect(202);
+  assert.deepEqual(parseJson<PlatformAdminMfaRecoveryRequestResult>(recoveryRequest.text), {
+    approvalExpiresAt: null,
+    expiresAt: '2026-09-01T12:15:00.000Z',
+    requestId: '018f47a1-3d11-7c14-a8bf-0242ac120023',
+    status: 'PENDING',
+  });
+  await request(app)
+    .post('/v1/platform-admin/mfa/recovery/webauthn/options')
+    .set('Authorization', authorization)
+    .send({ tokenVersion: 1 })
+    .expect(422);
+  await request(app)
+    .post('/v1/platform-admin/mfa/recovery/webauthn/options')
+    .set('Authorization', authorization)
+    .send({})
+    .expect(200);
+  await request(app)
+    .post('/v1/platform-admin/mfa/recovery/webauthn/verify')
+    .set('Authorization', authorization)
+    .send({
+      assuranceLevel: 'MFA_VERIFIED',
+      challengeId: '018f47a1-3d11-7c14-a8bf-0242ac120021',
+      response: {
+        clientExtensionResults: {},
+        id: 'credential_id',
+        rawId: 'credential_id',
+        response: { attestationObject: 'attestation', clientDataJSON: 'client_data' },
+        type: 'public-key',
+      },
+    })
+    .expect(422);
+  assert.equal(webAuthnService.registrationVerifications, 0);
 });
 
 await test('platform admin routes fail closed when the shared limiter is unavailable', async () => {

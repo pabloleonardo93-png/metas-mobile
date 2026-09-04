@@ -124,6 +124,12 @@ const rawEnvSchema = z
       .min(60)
       .max(300)
       .default(300),
+    PLATFORM_ADMIN_MFA_RECOVERY_PENDING_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(300)
+      .max(900)
+      .default(900),
     PLATFORM_ADMIN_RATE_LIMIT_STORE: z.enum(['memory', 'redis']).optional(),
     PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL: redisUrlSchema.optional(),
     PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: platformAdminRateLimitKeySecretSchema.optional(),
@@ -143,6 +149,11 @@ const rawEnvSchema = z
       platformAdminRateLimitValueSchema.default(5),
     PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX:
       platformAdminRateLimitValueSchema.default(3),
+    PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_REQUEST_MAX:
+      platformAdminRateLimitValueSchema.default(2),
+    PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_OPTIONS_MAX:
+      platformAdminRateLimitValueSchema.default(3),
+    PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_VERIFY_MAX: platformAdminRateLimitValueSchema.default(3),
     SESSION_TTL_SECONDS: z.coerce.number().int().min(300).max(2_592_000).default(604_800),
   })
   .superRefine((environment, context) => {
@@ -350,10 +361,14 @@ export interface AppEnv {
   platformAdminFirstEnrollmentApprovalTtlSeconds: number;
   platformAdminFirstEnrollmentPendingTtlSeconds: number;
   platformAdminIdleTimeoutSeconds: number;
+  platformAdminMfaRecoveryPendingTtlSeconds: number;
   platformAdminRateLimitAuthenticationOptionsMax: number;
   platformAdminRateLimitAuthenticationVerifyMax: number;
   platformAdminRateLimitFirstEnrollmentRequestMax: number;
   platformAdminRateLimitGoogleLoginMax: number;
+  platformAdminRateLimitMfaRecoveryOptionsMax: number;
+  platformAdminRateLimitMfaRecoveryRequestMax: number;
+  platformAdminRateLimitMfaRecoveryVerifyMax: number;
   platformAdminRateLimitKeySecret: string | undefined;
   platformAdminRateLimitRedisUrl: string | undefined;
   platformAdminRateLimitRegistrationOptionsMax: number;
@@ -463,6 +478,8 @@ export const loadEnv = (): AppEnv => {
     platformAdminFirstEnrollmentPendingTtlSeconds:
       parsed.data.PLATFORM_ADMIN_FIRST_ENROLLMENT_PENDING_TTL_SECONDS,
     platformAdminIdleTimeoutSeconds: parsed.data.PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS,
+    platformAdminMfaRecoveryPendingTtlSeconds:
+      parsed.data.PLATFORM_ADMIN_MFA_RECOVERY_PENDING_TTL_SECONDS,
     platformAdminRateLimitAuthenticationOptionsMax:
       parsed.data.PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX,
     platformAdminRateLimitAuthenticationVerifyMax:
@@ -470,6 +487,12 @@ export const loadEnv = (): AppEnv => {
     platformAdminRateLimitFirstEnrollmentRequestMax:
       parsed.data.PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX,
     platformAdminRateLimitGoogleLoginMax: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX,
+    platformAdminRateLimitMfaRecoveryOptionsMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_OPTIONS_MAX,
+    platformAdminRateLimitMfaRecoveryRequestMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_REQUEST_MAX,
+    platformAdminRateLimitMfaRecoveryVerifyMax:
+      parsed.data.PLATFORM_ADMIN_RATE_LIMIT_MFA_RECOVERY_VERIFY_MAX,
     platformAdminRateLimitKeySecret: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET,
     platformAdminRateLimitRedisUrl: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL,
     platformAdminRateLimitRegistrationOptionsMax:

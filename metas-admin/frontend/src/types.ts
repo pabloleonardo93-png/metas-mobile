@@ -4,6 +4,7 @@ export interface AdminIdentity {
   assuranceLevel: AssuranceLevel;
   displayName: string;
   hasWebAuthnCredential: boolean;
+  hasWebAuthnCredentialHistory: boolean;
   primaryEmail: string;
 }
 
@@ -12,6 +13,13 @@ export interface FirstEnrollmentRequestResult {
   expiresAt: string;
   requestId: string;
   status: 'APPROVED' | 'PENDING';
+}
+
+export interface MfaRecoveryRequestResult {
+  approvalExpiresAt: string | null;
+  expiresAt: string;
+  requestId: string;
+  status: 'APPROVED' | 'ENROLLMENT_STARTED' | 'PENDING';
 }
 
 export interface WebAuthnOptionsResult {

@@ -232,6 +232,7 @@ describe('Admin BFF security boundary', () => {
         assuranceLevel: 'MFA_VERIFIED',
         displayName: 'Admin Teste',
         hasWebAuthnCredential: true,
+        hasWebAuthnCredentialHistory: true,
         id: ADMIN_ID,
         primaryEmail: 'admin@example.test',
         status: 'ACTIVE',
@@ -247,6 +248,7 @@ describe('Admin BFF security boundary', () => {
       assuranceLevel: 'MFA_VERIFIED',
       displayName: 'Admin Teste',
       hasWebAuthnCredential: true,
+      hasWebAuthnCredentialHistory: true,
       primaryEmail: 'admin@example.test',
     });
     expect(requestMock).toHaveBeenCalledWith(
@@ -302,6 +304,85 @@ describe('Admin BFF security boundary', () => {
       SESSION_TOKEN,
     );
     expect(massAssignment.status).toBe(422);
+  });
+
+  it('exposes only explicit CSRF-protected recovery routes and rotates the HttpOnly session', async () => {
+    const recoveryRequestId = '44444444-4444-4444-8444-444444444444';
+    const { client, requestMock } = createClient((input) => {
+      if (input.path === '/v1/platform-admin/mfa/recovery/request') {
+        return Promise.resolve({
+          approvalExpiresAt: null,
+          expiresAt: '2026-09-01T12:15:00.000Z',
+          requestId: recoveryRequestId,
+          status: 'PENDING',
+        });
+      }
+      if (input.path === '/v1/platform-admin/mfa/recovery/webauthn/options') {
+        return Promise.resolve({ challengeId: CHALLENGE_ID, options: { challenge: 'opaque' } });
+      }
+      return Promise.resolve({
+        assuranceLevel: 'MFA_VERIFIED',
+        mfaVerifiedAt: '2026-09-01T10:00:00.000Z',
+        sessionToken: ROTATED_TOKEN,
+        stepUpVerifiedAt: '2026-09-01T10:00:00.000Z',
+      });
+    });
+    const app = createApp({ client, config, logger, staticDirectory: null });
+    const csrf = await establishCsrf(app, SESSION_TOKEN);
+    const recoveryRequest = await postMutation(
+      app,
+      '/api/mfa/recovery/request',
+      csrf,
+      {},
+      SESSION_TOKEN,
+    );
+    expect(recoveryRequest.status).toBe(202);
+    expect(JSON.stringify(bodyFrom<unknown>(recoveryRequest))).not.toContain(SESSION_TOKEN);
+    const massAssignment = await postMutation(
+      app,
+      '/api/mfa/recovery/webauthn/options',
+      csrf,
+      { approved: true, tokenVersion: 1 },
+      SESSION_TOKEN,
+    );
+    expect(massAssignment.status).toBe(422);
+
+    const options = await postMutation(
+      app,
+      '/api/mfa/recovery/webauthn/options',
+      csrf,
+      {},
+      SESSION_TOKEN,
+    );
+    expect(options.status).toBe(200);
+    const verify = await postMutation(
+      app,
+      '/api/mfa/recovery/webauthn/verify',
+      csrf,
+      {
+        challengeId: CHALLENGE_ID,
+        friendlyName: 'Passkey recuperada',
+        response: {
+          clientExtensionResults: {},
+          id: 'credential',
+          rawId: 'credential',
+          response: { attestationObject: 'data', clientDataJSON: 'client' },
+          type: 'public-key',
+        },
+      },
+      SESSION_TOKEN,
+    );
+    expect(verify.status).toBe(200);
+    expect(JSON.stringify(bodyFrom<unknown>(verify))).not.toContain(ROTATED_TOKEN);
+    expect(setCookieHeaders(verify).join(';')).toContain(
+      `__Host-metas-admin-session=${ROTATED_TOKEN}`,
+    );
+    expect(requestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/v1/platform-admin/mfa/recovery/webauthn/verify',
+        sessionToken: SESSION_TOKEN,
+      }),
+    );
   });
 
   it('rotates the HttpOnly cookie after WebAuthn without returning the bearer', async () => {

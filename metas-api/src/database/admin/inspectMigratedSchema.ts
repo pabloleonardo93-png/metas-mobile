@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { QueryTypes } from 'sequelize';
+import { QueryTypes, type Sequelize } from 'sequelize';
 
 import { createDatabaseFromParameters, disconnectDatabase } from '../../config/database.js';
 import { loadNorthflankMigrationDatabaseEnv } from '../../config/env.js';
@@ -18,6 +20,7 @@ const expectedTables = [
   'platform_admin_audit_events',
   'platform_admin_first_enrollment_requests',
   'platform_admin_identities',
+  'platform_admin_mfa_recovery_requests',
   'platform_admin_sessions',
   'platform_admin_webauthn_challenges',
   'platform_admin_webauthn_credentials',
@@ -38,6 +41,7 @@ const expectedRlsTables = [
   'platform_admin_audit_events',
   'platform_admin_first_enrollment_requests',
   'platform_admin_identities',
+  'platform_admin_mfa_recovery_requests',
   'platform_admin_sessions',
   'platform_admin_webauthn_challenges',
   'platform_admin_webauthn_credentials',
@@ -63,6 +67,11 @@ const requiredConstraints = [
   'platform_admin_sessions_token_version_valid',
   'platform_admin_first_enrollment_requests_session_admin_fk',
   'platform_admin_first_enrollment_requests_state_valid',
+  'platform_admin_mfa_recovery_requests_session_admin_fk',
+  'platform_admin_mfa_recovery_requests_state_valid',
+  'platform_admin_mfa_recovery_requests_token_version_valid',
+  'platform_admin_webauthn_challenges_recovery_binding_valid',
+  'platform_admin_webauthn_challenges_recovery_request_fk',
   'platform_admin_webauthn_challenges_first_enrollment_request_fk',
   'platform_admin_webauthn_challenges_hash_unique',
   'platform_admin_webauthn_challenges_timestamps_valid',
@@ -90,27 +99,36 @@ const requiredIndexes = [
   'platform_admin_first_enrollment_requests_session_idx',
   'platform_admin_first_enrollment_requests_status_expiry_idx',
   'platform_admin_identities_admin_idx',
+  'platform_admin_mfa_recovery_active_admin_idx',
+  'platform_admin_mfa_recovery_session_idx',
+  'platform_admin_mfa_recovery_status_expiry_idx',
   'platform_admin_sessions_active_expiration_idx',
   'platform_admin_webauthn_challenges_expiration_idx',
   'platform_admin_webauthn_challenges_session_active_idx',
   'platform_admin_webauthn_credentials_admin_active_idx',
+  'pa_webauthn_challenges_recovery_request_uidx',
   'sessions_active_expiration_idx',
   'sessions_token_hash_unique_idx',
 ] as const;
 
 const expectedSecurityDefinerFunctions = [
   'approve_platform_admin_first_enrollment',
+  'approve_platform_admin_mfa_recovery',
   'authenticate_google_identity',
   'authenticate_platform_admin_google',
   'bootstrap_first_manager',
   'bootstrap_platform_admin',
+  'complete_platform_admin_mfa_recovery',
   'complete_platform_admin_webauthn_authentication',
   'consume_platform_admin_webauthn_challenge',
+  'create_platform_admin_recovery_webauthn_challenge',
   'create_platform_admin_webauthn_challenge',
   'enforce_employee_manager_invariants',
   'get_platform_admin_first_enrollment_request_status',
   'get_platform_admin_me',
+  'get_platform_admin_mfa_recovery_status',
   'has_active_database_context',
+  'has_platform_admin_webauthn_credential_history',
   'list_platform_admin_webauthn_credentials',
   'manager_change_employee_access_email',
   'manager_close_campaign',
@@ -128,6 +146,7 @@ const expectedSecurityDefinerFunctions = [
   'record_platform_admin_webauthn_failure',
   'register_platform_admin_webauthn_credential',
   'request_platform_admin_first_enrollment',
+  'request_platform_admin_mfa_recovery',
   'require_manager_store',
   'require_platform_admin_context',
   'resolve_platform_admin_session',
@@ -179,18 +198,21 @@ const names = (rows: NamedObject[]): string[] => rows.map(({ name }) => name);
 
 let validationStage = 'connection';
 
-const inspectMigratedSchema = async (): Promise<void> => {
-  const env = loadNorthflankMigrationDatabaseEnv();
-  const database = createDatabaseFromParameters(
-    {
-      database: env.database,
-      host: env.host,
-      password: env.password,
-      port: env.port,
-      username: env.username,
-    },
-    env.sslServerName,
-  );
+export const validateMigratedSchema = async (databaseOverride?: Sequelize): Promise<void> => {
+  let database = databaseOverride;
+  if (!database) {
+    const env = loadNorthflankMigrationDatabaseEnv();
+    database = createDatabaseFromParameters(
+      {
+        database: env.database,
+        host: env.host,
+        password: env.password,
+        port: env.port,
+        username: env.username,
+      },
+      env.sslServerName,
+    );
+  }
 
   try {
     const tables = await database.query<NamedObject>(
@@ -227,6 +249,7 @@ const inspectMigratedSchema = async (): Promise<void> => {
            'stores', 'users', 'auth_identities', 'employees', 'sessions', 'goals', 'goal_roles',
            'campaigns', 'campaign_progress_entries', 'platform_admins',
            'platform_admin_identities', 'platform_admin_sessions', 'platform_admin_audit_events',
+           'platform_admin_mfa_recovery_requests',
            'platform_admin_first_enrollment_requests', 'platform_admin_webauthn_challenges',
            'platform_admin_webauthn_credentials'
          )
@@ -394,13 +417,17 @@ const inspectMigratedSchema = async (): Promise<void> => {
     const platformAdminRuntimeExecutableFunctions = new Set([
       'authenticate_platform_admin_google',
       'complete_platform_admin_webauthn_authentication',
+      'complete_platform_admin_mfa_recovery',
       'consume_platform_admin_webauthn_challenge',
       'create_platform_admin_webauthn_challenge',
+      'create_platform_admin_recovery_webauthn_challenge',
       'get_platform_admin_me',
+      'has_platform_admin_webauthn_credential_history',
       'list_platform_admin_webauthn_credentials',
       'record_platform_admin_webauthn_failure',
       'register_platform_admin_webauthn_credential',
       'request_platform_admin_first_enrollment',
+      'request_platform_admin_mfa_recovery',
       'resolve_platform_admin_session',
       'revoke_platform_admin_session',
     ]);
@@ -410,7 +437,9 @@ const inspectMigratedSchema = async (): Promise<void> => {
     ]);
     const platformAdminOperatorExecutableFunctions = new Set([
       'approve_platform_admin_first_enrollment',
+      'approve_platform_admin_mfa_recovery',
       'get_platform_admin_first_enrollment_request_status',
+      'get_platform_admin_mfa_recovery_status',
     ]);
     assert.ok(
       functions.every(
@@ -461,14 +490,16 @@ const inspectMigratedSchema = async (): Promise<void> => {
       tables: tables.length,
     });
   } finally {
-    await disconnectDatabase(database);
+    if (!databaseOverride) await disconnectDatabase(database);
   }
 };
 
-void inspectMigratedSchema().catch((error: unknown) => {
-  logger.error('migrated_schema_validation_failed', {
-    errorType: error instanceof Error ? error.name : 'UnknownError',
-    validationStage,
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  void validateMigratedSchema().catch((error: unknown) => {
+    logger.error('migrated_schema_validation_failed', {
+      errorType: error instanceof Error ? error.name : 'UnknownError',
+      validationStage,
+    });
+    process.exitCode = 1;
   });
-  process.exitCode = 1;
-});
+}
