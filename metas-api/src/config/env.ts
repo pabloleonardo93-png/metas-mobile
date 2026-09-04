@@ -385,6 +385,10 @@ export interface AppEnv {
   trustProxyHops: number;
 }
 
+export interface PlatformAdminRedisCheckEnv {
+  redisUrl: string;
+}
+
 export interface AdminDatabaseEnv {
   adminDatabaseUrl: string;
   databaseSsl: boolean;
@@ -451,6 +455,32 @@ const throwInvalidEnvironment = (error: z.ZodError): never => {
   ].join(', ');
 
   throw new Error(`Invalid environment configuration: ${invalidVariables}`);
+};
+
+export const parsePlatformAdminRedisCheckEnv = (
+  environment: NodeJS.ProcessEnv,
+): PlatformAdminRedisCheckEnv => {
+  const parsed = z
+    .object({
+      PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: platformAdminRateLimitKeySecretSchema,
+      PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL: redisUrlSchema.refine(
+        (value) => value.startsWith('rediss://'),
+        'must use TLS',
+      ),
+      PLATFORM_ADMIN_RATE_LIMIT_STORE: z.literal('redis'),
+    })
+    .safeParse(environment);
+
+  if (!parsed.success) {
+    return throwInvalidEnvironment(parsed.error);
+  }
+
+  return { redisUrl: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL };
+};
+
+export const loadNorthflankPlatformAdminRedisCheckEnv = (): PlatformAdminRedisCheckEnv => {
+  loadNorthflankDotEnv();
+  return parsePlatformAdminRedisCheckEnv(process.env);
 };
 
 export const loadEnv = (): AppEnv => {
