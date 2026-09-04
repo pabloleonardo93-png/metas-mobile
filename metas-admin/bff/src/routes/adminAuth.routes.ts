@@ -14,6 +14,7 @@ import {
   firstEnrollmentRequestResponseSchema,
   googleLoginSchema,
   loginResponseSchema,
+  mfaRecoveryRequestResponseSchema,
   registrationOptionsResponseSchema,
   registrationVerificationSchema,
   verificationResponseSchema,
@@ -52,6 +53,7 @@ const toAdminSessionView = (admin: {
   assuranceLevel: 'GOOGLE_ONLY' | 'MFA_VERIFIED';
   displayName: string;
   hasWebAuthnCredential?: boolean;
+  hasWebAuthnCredentialHistory?: boolean;
   primaryEmail: string;
 }) => ({
   assuranceLevel: admin.assuranceLevel,
@@ -59,6 +61,9 @@ const toAdminSessionView = (admin: {
   ...(admin.hasWebAuthnCredential === undefined
     ? {}
     : { hasWebAuthnCredential: admin.hasWebAuthnCredential }),
+  ...(admin.hasWebAuthnCredentialHistory === undefined
+    ? {}
+    : { hasWebAuthnCredentialHistory: admin.hasWebAuthnCredentialHistory }),
   primaryEmail: admin.primaryEmail,
 });
 
@@ -181,6 +186,66 @@ export const createAdminAuthRouter = (
         ),
       );
       response.status(202).json(result);
+    }),
+  );
+
+  router.post(
+    '/mfa/recovery/request',
+    csrfProtection,
+    asyncHandler(async (request, response) => {
+      parseBody(emptyBodySchema, request.body ?? {});
+      const result = parseUpstream(
+        mfaRecoveryRequestResponseSchema,
+        await requestWithSession(
+          request,
+          config,
+          client,
+          'POST',
+          '/v1/platform-admin/mfa/recovery/request',
+          {},
+        ),
+      );
+      response.status(202).json(result);
+    }),
+  );
+
+  router.post(
+    '/mfa/recovery/webauthn/options',
+    csrfProtection,
+    asyncHandler(async (request, response) => {
+      parseBody(emptyBodySchema, request.body ?? {});
+      const result = parseUpstream(
+        registrationOptionsResponseSchema,
+        await requestWithSession(
+          request,
+          config,
+          client,
+          'POST',
+          '/v1/platform-admin/mfa/recovery/webauthn/options',
+          {},
+        ),
+      );
+      response.status(200).json(result);
+    }),
+  );
+
+  router.post(
+    '/mfa/recovery/webauthn/verify',
+    csrfProtection,
+    asyncHandler(async (request, response) => {
+      const input = parseBody(registrationVerificationSchema, request.body);
+      const result = parseUpstream(
+        verificationResponseSchema,
+        await requestWithSession(
+          request,
+          config,
+          client,
+          'POST',
+          '/v1/platform-admin/mfa/recovery/webauthn/verify',
+          input,
+        ),
+      );
+      respondWithRotatedSession(response, config, result);
     }),
   );
 

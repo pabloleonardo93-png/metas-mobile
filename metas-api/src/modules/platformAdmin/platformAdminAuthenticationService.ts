@@ -42,6 +42,7 @@ interface PlatformAdminSessionDatabaseRow {
 interface PlatformAdminMeDatabaseRow {
   displayName: string;
   hasWebAuthnCredential: boolean;
+  hasWebAuthnCredentialHistory: boolean;
   id: string;
   primaryEmail: string;
   status: 'ACTIVE' | 'DISABLED';
@@ -198,7 +199,9 @@ export class PostgresPlatformAdminAuthenticationService implements PlatformAdmin
           admin.status,
           EXISTS (
             SELECT 1 FROM metas.list_platform_admin_webauthn_credentials()
-          ) AS "hasWebAuthnCredential"
+          ) AS "hasWebAuthnCredential",
+          metas.has_platform_admin_webauthn_credential_history()
+            AS "hasWebAuthnCredentialHistory"
          FROM metas.get_platform_admin_me() admin`,
         { transaction, type: QueryTypes.SELECT },
       ),

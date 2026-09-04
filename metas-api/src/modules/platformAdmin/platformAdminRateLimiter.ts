@@ -9,6 +9,9 @@ export const platformAdminRateLimitOperations = [
   'WEBAUTHN_AUTHENTICATION_OPTIONS',
   'WEBAUTHN_AUTHENTICATION_VERIFY',
   'FIRST_ENROLLMENT_REQUEST',
+  'MFA_RECOVERY_REQUEST',
+  'MFA_RECOVERY_OPTIONS',
+  'MFA_RECOVERY_VERIFY',
 ] as const;
 
 export type PlatformAdminRateLimitOperation = (typeof platformAdminRateLimitOperations)[number];

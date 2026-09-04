@@ -19,6 +19,7 @@ import type { PlatformAdminWebAuthnAdapter } from './platformAdminWebAuthnAdapte
 import type {
   PlatformAdminWebAuthnAuthenticationOptionsResult,
   PlatformAdminFirstEnrollmentRequestResult,
+  PlatformAdminMfaRecoveryRequestResult,
   PlatformAdminWebAuthnOptionsResult,
   PlatformAdminWebAuthnPurpose,
   PlatformAdminWebAuthnService,
@@ -49,6 +50,7 @@ export interface PlatformAdminWebAuthnConfiguration {
   allowedOrigins: readonly string[];
   challengeTtlSeconds: number;
   firstEnrollmentPendingTtlSeconds: number;
+  recoveryPendingTtlSeconds?: number;
   rpId: string;
   rpName: string;
   stepUpTtlSeconds: number;
@@ -59,6 +61,13 @@ interface FirstEnrollmentRequestDatabaseRow {
   expiresAt: Date;
   requestId: string;
   status: 'APPROVED' | 'PENDING';
+}
+
+interface MfaRecoveryRequestDatabaseRow {
+  approvalExpiresAt: Date | null;
+  expiresAt: Date;
+  requestId: string;
+  status: 'APPROVED' | 'ENROLLMENT_STARTED' | 'PENDING';
 }
 
 const unauthorized = (): AppError =>
@@ -155,6 +164,62 @@ export class PostgresPlatformAdminWebAuthnService implements PlatformAdminWebAut
     }
   }
 
+  public async requestMfaRecovery(
+    session: PlatformAdminSession,
+    metadata: PlatformAdminRequestMetadata,
+  ): Promise<PlatformAdminMfaRecoveryRequestResult> {
+    const pendingTtlSeconds = this.configuration.recoveryPendingTtlSeconds ?? 900;
+    try {
+      const rows = await this.withSessionContext(session, (transaction) =>
+        this.database.query<MfaRecoveryRequestDatabaseRow>(
+          `SELECT
+             recovery_request_id AS "requestId",
+             request_status AS status,
+             request_expires_at AS "expiresAt",
+             approval_expires_at AS "approvalExpiresAt"
+           FROM metas.request_platform_admin_mfa_recovery(
+             CURRENT_TIMESTAMP + make_interval(secs => :pendingTtlSeconds),
+             CAST(:requestId AS UUID), CAST(:ipAddress AS INET), :userAgent
+           )`,
+          {
+            replacements: {
+              ipAddress: metadata.ipAddress,
+              pendingTtlSeconds,
+              requestId: metadata.requestId,
+              userAgent: metadata.userAgent,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      const recoveryRequest = rows[0];
+      if (!recoveryRequest) throw unauthorized();
+      return {
+        approvalExpiresAt: recoveryRequest.approvalExpiresAt?.toISOString() ?? null,
+        expiresAt: recoveryRequest.expiresAt.toISOString(),
+        requestId: recoveryRequest.requestId,
+        status: recoveryRequest.status,
+      };
+    } catch (error: unknown) {
+      if (databaseErrorContains(error, 'MFA_RECOVERY_REQUEST_ALREADY_ACTIVE')) {
+        throw new AppError(
+          409,
+          'MFA_RECOVERY_REQUEST_ALREADY_ACTIVE',
+          'Já existe uma recuperação ativa para este administrador.',
+        );
+      }
+      if (databaseErrorContains(error, 'MFA_RECOVERY_NOT_ALLOWED')) {
+        throw new AppError(
+          409,
+          'MFA_RECOVERY_NOT_ALLOWED',
+          'A recuperação de MFA não está disponível para esta sessão.',
+        );
+      }
+      throw error;
+    }
+  }
+
   public async createRegistrationOptions(
     session: PlatformAdminSession,
   ): Promise<
@@ -218,6 +283,42 @@ export class PostgresPlatformAdminWebAuthnService implements PlatformAdminWebAut
     });
     const challengeId = await this.storeChallenge(session, purpose, options.challenge);
     return { challengeId, options, purpose };
+  }
+
+  public async createRecoveryRegistrationOptions(
+    session: PlatformAdminSession,
+    metadata: PlatformAdminRequestMetadata,
+  ): Promise<
+    PlatformAdminWebAuthnOptionsResult<
+      Awaited<ReturnType<PlatformAdminWebAuthnAdapter['generateRegistrationOptions']>>
+    >
+  > {
+    const [admin, credentials] = await this.withSessionContext(session, async (transaction) => {
+      const adminRows = await this.database.query<PlatformAdminMeResult>(
+        `SELECT id, display_name AS "displayName", primary_email AS "primaryEmail", status
+         FROM metas.get_platform_admin_me()`,
+        { transaction, type: QueryTypes.SELECT },
+      );
+      return [adminRows[0], await this.listCredentials(transaction)] as const;
+    });
+    if (!admin) throw unauthorized();
+
+    const options = await this.adapter.generateRegistrationOptions({
+      attestationType: 'none',
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
+      excludeCredentials: credentials.map((credential) => ({
+        id: credential.credentialId,
+        transports: credential.transports,
+      })),
+      rpID: this.configuration.rpId,
+      rpName: this.configuration.rpName,
+      timeout: this.configuration.challengeTtlSeconds * 1000,
+      userDisplayName: admin.displayName,
+      userID: uuidBytes(admin.id),
+      userName: admin.primaryEmail,
+    });
+    const challengeId = await this.storeRecoveryChallenge(session, options.challenge, metadata);
+    return { challengeId, options };
   }
 
   public async verifyRegistration(
@@ -373,6 +474,129 @@ export class PostgresPlatformAdminWebAuthnService implements PlatformAdminWebAut
         error instanceof Error
       ) {
         throw verificationDenied();
+      }
+      throw error;
+    }
+  }
+
+  public async verifyRecoveryRegistration(
+    session: PlatformAdminSession,
+    requestedChallengeId: string,
+    response: Parameters<PlatformAdminWebAuthnService['verifyRecoveryRegistration']>[2],
+    friendlyName: string | null,
+    metadata: PlatformAdminRequestMetadata,
+  ): Promise<PlatformAdminWebAuthnVerificationResult> {
+    const challenge = await this.consumeChallengeOrRecordFailure(
+      session,
+      requestedChallengeId,
+      'RECOVERY_ENROLLMENT',
+      metadata,
+    );
+    try {
+      const verification = await this.adapter.verifyRegistrationResponse({
+        expectedChallenge: matchesChallengeHash(challenge.challengeHash),
+        expectedOrigin: [...this.configuration.allowedOrigins],
+        expectedRPID: this.configuration.rpId,
+        requireUserPresence: true,
+        requireUserVerification: true,
+        response,
+      });
+      if (!verification.verified || !verification.registrationInfo?.userVerified) {
+        throw verificationDenied();
+      }
+
+      const sessionToken = generateSessionToken();
+      const info = verification.registrationInfo;
+      const rows = await this.withSessionContext(session, (transaction) =>
+        this.database.query<VerificationDatabaseRow>(
+          `SELECT
+             assurance_level AS "assuranceLevel",
+             mfa_verified_at AS "mfaVerifiedAt",
+             step_up_verified_at AS "stepUpVerifiedAt"
+           FROM metas.complete_platform_admin_mfa_recovery(
+             CAST(:challengeId AS UUID), :credentialId, :publicKey, :signCount,
+             string_to_array(:transports, ','), :deviceType, :backedUp, :friendlyName,
+             :tokenHash, CAST(:requestId AS UUID), CAST(:ipAddress AS INET), :userAgent
+           )`,
+          {
+            replacements: {
+              backedUp: info.credentialBackedUp,
+              challengeId: requestedChallengeId,
+              credentialId: info.credential.id,
+              deviceType: info.credentialDeviceType,
+              friendlyName,
+              ipAddress: metadata.ipAddress,
+              publicKey: Buffer.from(info.credential.publicKey),
+              requestId: metadata.requestId,
+              signCount: info.credential.counter,
+              tokenHash: hashSessionToken(sessionToken),
+              transports: (response.response.transports ?? []).join(','),
+              userAgent: metadata.userAgent,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      return this.verificationResult(rows[0], sessionToken);
+    } catch (error: unknown) {
+      await this.recordFailure(session, requestedChallengeId, metadata);
+      if (
+        error instanceof AppError ||
+        error instanceof BaseError ||
+        databaseErrorContains(error, 'MFA_RECOVERY_') ||
+        databaseErrorContains(error, 'WEBAUTHN_')
+      ) {
+        throw verificationDenied();
+      }
+      throw error;
+    }
+  }
+
+  private async storeRecoveryChallenge(
+    session: PlatformAdminSession,
+    rawChallenge: string,
+    metadata: PlatformAdminRequestMetadata,
+  ): Promise<string> {
+    try {
+      const rows = await this.withSessionContext(session, (transaction) =>
+        this.database.query<{ challengeId: string }>(
+          `SELECT metas.create_platform_admin_recovery_webauthn_challenge(
+             :challengeHash,
+             CURRENT_TIMESTAMP + make_interval(secs => :challengeTtlSeconds),
+             CAST(:requestId AS UUID),
+             CAST(:ipAddress AS INET), :userAgent
+           ) AS "challengeId"`,
+          {
+            replacements: {
+              challengeHash: challengeHash(rawChallenge),
+              challengeTtlSeconds: this.configuration.challengeTtlSeconds,
+              ipAddress: metadata.ipAddress,
+              requestId: metadata.requestId,
+              userAgent: metadata.userAgent,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      const challengeId = rows[0]?.challengeId;
+      if (!challengeId) throw unauthorized();
+      return challengeId;
+    } catch (error: unknown) {
+      if (databaseErrorContains(error, 'MFA_RECOVERY_APPROVAL_REQUIRED')) {
+        throw new AppError(
+          403,
+          'MFA_RECOVERY_APPROVAL_REQUIRED',
+          'A aprovação operacional da recuperação ainda é necessária.',
+        );
+      }
+      if (databaseErrorContains(error, 'MFA_RECOVERY_NOT_ALLOWED')) {
+        throw new AppError(
+          409,
+          'MFA_RECOVERY_NOT_ALLOWED',
+          'A recuperação de MFA não está disponível para esta sessão.',
+        );
       }
       throw error;
     }

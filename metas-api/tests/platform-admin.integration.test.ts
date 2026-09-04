@@ -30,6 +30,7 @@ import type {
   PlatformAdminLoginResult,
   PlatformAdminSession,
 } from '../src/modules/platformAdmin/platformAdmin.types.js';
+import type { PlatformAdminWebAuthnVerificationResult } from '../src/modules/platformAdmin/platformAdminWebAuthn.types.js';
 import { AppError } from '../src/shared/errors/AppError.js';
 import type { Logger } from '../src/shared/logging/logger.js';
 import { withPlatformAdminDatabaseContext } from '../src/shared/database/withPlatformAdminDatabaseContext.js';
@@ -38,6 +39,9 @@ import { createIntegrationDatabases } from './integrationDatabase.js';
 const silentLogger: Logger = { error: () => undefined, info: () => undefined };
 const integrationRateLimitPolicies: PlatformAdminRateLimitPolicies = {
   FIRST_ENROLLMENT_REQUEST: { limit: 1_000, windowMs: 60_000 },
+  MFA_RECOVERY_OPTIONS: { limit: 1_000, windowMs: 60_000 },
+  MFA_RECOVERY_REQUEST: { limit: 1_000, windowMs: 60_000 },
+  MFA_RECOVERY_VERIFY: { limit: 1_000, windowMs: 60_000 },
   GOOGLE_LOGIN: { limit: 1_000, windowMs: 60_000 },
   WEBAUTHN_AUTHENTICATION_OPTIONS: { limit: 1_000, windowMs: 60_000 },
   WEBAUTHN_AUTHENTICATION_VERIFY: { limit: 1_000, windowMs: 60_000 },
@@ -70,6 +74,8 @@ class FakeWebAuthnAdapter implements PlatformAdminWebAuthnAdapter {
   public registrationUserVerified = true;
   private verificationBarrier:
     { arrived: number; expected: number; promise: Promise<void>; release: () => void } | undefined;
+  private verificationPause:
+    { arrived: () => void; promise: Promise<void>; release: () => void } | undefined;
   public constructor(
     public readonly credentialId = `integration_${randomUUID().replaceAll('-', '')}`,
   ) {}
@@ -80,6 +86,19 @@ class FakeWebAuthnAdapter implements PlatformAdminWebAuthnAdapter {
       release = resolve;
     });
     this.verificationBarrier = { arrived: 0, expected, promise, release };
+  }
+
+  public pauseNextVerification(): { arrived: Promise<void>; release: () => void } {
+    let markArrived = (): void => undefined;
+    let release = (): void => undefined;
+    const arrived = new Promise<void>((resolve) => {
+      markArrived = resolve;
+    });
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.verificationPause = { arrived: markArrived, promise, release };
+    return { arrived, release };
   }
   public registrationChallenge = `registration-${randomUUID()}`;
 
@@ -125,6 +144,7 @@ class FakeWebAuthnAdapter implements PlatformAdminWebAuthnAdapter {
       }
       await this.verificationBarrier.promise;
     }
+    await this.waitForVerificationRelease();
     let challengeValid = false;
     if (typeof options.expectedChallenge === 'function') {
       for (const challenge of this.authenticationChallenges) {
@@ -163,6 +183,7 @@ class FakeWebAuthnAdapter implements PlatformAdminWebAuthnAdapter {
       }
       await this.verificationBarrier.promise;
     }
+    await this.waitForVerificationRelease();
     const challengeValid =
       typeof options.expectedChallenge === 'function'
         ? await options.expectedChallenge(this.registrationChallenge)
@@ -188,6 +209,14 @@ class FakeWebAuthnAdapter implements PlatformAdminWebAuthnAdapter {
       },
       verified: true,
     };
+  }
+
+  private async waitForVerificationRelease(): Promise<void> {
+    const pause = this.verificationPause;
+    if (!pause) return;
+    this.verificationPause = undefined;
+    pause.arrived();
+    await pause.promise;
   }
 }
 
@@ -301,6 +330,31 @@ const authorizeFirstEnrollment = async (
   );
   assert.equal(rows[0]?.status, 'APPROVED');
   return enrollmentRequest.requestId;
+};
+
+const authorizeMfaRecovery = async (
+  platformAdminOperatorDatabase: Sequelize,
+  service: PostgresPlatformAdminWebAuthnService,
+  session: PlatformAdminSession,
+): Promise<string> => {
+  const recoveryRequest = await service.requestMfaRecovery(session, {
+    ipAddress: null,
+    requestId: randomUUID(),
+    userAgent: 'integration-test',
+  });
+  const rows = await platformAdminOperatorDatabase.query<{ status: string }>(
+    `SELECT request_status AS status
+     FROM metas.approve_platform_admin_mfa_recovery(
+       CAST(:requestId AS UUID), CURRENT_TIMESTAMP + INTERVAL '5 minutes',
+       CAST(:operationRequestId AS UUID)
+     )`,
+    {
+      replacements: { operationRequestId: randomUUID(), requestId: recoveryRequest.requestId },
+      type: QueryTypes.SELECT,
+    },
+  );
+  assert.equal(rows[0]?.status, 'APPROVED');
+  return recoveryRequest.requestId;
 };
 
 const testDatabases = createIntegrationDatabases(3, 2);
@@ -1682,6 +1736,791 @@ if (testDatabases === null) {
       );
     });
 
+    await test('MFA recovery requires operator approval and atomically replaces credentials and sessions', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'mfa-recovery');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+      const firstSession = await authenticationService.authenticateSession(firstLogin.sessionToken);
+      const firstAdapter = new FakeWebAuthnAdapter();
+      const configuration = {
+        allowedOrigins: ['https://admin.example.test'],
+        challengeTtlSeconds: 300,
+        firstEnrollmentPendingTtlSeconds: 900,
+        recoveryPendingTtlSeconds: 900,
+        rpId: 'admin.example.test',
+        rpName: 'Metas Admin',
+        stepUpTtlSeconds: 300,
+      } as const;
+      const firstService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        firstAdapter,
+        configuration,
+      );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, firstService, firstSession);
+      const initialOptions = await firstService.createRegistrationOptions(firstSession);
+      const initialEnrollment = await firstService.verifyRegistration(
+        firstSession,
+        initialOptions.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      const initialMfaSession = await authenticationService.authenticateSession(
+        initialEnrollment.sessionToken,
+      );
+
+      const recoveryLogin = await login(platformAdminRuntimeDatabase, admin);
+      const recoverySession = await authenticationService.authenticateSession(
+        recoveryLogin.sessionToken,
+      );
+      const recoveryAdapter = new FakeWebAuthnAdapter();
+      const recoveryService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        recoveryAdapter,
+        configuration,
+      );
+      const requestMetadata = {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      };
+      const concurrentRequests = await Promise.all([
+        recoveryService.requestMfaRecovery(recoverySession, requestMetadata),
+        recoveryService.requestMfaRecovery(recoverySession, {
+          ...requestMetadata,
+          requestId: randomUUID(),
+        }),
+      ]);
+      const pending = concurrentRequests[0];
+      assert.equal(pending.status, 'PENDING');
+      assert.equal(concurrentRequests[1]?.requestId, pending.requestId);
+      await assert.rejects(
+        recoveryService.createRecoveryRegistrationOptions(recoverySession, requestMetadata),
+      );
+
+      const approvalExpiresAt = new Date(Date.now() + 300_000);
+      await Promise.all([
+        platformAdminOperatorDatabase.query(
+          `SELECT * FROM metas.approve_platform_admin_mfa_recovery(
+             CAST(:requestId AS UUID), :approvalExpiresAt, CAST(:operationRequestId AS UUID)
+           )`,
+          {
+            replacements: {
+              approvalExpiresAt,
+              operationRequestId: randomUUID(),
+              requestId: pending.requestId,
+            },
+            type: QueryTypes.SELECT,
+          },
+        ),
+        platformAdminOperatorDatabase.query(
+          `SELECT * FROM metas.approve_platform_admin_mfa_recovery(
+             CAST(:requestId AS UUID), :approvalExpiresAt, CAST(:operationRequestId AS UUID)
+           )`,
+          {
+            replacements: {
+              approvalExpiresAt,
+              operationRequestId: randomUUID(),
+              requestId: pending.requestId,
+            },
+            type: QueryTypes.SELECT,
+          },
+        ),
+      ]);
+
+      await withMigrationOwner(migrationDatabase, async (transaction) => {
+        await migrationDatabase.query(
+          `CREATE FUNCTION metas.fail_mfa_recovery_start_audit_for_test()
+           RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
+           BEGIN
+             IF NEW.action = 'MFA_RECOVERY_STARTED' THEN
+               RAISE EXCEPTION 'rollback-test';
+             END IF;
+             RETURN NEW;
+           END
+           $function$;
+           CREATE TRIGGER fail_mfa_recovery_start_audit_for_test
+             BEFORE INSERT ON metas.platform_admin_audit_events
+             FOR EACH ROW EXECUTE FUNCTION metas.fail_mfa_recovery_start_audit_for_test();`,
+          { transaction },
+        );
+      });
+      try {
+        await assert.rejects(
+          recoveryService.createRecoveryRegistrationOptions(recoverySession, requestMetadata),
+          /rollback-test/u,
+        );
+      } finally {
+        await withMigrationOwner(migrationDatabase, async (transaction) => {
+          await migrationDatabase.query(
+            `DROP TRIGGER fail_mfa_recovery_start_audit_for_test
+               ON metas.platform_admin_audit_events;
+             DROP FUNCTION metas.fail_mfa_recovery_start_audit_for_test();`,
+            { transaction },
+          );
+        });
+      }
+      const stateAfterRollback = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          activeCredentials: string;
+          activeInitialSession: boolean;
+          recoveryAuditEvents: string;
+          recoveryChallenges: string;
+          status: string;
+        }>(
+          `SELECT recovery.status,
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+              WHERE credential.platform_admin_id = recovery.platform_admin_id
+                AND credential.revoked_at IS NULL) AS "activeCredentials",
+             EXISTS (
+               SELECT 1 FROM metas.platform_admin_sessions session
+               WHERE session.id = CAST(:initialSessionId AS UUID) AND session.revoked_at IS NULL
+             ) AS "activeInitialSession",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+              WHERE audit.target_id = recovery.id
+                AND audit.action IN (
+                  'MFA_RECOVERY_STARTED', 'MFA_RECOVERY_CREDENTIALS_REVOKED',
+                  'MFA_RECOVERY_SESSIONS_REVOKED'
+                )) AS "recoveryAuditEvents",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_challenges challenge
+              WHERE challenge.recovery_request_id = recovery.id) AS "recoveryChallenges"
+           FROM metas.platform_admin_mfa_recovery_requests recovery
+           WHERE recovery.id = :requestId`,
+          {
+            replacements: {
+              initialSessionId: initialMfaSession.sessionId,
+              requestId: pending.requestId,
+            },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(stateAfterRollback[0], {
+        activeCredentials: '1',
+        activeInitialSession: true,
+        recoveryAuditEvents: '0',
+        recoveryChallenges: '0',
+        status: 'APPROVED',
+      });
+
+      const concurrentOptions = await Promise.allSettled([
+        recoveryService.createRecoveryRegistrationOptions(recoverySession, requestMetadata),
+        recoveryService.createRecoveryRegistrationOptions(recoverySession, {
+          ...requestMetadata,
+          requestId: randomUUID(),
+        }),
+      ]);
+      const successfulOptions = concurrentOptions.filter((result) => result.status === 'fulfilled');
+      assert.equal(successfulOptions.length, 1);
+      assert.equal(concurrentOptions.filter((result) => result.status === 'rejected').length, 1);
+      const recoveryOptionsResult = successfulOptions[0];
+      assert.ok(recoveryOptionsResult?.status === 'fulfilled');
+      const recoveryOptions = recoveryOptionsResult.value;
+      recoveryAdapter.registrationChallenge = recoveryOptions.options.challenge;
+      await assert.rejects(
+        authenticationService.authenticateSession(initialEnrollment.sessionToken),
+      );
+
+      const stateAfterStart = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          activeCredentials: string;
+          approvalEvents: string;
+          status: string;
+        }>(
+          `SELECT recovery.status,
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+              WHERE credential.platform_admin_id = recovery.platform_admin_id
+                AND credential.revoked_at IS NULL) AS "activeCredentials",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+              WHERE audit.target_id = recovery.id
+                AND audit.action = 'MFA_RECOVERY_APPROVED') AS "approvalEvents"
+           FROM metas.platform_admin_mfa_recovery_requests recovery
+           WHERE recovery.id = :requestId`,
+          {
+            replacements: { requestId: pending.requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(stateAfterStart[0], {
+        activeCredentials: '0',
+        approvalEvents: '1',
+        status: 'ENROLLMENT_STARTED',
+      });
+
+      const concurrentCompletions = await Promise.allSettled([
+        recoveryService.verifyRecoveryRegistration(
+          recoverySession,
+          recoveryOptions.challengeId,
+          registrationResponse,
+          'Passkey recuperada',
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        ),
+        recoveryService.verifyRecoveryRegistration(
+          recoverySession,
+          recoveryOptions.challengeId,
+          registrationResponse,
+          'Passkey recuperada',
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        ),
+      ]);
+      const successfulCompletions = concurrentCompletions.filter(
+        (result): result is PromiseFulfilledResult<PlatformAdminWebAuthnVerificationResult> =>
+          result.status === 'fulfilled',
+      );
+      assert.equal(successfulCompletions.length, 1);
+      assert.equal(
+        concurrentCompletions.filter((result) => result.status === 'rejected').length,
+        1,
+      );
+      const completion = successfulCompletions[0]?.value;
+      assert.ok(completion);
+      await assert.rejects(authenticationService.authenticateSession(recoveryLogin.sessionToken));
+      assert.equal(
+        (await authenticationService.authenticateSession(completion.sessionToken)).assuranceLevel,
+        'MFA_VERIFIED',
+      );
+      await assert.rejects(
+        recoveryService.verifyRecoveryRegistration(
+          recoverySession,
+          recoveryOptions.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        ),
+      );
+
+      const completed = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          activeCredentials: string;
+          completedEvents: string;
+          status: string;
+        }>(
+          `SELECT recovery.status,
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+              WHERE credential.platform_admin_id = recovery.platform_admin_id
+                AND credential.revoked_at IS NULL) AS "activeCredentials",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+              WHERE audit.target_id = recovery.id
+                AND audit.action = 'MFA_RECOVERY_COMPLETED') AS "completedEvents"
+           FROM metas.platform_admin_mfa_recovery_requests recovery
+           WHERE recovery.id = :requestId`,
+          {
+            replacements: { requestId: pending.requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(completed[0], {
+        activeCredentials: '1',
+        completedEvents: '1',
+        status: 'COMPLETED',
+      });
+      assert.equal(initialMfaSession.assuranceLevel, 'MFA_VERIFIED');
+    });
+
+    await test('interrupted MFA recovery retries safely without falling back to first enrollment', async () => {
+      const admin = await provisionAdmin(migrationDatabase, 'mfa-recovery-retry');
+      const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+      const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+      const firstSession = await authenticationService.authenticateSession(firstLogin.sessionToken);
+      const configuration = {
+        allowedOrigins: ['https://admin.example.test'],
+        challengeTtlSeconds: 300,
+        firstEnrollmentPendingTtlSeconds: 900,
+        recoveryPendingTtlSeconds: 900,
+        rpId: 'admin.example.test',
+        rpName: 'Metas Admin',
+        stepUpTtlSeconds: 300,
+      } as const;
+      const firstAdapter = new FakeWebAuthnAdapter();
+      const firstService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        firstAdapter,
+        configuration,
+      );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, firstService, firstSession);
+      const firstOptions = await firstService.createRegistrationOptions(firstSession);
+      const firstEnrollment = await firstService.verifyRegistration(
+        firstSession,
+        firstOptions.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+
+      const recoveryLogin = await login(platformAdminRuntimeDatabase, admin);
+      const recoverySession = await authenticationService.authenticateSession(
+        recoveryLogin.sessionToken,
+      );
+      const recoveryAdapter = new FakeWebAuthnAdapter();
+      const recoveryService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        recoveryAdapter,
+        configuration,
+      );
+
+      const abandonedRequestId = await authorizeMfaRecovery(
+        platformAdminOperatorDatabase,
+        recoveryService,
+        recoverySession,
+      );
+      await recoveryService.createRecoveryRegistrationOptions(recoverySession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      const meAfterRecoveryStart = await authenticationService.getMe(recoverySession);
+      assert.equal(meAfterRecoveryStart.hasWebAuthnCredential, false);
+      assert.equal(meAfterRecoveryStart.hasWebAuthnCredentialHistory, true);
+      await assert.rejects(
+        recoveryService.requestFirstEnrollment(recoverySession, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: 'integration-test',
+        }),
+        (error: unknown) =>
+          error instanceof AppError && error.code === 'FIRST_ENROLLMENT_NOT_ALLOWED',
+      );
+
+      await withMigrationOwner(migrationDatabase, async (transaction) => {
+        await migrationDatabase.query(
+          `CREATE FUNCTION metas.fail_mfa_recovery_retry_audit_for_test()
+           RETURNS TRIGGER LANGUAGE plpgsql SET search_path = pg_catalog AS $function$
+           BEGIN
+             IF NEW.action = 'MFA_RECOVERY_RETRY_REQUESTED' THEN
+               RAISE EXCEPTION 'rollback-test';
+             END IF;
+             RETURN NEW;
+           END
+           $function$;
+           CREATE TRIGGER fail_mfa_recovery_retry_audit_for_test
+             BEFORE INSERT ON metas.platform_admin_audit_events
+             FOR EACH ROW EXECUTE FUNCTION metas.fail_mfa_recovery_retry_audit_for_test();`,
+          { transaction },
+        );
+      });
+      try {
+        await assert.rejects(
+          recoveryService.requestMfaRecovery(recoverySession, {
+            ipAddress: null,
+            requestId: randomUUID(),
+            userAgent: 'integration-test',
+          }),
+          /rollback-test/u,
+        );
+      } finally {
+        await withMigrationOwner(migrationDatabase, async (transaction) => {
+          await migrationDatabase.query(
+            `DROP TRIGGER fail_mfa_recovery_retry_audit_for_test
+               ON metas.platform_admin_audit_events;
+             DROP FUNCTION metas.fail_mfa_recovery_retry_audit_for_test();`,
+            { transaction },
+          );
+        });
+      }
+      const rolledBackRetry = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          challengeConsumed: boolean;
+          requestCount: string;
+          status: string;
+        }>(
+          `SELECT recovery.status,
+             challenge.consumed_at IS NOT NULL AS "challengeConsumed",
+             (SELECT count(*)::TEXT
+              FROM metas.platform_admin_mfa_recovery_requests request
+              WHERE request.platform_admin_id = recovery.platform_admin_id) AS "requestCount"
+           FROM metas.platform_admin_mfa_recovery_requests recovery
+           JOIN metas.platform_admin_webauthn_challenges challenge
+             ON challenge.recovery_request_id = recovery.id
+           WHERE recovery.id = :requestId`,
+          {
+            replacements: { requestId: abandonedRequestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(rolledBackRetry[0], {
+        challengeConsumed: false,
+        requestCount: '1',
+        status: 'ENROLLMENT_STARTED',
+      });
+
+      const retryAfterAbandonment = await recoveryService.requestMfaRecovery(recoverySession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      assert.equal(retryAfterAbandonment.status, 'PENDING');
+      assert.notEqual(retryAfterAbandonment.requestId, abandonedRequestId);
+      await authorizeMfaRecovery(platformAdminOperatorDatabase, recoveryService, recoverySession);
+      const expiredOptions = await recoveryService.createRecoveryRegistrationOptions(
+        recoverySession,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      await withMigrationOwner(migrationDatabase, async (transaction) => {
+        await migrationDatabase.query(
+          `UPDATE metas.platform_admin_webauthn_challenges
+           SET expires_at = created_at + INTERVAL '1 microsecond'
+           WHERE id = :challengeId;
+           UPDATE metas.platform_admin_mfa_recovery_requests
+           SET enrollment_expires_at = enrollment_started_at + INTERVAL '1 microsecond'
+           WHERE id = :requestId`,
+          {
+            replacements: {
+              challengeId: expiredOptions.challengeId,
+              requestId: retryAfterAbandonment.requestId,
+            },
+            transaction,
+          },
+        );
+      });
+      await assert.rejects(
+        recoveryService.verifyRecoveryRegistration(
+          recoverySession,
+          expiredOptions.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        ),
+      );
+
+      const retryAfterExpiry = await recoveryService.requestMfaRecovery(recoverySession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      assert.equal(retryAfterExpiry.status, 'PENDING');
+      await authorizeMfaRecovery(platformAdminOperatorDatabase, recoveryService, recoverySession);
+      const invalidOptions = await recoveryService.createRecoveryRegistrationOptions(
+        recoverySession,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      recoveryAdapter.rejectRegistration = true;
+      await assert.rejects(
+        recoveryService.verifyRecoveryRegistration(
+          recoverySession,
+          invalidOptions.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        ),
+      );
+      recoveryAdapter.rejectRegistration = false;
+
+      const retryAfterInvalidVerification = await recoveryService.requestMfaRecovery(
+        recoverySession,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      assert.equal(retryAfterInvalidVerification.status, 'PENDING');
+      await authorizeMfaRecovery(platformAdminOperatorDatabase, recoveryService, recoverySession);
+      const finalOptions = await recoveryService.createRecoveryRegistrationOptions(
+        recoverySession,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      recoveryAdapter.registrationChallenge = finalOptions.options.challenge;
+      const completed = await recoveryService.verifyRecoveryRegistration(
+        recoverySession,
+        finalOptions.challengeId,
+        registrationResponse,
+        'Passkey recuperada',
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      assert.equal(
+        (await authenticationService.authenticateSession(completed.sessionToken)).assuranceLevel,
+        'MFA_VERIFIED',
+      );
+      await assert.rejects(authenticationService.authenticateSession(firstEnrollment.sessionToken));
+
+      const finalState = await withMigrationOwner(migrationDatabase, (transaction) =>
+        migrationDatabase.query<{
+          activeCredentials: string;
+          completedRequests: string;
+          expiredRequests: string;
+          requestedEvents: string;
+          retryEvents: string;
+          revokedCredentials: string;
+          revokedRequests: string;
+        }>(
+          `SELECT
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+              WHERE credential.platform_admin_id = :adminId
+                AND credential.revoked_at IS NULL) AS "activeCredentials",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+              WHERE credential.platform_admin_id = :adminId
+                AND credential.revoked_at IS NOT NULL) AS "revokedCredentials",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_mfa_recovery_requests request
+              WHERE request.platform_admin_id = :adminId
+                AND request.status = 'REVOKED') AS "revokedRequests",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_mfa_recovery_requests request
+              WHERE request.platform_admin_id = :adminId
+                AND request.status = 'EXPIRED') AS "expiredRequests",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_mfa_recovery_requests request
+              WHERE request.platform_admin_id = :adminId
+                AND request.status = 'COMPLETED') AS "completedRequests",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+              WHERE audit.platform_admin_id = :adminId
+                AND audit.action = 'MFA_RECOVERY_RETRY_REQUESTED') AS "retryEvents",
+             (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events audit
+              WHERE audit.platform_admin_id = :adminId
+                AND audit.action = 'MFA_RECOVERY_REQUESTED') AS "requestedEvents"`,
+          {
+            replacements: { adminId: admin.id },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        ),
+      );
+      assert.deepEqual(finalState[0], {
+        activeCredentials: '1',
+        completedRequests: '1',
+        expiredRequests: '1',
+        requestedEvents: '4',
+        retryEvents: '2',
+        revokedCredentials: '1',
+        revokedRequests: '2',
+      });
+    });
+
+    await test('MFA recovery wins safely against authentication, step-up and logout races', async () => {
+      const prepare = async (label: string) => {
+        const admin = await provisionAdmin(migrationDatabase, label);
+        const authenticationService = createService(platformAdminRuntimeDatabase, admin);
+        const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+        const firstSession = await authenticationService.authenticateSession(
+          firstLogin.sessionToken,
+        );
+        const adapter = new FakeWebAuthnAdapter();
+        const configuration = {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
+          recoveryPendingTtlSeconds: 900,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        } as const;
+        const service = new PostgresPlatformAdminWebAuthnService(
+          platformAdminRuntimeDatabase,
+          adapter,
+          configuration,
+        );
+        await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, firstSession);
+        const firstOptions = await service.createRegistrationOptions(firstSession);
+        const enrollment = await service.verifyRegistration(
+          firstSession,
+          firstOptions.challengeId,
+          registrationResponse,
+          null,
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        );
+        const mfaSession = await authenticationService.authenticateSession(enrollment.sessionToken);
+        const recoveryLogin = await login(platformAdminRuntimeDatabase, admin);
+        const recoverySession = await authenticationService.authenticateSession(
+          recoveryLogin.sessionToken,
+        );
+        await authorizeMfaRecovery(platformAdminOperatorDatabase, service, recoverySession);
+        return {
+          adapter,
+          admin,
+          authenticationService,
+          enrollment,
+          mfaSession,
+          recoveryLogin,
+          recoverySession,
+          service,
+        };
+      };
+
+      for (const purpose of ['AUTHENTICATION', 'STEP_UP'] as const) {
+        const prepared = await prepare(`mfa-recovery-race-${purpose.toLowerCase()}`);
+        const verificationLogin =
+          purpose === 'AUTHENTICATION'
+            ? await login(platformAdminRuntimeDatabase, prepared.admin)
+            : prepared.enrollment;
+        const verificationSession =
+          purpose === 'AUTHENTICATION'
+            ? await prepared.authenticationService.authenticateSession(
+                verificationLogin.sessionToken,
+              )
+            : prepared.mfaSession;
+        prepared.adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+        const authenticationOptions =
+          await prepared.service.createAuthenticationOptions(verificationSession);
+        assert.equal(authenticationOptions.purpose, purpose);
+        const pause = prepared.adapter.pauseNextVerification();
+        const verification = prepared.service.verifyAuthentication(
+          verificationSession,
+          authenticationOptions.challengeId,
+          {
+            ...authenticationResponse,
+            id: prepared.adapter.credentialId,
+            rawId: prepared.adapter.credentialId,
+          },
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        );
+        await pause.arrived;
+        await prepared.service.createRecoveryRegistrationOptions(prepared.recoverySession, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: 'integration-test',
+        });
+        pause.release();
+        await assert.rejects(verification);
+        await assert.rejects(
+          prepared.authenticationService.authenticateSession(verificationLogin.sessionToken),
+        );
+
+        const verificationFirst = await prepare(`mfa-recovery-race-${purpose.toLowerCase()}-first`);
+        const verificationFirstLogin =
+          purpose === 'AUTHENTICATION'
+            ? await login(platformAdminRuntimeDatabase, verificationFirst.admin)
+            : verificationFirst.enrollment;
+        const verificationFirstSession =
+          purpose === 'AUTHENTICATION'
+            ? await verificationFirst.authenticationService.authenticateSession(
+                verificationFirstLogin.sessionToken,
+              )
+            : verificationFirst.mfaSession;
+        verificationFirst.adapter.authenticationChallenge = `authentication-${randomUUID()}`;
+        const verificationFirstOptions =
+          await verificationFirst.service.createAuthenticationOptions(verificationFirstSession);
+        const verificationFirstResult = await verificationFirst.service.verifyAuthentication(
+          verificationFirstSession,
+          verificationFirstOptions.challengeId,
+          {
+            ...authenticationResponse,
+            id: verificationFirst.adapter.credentialId,
+            rawId: verificationFirst.adapter.credentialId,
+          },
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        );
+        await verificationFirst.service.createRecoveryRegistrationOptions(
+          verificationFirst.recoverySession,
+          { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+        );
+        await assert.rejects(
+          verificationFirst.authenticationService.authenticateSession(
+            verificationFirstResult.sessionToken,
+          ),
+        );
+      }
+
+      const logoutRace = await prepare('mfa-recovery-race-logout');
+      const recoveryOptions = await logoutRace.service.createRecoveryRegistrationOptions(
+        logoutRace.recoverySession,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      const pause = logoutRace.adapter.pauseNextVerification();
+      const completion = logoutRace.service.verifyRecoveryRegistration(
+        logoutRace.recoverySession,
+        recoveryOptions.challengeId,
+        registrationResponse,
+        null,
+        { ipAddress: null, requestId: randomUUID(), userAgent: 'integration-test' },
+      );
+      await pause.arrived;
+      await logoutRace.authenticationService.logout(logoutRace.recoverySession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      pause.release();
+      await assert.rejects(completion);
+      const retryLogin = await login(platformAdminRuntimeDatabase, logoutRace.admin);
+      const retrySession = await logoutRace.authenticationService.authenticateSession(
+        retryLogin.sessionToken,
+      );
+      const retryRequest = await logoutRace.service.requestMfaRecovery(retrySession, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: 'integration-test',
+      });
+      assert.equal(retryRequest.status, 'PENDING');
+      await assert.rejects(
+        logoutRace.authenticationService.authenticateSession(logoutRace.recoveryLogin.sessionToken),
+      );
+    });
+
+    await test('MFA recovery rejects accounts without active credentials and competing sessions', async () => {
+      const emptyAdmin = await provisionAdmin(migrationDatabase, 'mfa-recovery-empty');
+      const emptyAuthentication = createService(platformAdminRuntimeDatabase, emptyAdmin);
+      const emptyLogin = await login(platformAdminRuntimeDatabase, emptyAdmin);
+      const emptySession = await emptyAuthentication.authenticateSession(emptyLogin.sessionToken);
+      const emptyService = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        new FakeWebAuthnAdapter(),
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
+          recoveryPendingTtlSeconds: 900,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      await assert.rejects(
+        emptyService.requestMfaRecovery(emptySession, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        }),
+      );
+
+      const admin = await provisionAdmin(migrationDatabase, 'mfa-recovery-competing');
+      const auth = createService(platformAdminRuntimeDatabase, admin);
+      const firstLogin = await login(platformAdminRuntimeDatabase, admin);
+      const firstSession = await auth.authenticateSession(firstLogin.sessionToken);
+      const adapter = new FakeWebAuthnAdapter();
+      const service = new PostgresPlatformAdminWebAuthnService(
+        platformAdminRuntimeDatabase,
+        adapter,
+        {
+          allowedOrigins: ['https://admin.example.test'],
+          challengeTtlSeconds: 300,
+          firstEnrollmentPendingTtlSeconds: 900,
+          recoveryPendingTtlSeconds: 900,
+          rpId: 'admin.example.test',
+          rpName: 'Metas Admin',
+          stepUpTtlSeconds: 300,
+        },
+      );
+      await authorizeFirstEnrollment(platformAdminOperatorDatabase, service, firstSession);
+      const options = await service.createRegistrationOptions(firstSession);
+      await service.verifyRegistration(
+        firstSession,
+        options.challengeId,
+        registrationResponse,
+        null,
+        {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        },
+      );
+      const recoveryLoginA = await login(platformAdminRuntimeDatabase, admin);
+      const recoveryLoginB = await login(platformAdminRuntimeDatabase, admin);
+      const sessionA = await auth.authenticateSession(recoveryLoginA.sessionToken);
+      const sessionB = await auth.authenticateSession(recoveryLoginB.sessionToken);
+      await service.requestMfaRecovery(sessionA, {
+        ipAddress: null,
+        requestId: randomUUID(),
+        userAgent: null,
+      });
+      await assert.rejects(
+        service.requestMfaRecovery(sessionB, {
+          ipAddress: null,
+          requestId: randomUUID(),
+          userAgent: null,
+        }),
+      );
+    });
+
     await test('platform admin role, RLS, function grants and audit log remain least-privileged', async () => {
       await assert.rejects(assertPlatformAdminOperatorConnectionSecurity(migrationDatabase));
       await assert.rejects(assertPlatformAdminOperatorConnectionSecurity(runtimeDatabase));
@@ -1691,6 +2530,31 @@ if (testDatabases === null) {
       await assert.rejects(
         platformAdminOperatorDatabase.query('SELECT * FROM metas.get_platform_admin_me()'),
       );
+      for (const unauthorizedDatabase of [
+        migrationDatabase,
+        runtimeDatabase,
+        platformAdminRuntimeDatabase,
+      ]) {
+        await assert.rejects(
+          unauthorizedDatabase.query(
+            `SELECT * FROM metas.get_platform_admin_mfa_recovery_status(
+               CAST(:requestId AS UUID)
+             )`,
+            { replacements: { requestId: randomUUID() } },
+          ),
+        );
+        await assert.rejects(
+          unauthorizedDatabase.query(
+            `SELECT * FROM metas.approve_platform_admin_mfa_recovery(
+               CAST(:requestId AS UUID), CURRENT_TIMESTAMP + INTERVAL '5 minutes',
+               CAST(:operationRequestId AS UUID)
+             )`,
+            {
+              replacements: { operationRequestId: randomUUID(), requestId: randomUUID() },
+            },
+          ),
+        );
+      }
       const roles = await migrationDatabase.query<{
         bypassRls: boolean;
         canCreateDatabase: boolean;
@@ -1739,7 +2603,7 @@ if (testDatabases === null) {
          ORDER BY relation.relname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(tables.length, 7);
+      assert.equal(tables.length, 8);
       assert.ok(
         tables.every(
           ({ forceRls, owner, rls }) => forceRls && rls && owner === 'metas_migration_owner',
@@ -1749,6 +2613,7 @@ if (testDatabases === null) {
       for (const table of [
         'platform_admins',
         'platform_admin_identities',
+        'platform_admin_mfa_recovery_requests',
         'platform_admin_sessions',
         'platform_admin_audit_events',
         'platform_admin_first_enrollment_requests',
@@ -1809,6 +2674,7 @@ if (testDatabases === null) {
              'resolve_platform_admin_session',
              'require_platform_admin_context',
              'get_platform_admin_me',
+             'has_platform_admin_webauthn_credential_history',
              'revoke_platform_admin_session',
              'list_platform_admin_webauthn_credentials',
              'create_platform_admin_webauthn_challenge',
@@ -1819,11 +2685,16 @@ if (testDatabases === null) {
              'request_platform_admin_first_enrollment',
              'get_platform_admin_first_enrollment_request_status',
              'approve_platform_admin_first_enrollment'
+             ,'request_platform_admin_mfa_recovery'
+             ,'get_platform_admin_mfa_recovery_status'
+             ,'approve_platform_admin_mfa_recovery'
+             ,'create_platform_admin_recovery_webauthn_challenge'
+             ,'complete_platform_admin_mfa_recovery'
            )
          ORDER BY procedure.proname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(functions.length, 15);
+      assert.equal(functions.length, 21);
       assert.ok(
         functions.every(
           ({ appCanExecute, owner, publicCanExecute, searchPath }) =>
@@ -1842,6 +2713,8 @@ if (testDatabases === null) {
       for (const functionName of [
         'approve_platform_admin_first_enrollment',
         'get_platform_admin_first_enrollment_request_status',
+        'approve_platform_admin_mfa_recovery',
+        'get_platform_admin_mfa_recovery_status',
       ]) {
         assert.equal(byName.get(functionName)?.migrationCanExecute, false);
         assert.equal(byName.get(functionName)?.operatorCanExecute, true);
@@ -1850,6 +2723,7 @@ if (testDatabases === null) {
       for (const functionName of [
         'authenticate_platform_admin_google',
         'get_platform_admin_me',
+        'has_platform_admin_webauthn_credential_history',
         'resolve_platform_admin_session',
         'revoke_platform_admin_session',
         'list_platform_admin_webauthn_credentials',
@@ -1859,6 +2733,9 @@ if (testDatabases === null) {
         'complete_platform_admin_webauthn_authentication',
         'record_platform_admin_webauthn_failure',
         'request_platform_admin_first_enrollment',
+        'request_platform_admin_mfa_recovery',
+        'create_platform_admin_recovery_webauthn_challenge',
+        'complete_platform_admin_mfa_recovery',
       ]) {
         assert.equal(byName.get(functionName)?.platformCanExecute, true);
         assert.equal(byName.get(functionName)?.migrationCanExecute, false);

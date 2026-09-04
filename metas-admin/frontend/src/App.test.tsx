@@ -11,10 +11,15 @@ const jsonResponse = (body: unknown, status = 200): Response =>
     status,
   });
 
-const me = (assuranceLevel: 'GOOGLE_ONLY' | 'MFA_VERIFIED', hasWebAuthnCredential = true) => ({
+const me = (
+  assuranceLevel: 'GOOGLE_ONLY' | 'MFA_VERIFIED',
+  hasWebAuthnCredential = true,
+  hasWebAuthnCredentialHistory = hasWebAuthnCredential,
+) => ({
   assuranceLevel,
   displayName: 'Admin Teste',
   hasWebAuthnCredential,
+  hasWebAuthnCredentialHistory,
   primaryEmail: 'admin@example.test',
 });
 
@@ -93,6 +98,73 @@ describe('admin authentication routes', () => {
     );
     expect(localStorage).toHaveLength(0);
     expect(sessionStorage).toHaveLength(0);
+  });
+
+  it('requests MFA recovery without persisting its identifier or exposing session authority', async () => {
+    const user = userEvent.setup();
+    const requestId = '44444444-4444-4444-8444-444444444444';
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(me('GOOGLE_ONLY', true)))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'session.csrf' }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            approvalExpiresAt: null,
+            expiresAt: '2026-09-01T12:15:00.000Z',
+            requestId,
+            status: 'PENDING',
+          },
+          202,
+        ),
+      );
+    render(<App />);
+
+    await screen.findByRole('heading', { name: 'Confirme com sua passkey' });
+    await user.click(screen.getByRole('button', { name: 'Perdi acesso às minhas passkeys' }));
+
+    expect(await screen.findByText('Aguardando confirmação independente')).toBeInTheDocument();
+    expect(screen.getByText(`Identificador: ${requestId}`)).toBeInTheDocument();
+    expect(screen.getByText(/passkeys anteriores serão revogadas/iu)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mfa/recovery/request',
+      expect.objectContaining({ body: '{}', method: 'POST' }),
+    );
+    expect(localStorage).toHaveLength(0);
+    expect(sessionStorage).toHaveLength(0);
+    expect(window.location.search).toBe('');
+  });
+
+  it('keeps an interrupted recovery out of the first-enrollment flow', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(me('GOOGLE_ONLY', false, true)))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'session.csrf' }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            approvalExpiresAt: null,
+            expiresAt: '2026-09-01T12:15:00.000Z',
+            requestId: '55555555-5555-4555-8555-555555555555',
+            status: 'PENDING',
+          },
+          202,
+        ),
+      );
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Recupere o acesso com uma nova passkey' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Solicitar primeiro cadastro' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Usar passkey cadastrada' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Perdi acesso às minhas passkeys' }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/mfa/recovery/request',
+      expect.objectContaining({ body: '{}', method: 'POST' }),
+    );
   });
 
   it('routes MFA_VERIFIED sessions to the dashboard shell', async () => {

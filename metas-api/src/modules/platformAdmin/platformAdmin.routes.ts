@@ -250,6 +250,78 @@ export const createPlatformAdminRouter = ({
     );
 
     router.post(
+      '/mfa/recovery/request',
+      authenticateSession,
+      authenticatedRateLimit('MFA_RECOVERY_REQUEST'),
+      asyncHandler(async (request, response) => {
+        if (
+          !z
+            .object({})
+            .strict()
+            .safeParse(request.body ?? {}).success
+        ) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da solicitação inválidos.');
+        }
+        response
+          .status(202)
+          .json(
+            await webAuthnService.requestMfaRecovery(
+              requireSession(request),
+              metadataFromRequest(request),
+            ),
+          );
+      }),
+    );
+
+    router.post(
+      '/mfa/recovery/webauthn/options',
+      authenticateSession,
+      authenticatedRateLimit('MFA_RECOVERY_OPTIONS'),
+      asyncHandler(async (request, response) => {
+        if (
+          !z
+            .object({})
+            .strict()
+            .safeParse(request.body ?? {}).success
+        ) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da solicitação inválidos.');
+        }
+        response
+          .status(200)
+          .json(
+            await webAuthnService.createRecoveryRegistrationOptions(
+              requireSession(request),
+              metadataFromRequest(request),
+            ),
+          );
+      }),
+    );
+
+    router.post(
+      '/mfa/recovery/webauthn/verify',
+      authenticateSession,
+      authenticatedRateLimit('MFA_RECOVERY_VERIFY'),
+      asyncHandler(async (request, response) => {
+        const parsed = registrationVerificationSchema.safeParse(request.body);
+        if (!parsed.success) {
+          throw new AppError(422, 'INVALID_INPUT', 'Dados da passkey inválidos.');
+        }
+        const result = await webAuthnService.verifyRecoveryRegistration(
+          requireSession(request),
+          parsed.data.challengeId,
+          parsed.data.response as RegistrationResponseJSON,
+          parsed.data.friendlyName ?? null,
+          metadataFromRequest(request),
+        );
+        logger.info('PLATFORM_ADMIN_MFA_RECOVERY_SUCCESS', {
+          platformAdminId: requireSession(request).platformAdminId,
+          requestId: request.requestId,
+        });
+        response.status(200).json(result);
+      }),
+    );
+
+    router.post(
       '/mfa/webauthn/registration/options',
       authenticateSession,
       authenticatedRateLimit('WEBAUTHN_REGISTRATION_OPTIONS'),

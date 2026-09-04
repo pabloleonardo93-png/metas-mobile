@@ -110,6 +110,18 @@ const bootstrap = async (): Promise<void> => {
       limit: env.platformAdminRateLimitGoogleLoginMax,
       windowMs: rateLimitWindowMs,
     },
+    MFA_RECOVERY_OPTIONS: {
+      limit: env.platformAdminRateLimitMfaRecoveryOptionsMax,
+      windowMs: rateLimitWindowMs,
+    },
+    MFA_RECOVERY_REQUEST: {
+      limit: env.platformAdminRateLimitMfaRecoveryRequestMax,
+      windowMs: rateLimitWindowMs,
+    },
+    MFA_RECOVERY_VERIFY: {
+      limit: env.platformAdminRateLimitMfaRecoveryVerifyMax,
+      windowMs: rateLimitWindowMs,
+    },
     WEBAUTHN_AUTHENTICATION_OPTIONS: {
       limit: env.platformAdminRateLimitAuthenticationOptionsMax,
       windowMs: rateLimitWindowMs,
@@ -156,6 +168,7 @@ const bootstrap = async (): Promise<void> => {
             allowedOrigins: env.platformAdminWebAuthnAllowedOrigins,
             challengeTtlSeconds: env.platformAdminWebAuthnChallengeTtlSeconds,
             firstEnrollmentPendingTtlSeconds: env.platformAdminFirstEnrollmentPendingTtlSeconds,
+            recoveryPendingTtlSeconds: env.platformAdminMfaRecoveryPendingTtlSeconds,
             rpId: env.platformAdminWebAuthnRpId,
             rpName: env.platformAdminWebAuthnRpName,
             stepUpTtlSeconds: env.platformAdminWebAuthnStepUpTtlSeconds,

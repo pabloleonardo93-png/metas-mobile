@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type {
   AdminIdentity,
   FirstEnrollmentRequestResult,
+  MfaRecoveryRequestResult,
   WebAuthnAuthenticationOptionsResult,
   WebAuthnOptionsResult,
 } from '../types';
@@ -20,6 +21,7 @@ const meSchema = z
     assuranceLevel: z.enum(['GOOGLE_ONLY', 'MFA_VERIFIED']),
     displayName: z.string(),
     hasWebAuthnCredential: z.boolean(),
+    hasWebAuthnCredentialHistory: z.boolean(),
     primaryEmail: z.string(),
   })
   .strict();
@@ -61,6 +63,14 @@ const firstEnrollmentRequestSchema = z
     expiresAt: z.string(),
     requestId: z.string().uuid(),
     status: z.enum(['APPROVED', 'PENDING']),
+  })
+  .strict();
+const mfaRecoveryRequestSchema = z
+  .object({
+    approvalExpiresAt: z.string().nullable(),
+    expiresAt: z.string(),
+    requestId: z.string().uuid(),
+    status: z.enum(['APPROVED', 'ENROLLMENT_STARTED', 'PENDING']),
   })
   .strict();
 
@@ -165,6 +175,25 @@ export const adminApi = {
     return firstEnrollmentRequestSchema.parse(
       await mutation('/api/mfa/first-enrollment/request', {}),
     );
+  },
+
+  async requestMfaRecovery(): Promise<MfaRecoveryRequestResult> {
+    return mfaRecoveryRequestSchema.parse(await mutation('/api/mfa/recovery/request', {}));
+  },
+
+  async createRecoveryRegistrationOptions(): Promise<WebAuthnOptionsResult> {
+    return optionsSchema.parse(await mutation('/api/mfa/recovery/webauthn/options', {}));
+  },
+
+  async verifyRecoveryRegistration(input: {
+    challengeId: string;
+    friendlyName: string | null;
+    response: unknown;
+  }): Promise<void> {
+    const result = verificationSchema.parse(
+      await mutation('/api/mfa/recovery/webauthn/verify', input),
+    );
+    storeRotatedCsrf(result);
   },
 
   async verifyRegistration(input: {

@@ -40,6 +40,18 @@ export const registerFirstPasskey = async (): Promise<void> => {
   });
 };
 
+export const recoverWithNewPasskey = async (): Promise<void> => {
+  const result = await adminApi.createRecoveryRegistrationOptions();
+  const response = await startRegistration({
+    optionsJSON: result.options as unknown as RegistrationOptions,
+  });
+  await adminApi.verifyRecoveryRegistration({
+    challengeId: result.challengeId,
+    friendlyName: 'Passkey de recuperação',
+    response,
+  });
+};
+
 export const authenticateWithPasskey = async (): Promise<void> => {
   const result = await adminApi.createAuthenticationOptions();
   const response = await startAuthentication({

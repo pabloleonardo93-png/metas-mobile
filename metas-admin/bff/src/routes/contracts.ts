@@ -68,6 +68,7 @@ export const adminMeSchema = z
     assuranceLevel: z.enum(['GOOGLE_ONLY', 'MFA_VERIFIED']),
     displayName: z.string().min(1).max(200),
     hasWebAuthnCredential: z.boolean(),
+    hasWebAuthnCredentialHistory: z.boolean(),
     id: z.uuid(),
     primaryEmail: z.email(),
     status: z.enum(['ACTIVE', 'DISABLED']),
@@ -98,6 +99,14 @@ export const firstEnrollmentRequestResponseSchema = z
     expiresAt: z.iso.datetime(),
     requestId: z.uuid(),
     status: z.enum(['APPROVED', 'PENDING']),
+  })
+  .strict();
+export const mfaRecoveryRequestResponseSchema = z
+  .object({
+    approvalExpiresAt: z.iso.datetime().nullable(),
+    expiresAt: z.iso.datetime(),
+    requestId: z.uuid(),
+    status: z.enum(['APPROVED', 'ENROLLMENT_STARTED', 'PENDING']),
   })
   .strict();
 export const authenticationOptionsResponseSchema = z

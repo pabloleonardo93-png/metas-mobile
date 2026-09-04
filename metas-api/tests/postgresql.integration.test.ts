@@ -11,6 +11,7 @@ import {
   assertRuntimeConnectionSecurity,
 } from '../src/database/connectionSecurity.js';
 import { hasFirstEnrollmentRequestUniqueIndex } from '../src/database/admin/inspectFirstEnrollmentRequestIndex.js';
+import { validateMigratedSchema } from '../src/database/admin/inspectMigratedSchema.js';
 import { createMigrator } from '../src/database/umzug.js';
 import { withDatabaseContext } from '../src/shared/database/withDatabaseContext.js';
 import { createIntegrationDatabases } from './integrationDatabase.js';
@@ -225,6 +226,10 @@ if (testDatabases === null) {
     await test('migrations are fully applied', async () => {
       const pending = await createMigrator(migrationDatabase).pending();
       assert.equal(pending.length, 0);
+    });
+
+    await test('migrated schema inspector accepts migrations 001 through 016', async () => {
+      await validateMigratedSchema(migrationDatabase);
     });
 
     await test('inspector accepts the structurally correct truncated first-enrollment index', async () => {
@@ -592,11 +597,12 @@ if (testDatabases === null) {
         rolcanlogin: boolean;
         rolcreatedb: boolean;
         rolcreaterole: boolean;
+        rolinherit: boolean;
         rolreplication: boolean;
         rolname: string;
         rolsuper: boolean;
       }>(
-        `SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin,
+        `SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit,
                 rolreplication, rolbypassrls
          FROM pg_roles
          WHERE rolname IN (
@@ -616,8 +622,20 @@ if (testDatabases === null) {
         assert.equal(role.rolcreaterole, false);
         assert.equal(role.rolreplication, false);
         assert.equal(role.rolbypassrls, false);
+        assert.equal(role.rolinherit, false);
         assert.equal(role.rolcanlogin, role.rolname !== 'metas_migration_owner');
       }
+
+      const operatorIdentity = await platformAdminOperatorDatabase.query<{
+        currentUser: string;
+        sessionUser: string;
+      }>(`SELECT current_user::TEXT AS "currentUser", session_user::TEXT AS "sessionUser"`, {
+        type: QueryTypes.SELECT,
+      });
+      assert.deepEqual(operatorIdentity[0], {
+        currentUser: 'metas_platform_admin_operator',
+        sessionUser: 'metas_platform_admin_operator',
+      });
 
       const memberships = await migrationDatabase.query<{
         runnerCanAssumeOwner: boolean;

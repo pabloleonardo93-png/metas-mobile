@@ -163,9 +163,9 @@ npm run dev
 
 O Vite encaminha `/api` ao BFF local. Em produção, o BFF serve o build de `metas-admin/frontend/dist` e continua sendo o único consumidor do bearer administrativo. O cookie de produção usa o prefixo `__Host-`, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/` e não define `Domain`.
 
-O primeiro enrollment agora exige solicitação pela sessão `GOOGLE_ONLY` e aprovação temporária, fora do HTTP público, por um operador com a credencial de migration. O rate limiter administrativo usa Redis/Valkey compartilhado em produção e falha fechado; o modo em memória fica restrito a desenvolvimento/testes.
+O primeiro enrollment e o recovery de MFA exigem solicitação pela sessão `GOOGLE_ONLY` e aprovação temporária fora do HTTP público pela role dedicada `metas_platform_admin_operator`. O recovery substitui as passkeys antigas, encerra as demais sessões administrativas e só promove a sessão após verificar uma nova passkey. Se a cerimônia for interrompida ou expirar, uma nova solicitação de recovery invalida o challenge anterior e exige nova aprovação; credenciais e sessões revogadas nunca são restauradas. O rate limiter administrativo usa Redis/Valkey compartilhado em produção e falha fechado; o modo em memória fica restrito a desenvolvimento/testes.
 
-Antes de ativar o Admin em produção ainda são obrigatórios: aplicar e inspecionar a migration 015 pelo fluxo manual, configurar Redis/Valkey com TLS, ensaiar o procedimento de aprovação por canal independente, definir recovery seguro, validar BFF/cookie/CSRF no ambiente final e executar E2E com navegador/autenticador real. Esta fase não habilita o Admin nem acessa produção.
+Antes de ativar o Admin em produção ainda são obrigatórios: aplicar e inspecionar a migration 016 pelo fluxo manual, configurar Redis/Valkey com TLS, ensaiar as aprovações por canal independente, validar BFF/cookie/CSRF no ambiente final, estabelecer identidade individual do operador e executar E2E com navegador/autenticador real. Esta fase não habilita o Admin nem acessa produção.
 
 ## Banco de dados e migrations
 

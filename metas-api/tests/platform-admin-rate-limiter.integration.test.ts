@@ -11,6 +11,9 @@ import {
 const redisUrl = process.env.TEST_PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL;
 const policies: PlatformAdminRateLimitPolicies = {
   FIRST_ENROLLMENT_REQUEST: { limit: 3, windowMs: 60_000 },
+  MFA_RECOVERY_OPTIONS: { limit: 3, windowMs: 60_000 },
+  MFA_RECOVERY_REQUEST: { limit: 2, windowMs: 60_000 },
+  MFA_RECOVERY_VERIFY: { limit: 3, windowMs: 60_000 },
   GOOGLE_LOGIN: { limit: 3, windowMs: 60_000 },
   WEBAUTHN_AUTHENTICATION_OPTIONS: { limit: 3, windowMs: 60_000 },
   WEBAUTHN_AUTHENTICATION_VERIFY: { limit: 3, windowMs: 60_000 },
@@ -19,7 +22,7 @@ const policies: PlatformAdminRateLimitPolicies = {
 };
 
 await test(
-  'independent API instances share one atomic Redis rate limit window',
+  'independent API instances share one atomic Redis recovery rate limit window',
   { skip: redisUrl ? false : 'TEST_PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL is not configured' },
   async () => {
     assert.ok(redisUrl);
@@ -35,12 +38,12 @@ await test(
       const identity = ['admin-id', 'session-id', '192.0.2.1'];
       const decisions = await Promise.all(
         Array.from({ length: 12 }, (_, index) =>
-          (index % 2 === 0 ? first : second).consume('FIRST_ENROLLMENT_REQUEST', identity),
+          (index % 2 === 0 ? first : second).consume('MFA_RECOVERY_REQUEST', identity),
         ),
       );
 
-      assert.equal(decisions.filter((decision) => decision.allowed).length, 3);
-      assert.equal(decisions.filter((decision) => !decision.allowed).length, 9);
+      assert.equal(decisions.filter((decision) => decision.allowed).length, 2);
+      assert.equal(decisions.filter((decision) => !decision.allowed).length, 10);
       assert.ok(decisions.every((decision) => decision.retryAfterSeconds > 0));
     } finally {
       await Promise.all([firstClient.close(), secondClient.close()]);
