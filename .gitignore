@@ -19,6 +19,7 @@ dist/
 build/
 coverage/
 .expo/
+.vercel/
 .tmp-icon/
 *.tsbuildinfo
 *.apk

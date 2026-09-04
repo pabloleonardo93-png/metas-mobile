@@ -37,8 +37,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: |
+            metas-admin/package-lock.json
             metas-admin/frontend/package-lock.json
             metas-admin/bff/package-lock.json
+
+      - name: Install Vercel adapter dependencies
+        run: npm ci --prefix metas-admin
 
       - name: Install Admin dependencies
         run: npm ci --prefix metas-admin/frontend
@@ -54,6 +58,7 @@ jobs:
 
       - name: Run typecheck
         run: |
+          npm run typecheck --prefix metas-admin
           npm run typecheck --prefix metas-admin/frontend
           npm run typecheck --prefix metas-admin/bff
 
@@ -64,12 +69,13 @@ jobs:
 
       - name: Check formatting
         run: |
+          npm run format:check --prefix metas-admin
           npm run format:check --prefix metas-admin/frontend
           npm run format:check --prefix metas-admin/bff
 
       - name: Build Admin and BFF
         run: |
-          npm run build --prefix metas-admin/frontend
+          npm run build --prefix metas-admin
           npm run build --prefix metas-admin/bff
 
   mobile:

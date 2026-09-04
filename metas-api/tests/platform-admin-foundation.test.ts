@@ -262,6 +262,19 @@ await test('platform admin configuration keeps audiences separate and TTL below 
     process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'redis';
     assert.doesNotThrow(loadEnv);
 
+    process.env.PLATFORM_ADMIN_WEBAUTHN_RP_ID = 'project-name.vercel.app';
+    process.env.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS = 'https://project-name.vercel.app';
+    assert.doesNotThrow(loadEnv);
+
+    process.env.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS = 'https://preview-project-name.vercel.app';
+    assert.throws(loadEnv, /PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS/u);
+    process.env.PLATFORM_ADMIN_WEBAUTHN_RP_ID = '*.vercel.app';
+    process.env.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS = 'https://*.vercel.app';
+    assert.throws(loadEnv, /PLATFORM_ADMIN_WEBAUTHN_RP_ID/u);
+
+    process.env.PLATFORM_ADMIN_WEBAUTHN_RP_ID = 'admin.example.test';
+    process.env.PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS = 'https://admin.example.test';
+
     process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'memory';
     assert.throws(loadEnv, /PLATFORM_ADMIN_RATE_LIMIT_STORE/u);
     process.env.PLATFORM_ADMIN_RATE_LIMIT_STORE = 'redis';

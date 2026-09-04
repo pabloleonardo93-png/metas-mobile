@@ -122,6 +122,12 @@ describe('Admin BFF security boundary', () => {
       .send({ credential: 'c'.repeat(40) });
     expect(response.status).toBe(403);
     expect(bodyFrom<{ code: string }>(response).code).toBe('UNTRUSTED_ORIGIN');
+
+    const spoofedForwardedHost = await request(app)
+      .get('/api/security/csrf')
+      .set('host', 'preview-project.vercel.app')
+      .set('x-forwarded-host', config.expectedHost);
+    expect(spoofedForwardedHost.status).toBe(403);
   });
 
   it('protects login with CSRF and keeps the API bearer out of the response', async () => {
