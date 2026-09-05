@@ -1,3 +1,4 @@
+import { readEnvironmentDiagnosticFields } from './config/env.js';
 import type { Logger } from './shared/logging/logger.js';
 
 export const startupFailureDescriptors = {
@@ -79,6 +80,7 @@ export const safeStartupErrorType = (error: unknown): string => {
 export class StartupPhaseError extends Error {
   readonly errorCode: StartupFailureDescriptor['errorCode'];
   readonly errorType: string;
+  readonly invalidFields: readonly string[] | undefined;
   readonly phase: StartupFailureDescriptor['phase'];
 
   constructor(descriptor: StartupFailureDescriptor, cause: unknown) {
@@ -86,6 +88,10 @@ export class StartupPhaseError extends Error {
     this.name = 'StartupPhaseError';
     this.errorCode = descriptor.errorCode;
     this.errorType = safeStartupErrorType(cause);
+    this.invalidFields =
+      descriptor.phase === 'environment_validation'
+        ? readEnvironmentDiagnosticFields(cause)
+        : undefined;
     this.phase = descriptor.phase;
   }
 }
@@ -147,6 +153,7 @@ export const logServerStartupFailure = (logger: Logger, error: unknown): void =>
       ? {
           errorCode: error.errorCode,
           errorType: error.errorType,
+          ...(error.invalidFields ? { invalidFields: error.invalidFields } : {}),
           phase: error.phase,
         }
       : {

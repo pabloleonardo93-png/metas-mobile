@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import test from 'node:test';
 
 import type { LogContext, Logger } from '../src/shared/logging/logger.js';
+import { parseEnv } from '../src/config/env.js';
 import {
   logServerStartupFailure,
   runStartupConnectionPhases,
@@ -40,6 +42,21 @@ const syntheticFailure = (name = 'Error'): Error => {
   return error;
 };
 
+const validEnvironment = {
+  DATABASE_URL: 'postgresql://runtime:synthetic-password@database.example.test/metas',
+  GOOGLE_ADMIN_ALLOWED_CLIENT_IDS: 'admin-client-id.example.test',
+  GOOGLE_ALLOWED_CLIENT_IDS: 'mobile-client-id.example.test',
+  NODE_ENV: 'test',
+  PLATFORM_ADMIN_AUTH_ENABLED: 'true',
+  PLATFORM_ADMIN_DATABASE_URL:
+    'postgresql://platform-admin:synthetic-password@admin-database.example.test/metas',
+  PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: Buffer.alloc(32, 7).toString('base64url'),
+  PLATFORM_ADMIN_RATE_LIMIT_STORE: 'memory',
+  PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS: 'https://admin.example.test',
+  PLATFORM_ADMIN_WEBAUTHN_RP_ID: 'admin.example.test',
+  PLATFORM_ADMIN_WEBAUTHN_RP_NAME: 'Metas Admin',
+} satisfies NodeJS.ProcessEnv;
+
 const captureFailure = async (operation: () => Promise<unknown>): Promise<RecordingLogger> => {
   const logger = new RecordingLogger();
   await assert.rejects(operation, (error: StartupPhaseError) => {
@@ -53,7 +70,7 @@ const assertSanitized = (logger: RecordingLogger): void => {
   const serialized = JSON.stringify(logger.entries);
   assert.doesNotMatch(
     serialized,
-    /DATABASE_URL|PLATFORM_ADMIN_DATABASE_URL|postgresql:|rediss:|password|secret|process\.env|SENSITIVE_EXTERNAL_CODE|SELECT/iu,
+    /postgresql:|rediss:|synthetic-password|secret-too-short|redis-password|process\.env|SENSITIVE_EXTERNAL_CODE|SELECT/iu,
   );
   assert.deepEqual(
     logger.entries.map(({ event }) => event),
@@ -73,6 +90,74 @@ await test('environment validation failure reports only its sanitized phase', as
     errorType: 'Error',
     phase: 'environment_validation',
   });
+  assertSanitized(logger);
+});
+
+await test('environment diagnostics never expose invalid URL or credential values', async () => {
+  const invalidUrl = 'mysql://sensitive-user:sensitive-password@private.example.test/metas';
+  const logger = await captureFailure(() =>
+    runStartupPhase(startupFailureDescriptors.environmentValidation, () =>
+      parseEnv({ ...validEnvironment, DATABASE_URL: invalidUrl }),
+    ),
+  );
+
+  assert.deepEqual(logger.entries[0]?.context?.invalidFields, ['DATABASE_URL']);
+  const serialized = JSON.stringify(logger.entries);
+  assert.doesNotMatch(serialized, /sensitive-user|sensitive-password|private\.example\.test/iu);
+  assert.doesNotMatch(serialized, /must be a PostgreSQL URL/iu);
+  assertSanitized(logger);
+});
+
+await test('environment diagnostics report only allowlisted field names', async () => {
+  const logger = await captureFailure(() =>
+    runStartupPhase(startupFailureDescriptors.environmentValidation, () =>
+      parseEnv({ ...validEnvironment, PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET: 'secret-too-short' }),
+    ),
+  );
+
+  assert.deepEqual(logger.entries[0]?.context, {
+    errorCode: 'ENVIRONMENT_VALIDATION_FAILED',
+    errorType: 'Error',
+    invalidFields: ['PLATFORM_ADMIN_RATE_LIMIT_KEY_SECRET'],
+    phase: 'environment_validation',
+  });
+  assert.doesNotMatch(JSON.stringify(logger.entries), /secret-too-short|must encode/iu);
+  assertSanitized(logger);
+});
+
+await test('cross-field diagnostics are deduplicated and deterministically ordered', async () => {
+  const reusedClientId = 'sensitive-reused-client-id.apps.example.test';
+  const logger = await captureFailure(() =>
+    runStartupPhase(startupFailureDescriptors.environmentValidation, () =>
+      parseEnv({
+        ...validEnvironment,
+        GOOGLE_ADMIN_ALLOWED_CLIENT_IDS: reusedClientId,
+        GOOGLE_ALLOWED_CLIENT_IDS: reusedClientId,
+      }),
+    ),
+  );
+
+  assert.deepEqual(logger.entries[0]?.context?.invalidFields, [
+    'GOOGLE_ADMIN_ALLOWED_CLIENT_IDS',
+    'GOOGLE_ALLOWED_CLIENT_IDS',
+  ]);
+  assert.doesNotMatch(JSON.stringify(logger.entries), /sensitive-reused-client-id/u);
+  assertSanitized(logger);
+});
+
+await test('unknown fields and raw schema messages cannot enter environment diagnostics', async () => {
+  const arbitraryError = syntheticFailure();
+  Object.assign(arbitraryError, {
+    invalidFields: ['ARBITRARY_UNKNOWN_FIELD', sensitiveDetails],
+    issues: [{ message: sensitiveDetails, path: ['ARBITRARY_UNKNOWN_FIELD'] }],
+  });
+  const logger = await captureFailure(() =>
+    runStartupPhase(startupFailureDescriptors.environmentValidation, () => {
+      throw arbitraryError;
+    }),
+  );
+
+  assert.equal(logger.entries[0]?.context?.invalidFields, undefined);
   assertSanitized(logger);
 });
 

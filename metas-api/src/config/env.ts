@@ -334,6 +334,61 @@ const rawEnvSchema = z
     }
   });
 
+type RawEnvironmentField = Extract<keyof z.input<typeof rawEnvSchema>, string>;
+
+const rawEnvironmentFields = new Set<RawEnvironmentField>(
+  Object.keys(rawEnvSchema.shape) as RawEnvironmentField[],
+);
+
+const crossValidationFields = new Map<string, readonly RawEnvironmentField[]>([
+  [
+    'PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS\0must be shorter than the platform admin session TTL',
+    ['PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS', 'PLATFORM_ADMIN_SESSION_TTL_SECONDS'],
+  ],
+  [
+    'PLATFORM_ADMIN_SESSION_TTL_SECONDS\0must be shorter than the mobile session TTL',
+    ['PLATFORM_ADMIN_SESSION_TTL_SECONDS', 'SESSION_TTL_SECONDS'],
+  ],
+  [
+    'GOOGLE_ADMIN_ALLOWED_CLIENT_IDS\0must not reuse a mobile client ID',
+    ['GOOGLE_ADMIN_ALLOWED_CLIENT_IDS', 'GOOGLE_ALLOWED_CLIENT_IDS'],
+  ],
+  [
+    'PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS\0must use the configured RP ID and HTTPS in production',
+    ['PLATFORM_ADMIN_WEBAUTHN_ALLOWED_ORIGINS', 'PLATFORM_ADMIN_WEBAUTHN_RP_ID'],
+  ],
+]);
+
+const environmentDiagnosticFields = new WeakMap<Error, readonly RawEnvironmentField[]>();
+
+const extractKnownEnvironmentFields = (error: z.ZodError): readonly RawEnvironmentField[] => {
+  const fields = new Set<RawEnvironmentField>();
+
+  for (const issue of error.issues) {
+    const pathField = issue.path[0];
+    if (
+      typeof pathField !== 'string' ||
+      !rawEnvironmentFields.has(pathField as RawEnvironmentField)
+    ) {
+      continue;
+    }
+
+    const field = pathField as RawEnvironmentField;
+    fields.add(field);
+    const relatedFields = crossValidationFields.get(`${field}\0${issue.message}`) ?? [];
+    for (const relatedField of relatedFields) {
+      if (rawEnvironmentFields.has(relatedField)) {
+        fields.add(relatedField);
+      }
+    }
+  }
+
+  return Object.freeze([...fields].sort());
+};
+
+export const readEnvironmentDiagnosticFields = (error: unknown): readonly string[] | undefined =>
+  error instanceof Error ? environmentDiagnosticFields.get(error) : undefined;
+
 const databaseUrlSchema = z
   .string()
   .min(1)
@@ -449,12 +504,22 @@ const loadNorthflankDotEnv = (): void => {
   dotenv.config({ path: '.env.northflank', quiet: true });
 };
 
-const throwInvalidEnvironment = (error: z.ZodError): never => {
+const throwInvalidEnvironment = (error: z.ZodError, includeStartupDiagnostics = false): never => {
   const invalidVariables = [
     ...new Set(error.issues.map((issue) => String(issue.path[0] ?? 'environment'))),
   ].join(', ');
 
-  throw new Error(`Invalid environment configuration: ${invalidVariables}`);
+  const invalidEnvironmentError = new Error(
+    `Invalid environment configuration: ${invalidVariables}`,
+  );
+  if (includeStartupDiagnostics) {
+    const invalidFields = extractKnownEnvironmentFields(error);
+    if (invalidFields.length > 0) {
+      environmentDiagnosticFields.set(invalidEnvironmentError, invalidFields);
+    }
+  }
+
+  throw invalidEnvironmentError;
 };
 
 export const parsePlatformAdminRedisCheckEnv = (
@@ -483,12 +548,10 @@ export const loadNorthflankPlatformAdminRedisCheckEnv = (): PlatformAdminRedisCh
   return parsePlatformAdminRedisCheckEnv(process.env);
 };
 
-export const loadEnv = (): AppEnv => {
-  loadDotEnv();
-
-  const parsed = rawEnvSchema.safeParse(process.env);
+export const parseEnv = (environment: NodeJS.ProcessEnv): AppEnv => {
+  const parsed = rawEnvSchema.safeParse(environment);
   if (!parsed.success) {
-    return throwInvalidEnvironment(parsed.error);
+    return throwInvalidEnvironment(parsed.error, true);
   }
 
   return {
@@ -543,6 +606,11 @@ export const loadEnv = (): AppEnv => {
     sessionTtlSeconds: parsed.data.SESSION_TTL_SECONDS,
     corsOrigins: splitCommaSeparated(parsed.data.CORS_ORIGINS),
   };
+};
+
+export const loadEnv = (): AppEnv => {
+  loadDotEnv();
+  return parseEnv(process.env);
 };
 
 type AdminDatabaseTarget = 'development' | 'test';
