@@ -98,8 +98,11 @@ export const connectDatabase = async (database: Sequelize): Promise<void> => {
   await assertRuntimeConnectionSecurity(database);
 };
 
-export const connectPlatformAdminDatabase = async (database: Sequelize): Promise<void> => {
+export const authenticatePlatformAdminDatabase = async (database: Sequelize): Promise<void> => {
   await database.authenticate();
+};
+
+export const validatePlatformAdminDatabaseSecurity = async (database: Sequelize): Promise<void> => {
   await assertPlatformAdminRuntimeConnectionSecurity(database);
 };
 
