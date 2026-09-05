@@ -55,6 +55,18 @@ Esse comando prepara:
 
 Ele cria os roles PostgreSQL, mas não define senhas, não cria bancos nem tabelas de negócio e não roda automaticamente. O comando exige privilégios administrativos e falha sem eles.
 
+No Job administrativo do Northflank, a senha do runtime do Platform Admin pode ser definida ou rotacionada de forma explícita com:
+
+```text
+PLATFORM_ADMIN_RUNTIME_DB_PASSWORD=<SECRET>
+```
+
+```bash
+npm run db:admin:runtime-password:rotate:northflank
+```
+
+O comando altera somente a senha do role fixo `metas_platform_admin_runtime`, não registra o segredo e valida a nova credencial abrindo uma segunda conexão como esse role e consultando `current_user`. A conexão que executa a rotação usa exclusivamente as variáveis administrativas `NORTHFLANK_ADMIN_DB_*` e a configuração TLS existente; a senha administrativa nunca é reutilizada como senha do runtime.
+
 Somente `CREATE` é revogado de `PUBLIC` no schema `public`; `USAGE` é preservado para os objetos das extensões. No schema `metas`, `CREATE` e `USAGE` de `PUBLIC` são revogados e concedidos explicitamente aos roles necessários.
 
 ## Migrations
@@ -190,6 +202,7 @@ npm test                    executa testes sem PostgreSQL
 npm run test:integration    executa testes PostgreSQL reais
 npm run db:admin:bootstrap  prepara infraestrutura administrativa
 npm run db:admin:bootstrap:test prepara infraestrutura no banco exclusivo de teste
+npm run db:admin:runtime-password:rotate:northflank rotaciona somente a senha do runtime administrativo
 npm run db:migrate          aplica migrations pendentes
 npm run db:migrate:status   lista migrations executadas/pendentes
 npm run db:migrate:test     aplica migrations no banco de teste
