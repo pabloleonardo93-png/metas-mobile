@@ -2,11 +2,12 @@ import { createServer, type Server } from 'node:http';
 
 import { createApp } from './app.js';
 import {
+  authenticatePlatformAdminDatabase,
   connectDatabase,
-  connectPlatformAdminDatabase,
   createDatabase,
   createPlatformAdminDatabase,
   disconnectDatabase,
+  validatePlatformAdminDatabaseSecurity,
 } from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { PostgresAuthenticationService } from './modules/auth/authenticationService.js';
@@ -25,6 +26,13 @@ import { officialPlatformAdminWebAuthnAdapter } from './modules/platformAdmin/pl
 import { PostgresPlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthnService.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
 import { logger } from './shared/logging/logger.js';
+import {
+  logServerStartupFailure,
+  runStartupConnectionPhases,
+  runStartupPhase,
+  safeStartupErrorType,
+  startupFailureDescriptors,
+} from './startupDiagnostics.js';
 
 const listen = async (server: Server, host: string, port: number): Promise<void> =>
   await new Promise((resolve, reject) => {
@@ -52,39 +60,58 @@ const closeServer = async (server: Server): Promise<void> =>
   });
 
 const bootstrap = async (): Promise<void> => {
-  const env = loadEnv();
-  const database = createDatabase(env);
+  const env = await runStartupPhase(startupFailureDescriptors.environmentValidation, loadEnv);
+  const database = await runStartupPhase(startupFailureDescriptors.primaryDatabaseCreation, () =>
+    createDatabase(env),
+  );
   const platformAdminDatabase = env.platformAdminAuthEnabled
-    ? createPlatformAdminDatabase(env)
+    ? await runStartupPhase(startupFailureDescriptors.platformAdminDatabaseCreation, () =>
+        createPlatformAdminDatabase(env),
+      )
     : null;
+  const platformAdminRateLimitRedisUrl = env.platformAdminRateLimitRedisUrl;
   const platformAdminRedisClient =
     env.platformAdminAuthEnabled &&
     env.platformAdminRateLimitStore === 'redis' &&
-    env.platformAdminRateLimitRedisUrl
-      ? createPlatformAdminRedisClient(env.platformAdminRateLimitRedisUrl)
+    platformAdminRateLimitRedisUrl
+      ? await runStartupPhase(startupFailureDescriptors.platformAdminRedisClientCreation, () =>
+          createPlatformAdminRedisClient(platformAdminRateLimitRedisUrl),
+        )
       : null;
 
   platformAdminRedisClient?.on('error', (error: Error) => {
-    logger.error('platform_admin_rate_limit_store_error', { errorType: error.name });
+    logger.error('platform_admin_rate_limit_store_error', {
+      errorType: safeStartupErrorType(error),
+    });
   });
 
   try {
-    await connectDatabase(database);
-    if (platformAdminDatabase) {
-      await connectPlatformAdminDatabase(platformAdminDatabase);
-    }
-    if (platformAdminRedisClient) {
-      await platformAdminRedisClient.connect();
-      await platformAdminRedisClient.ping();
-    }
-  } catch (error: unknown) {
-    logger.error('database_connection_failed', {
-      errorType: error instanceof Error ? error.name : 'UnknownError',
+    await runStartupConnectionPhases({
+      connectPrimaryDatabase: () => connectDatabase(database),
+      ...(platformAdminDatabase
+        ? {
+            connectPlatformAdminDatabase: () =>
+              authenticatePlatformAdminDatabase(platformAdminDatabase),
+            validatePlatformAdminDatabaseSecurity: () =>
+              validatePlatformAdminDatabaseSecurity(platformAdminDatabase),
+          }
+        : {}),
+      ...(platformAdminRedisClient
+        ? {
+            connectPlatformAdminRedis: async () => {
+              await platformAdminRedisClient.connect();
+            },
+            pingPlatformAdminRedis: async () => {
+              await platformAdminRedisClient.ping();
+            },
+          }
+        : {}),
     });
+  } catch (error: unknown) {
     await disconnectDatabase(database).catch(() => undefined);
     await platformAdminDatabase?.close().catch(() => undefined);
     await platformAdminRedisClient?.close().catch(() => undefined);
-    throw new Error('Server bootstrap failed', { cause: error });
+    throw error;
   }
 
   const authenticationService = new PostgresAuthenticationService(
@@ -139,23 +166,27 @@ const bootstrap = async (): Promise<void> => {
       windowMs: rateLimitWindowMs,
     },
   };
-  const platformAdminRateLimiter = platformAdminAuthenticationService
-    ? (() => {
-        if (!env.platformAdminRateLimitKeySecret) {
-          throw new Error('Platform admin rate limit key secret is required.');
-        }
-        return platformAdminRedisClient
-          ? new RedisPlatformAdminRateLimiter(
-              platformAdminRedisClient,
-              env.platformAdminRateLimitKeySecret,
-              platformAdminRateLimitPolicies,
-            )
-          : new MemoryPlatformAdminRateLimiter(
-              env.platformAdminRateLimitKeySecret,
-              platformAdminRateLimitPolicies,
-            );
-      })()
-    : undefined;
+  const platformAdminRateLimiter = await runStartupPhase(
+    startupFailureDescriptors.serviceInitialization,
+    () =>
+      platformAdminAuthenticationService
+        ? (() => {
+            if (!env.platformAdminRateLimitKeySecret) {
+              throw new Error('Platform admin rate limit key secret is required.');
+            }
+            return platformAdminRedisClient
+              ? new RedisPlatformAdminRateLimiter(
+                  platformAdminRedisClient,
+                  env.platformAdminRateLimitKeySecret,
+                  platformAdminRateLimitPolicies,
+                )
+              : new MemoryPlatformAdminRateLimiter(
+                  env.platformAdminRateLimitKeySecret,
+                  platformAdminRateLimitPolicies,
+                );
+          })()
+        : undefined,
+  );
   const platformAdminWebAuthnService =
     platformAdminDatabase &&
     env.platformAdminWebAuthnRpId &&
@@ -224,7 +255,9 @@ const bootstrap = async (): Promise<void> => {
   });
 
   try {
-    await listen(server, env.host, env.port);
+    await runStartupPhase(startupFailureDescriptors.httpServerInitialization, () =>
+      listen(server, env.host, env.port),
+    );
     logger.info('server_started', {
       environment: env.nodeEnv,
       host: env.host,
@@ -240,8 +273,6 @@ const bootstrap = async (): Promise<void> => {
 };
 
 void bootstrap().catch((error: unknown) => {
-  logger.error('server_start_failed', {
-    errorType: error instanceof Error ? error.name : 'UnknownError',
-  });
+  logServerStartupFailure(logger, error);
   process.exitCode = 1;
 });
