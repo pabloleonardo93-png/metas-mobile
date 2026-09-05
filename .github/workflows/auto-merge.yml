@@ -11,7 +11,6 @@ on:
 
 permissions:
   actions: read
-  checks: read
   contents: write
   pull-requests: read
 
@@ -24,8 +23,7 @@ jobs:
     name: Validar e integrar PR
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.event == 'push' ||
-      github.event.workflow_run.event == 'pull_request') &&
+      github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'develop' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
@@ -35,7 +33,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
-          WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
+          CI_WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
         with:
           script: |
@@ -43,15 +41,43 @@ jobs:
             const headBranch = 'develop';
             const migrationRoot = 'metas-api/src/database/migrations/';
             const requiredJobs = ['Admin CI', 'Mobile CI', 'API CI', 'PostgreSQL Integration'];
+            const terminalFailureConclusions = new Set([
+              'cancelled',
+              'failure',
+              'startup_failure',
+              'stale',
+              'timed_out',
+            ]);
+            const waitIntervalMilliseconds = 15_000;
+            const maxWaitAttempts = 32;
             const testedSha = process.env.TESTED_SHA;
-            const workflowEvent = process.env.WORKFLOW_EVENT;
+            const ciWorkflowId = Number(process.env.CI_WORKFLOW_ID);
             const workflowRunId = Number(process.env.WORKFLOW_RUN_ID);
             const { owner, repo } = context.repo;
 
+            const report = async (status, message) => {
+              core.notice(message);
+              await core.summary
+                .addHeading('Resultado do merge automático')
+                .addTable([
+                  [
+                    { data: 'Estado', header: true },
+                    { data: 'Detalhe', header: true },
+                  ],
+                  [status, message],
+                ])
+                .write();
+            };
+
+            const delay = (milliseconds) =>
+              new Promise((resolve) => setTimeout(resolve, milliseconds));
+
             if (
               !/^[0-9a-f]{40}$/u.test(testedSha) ||
+              !Number.isSafeInteger(ciWorkflowId) ||
               !Number.isSafeInteger(workflowRunId) ||
-              !['push', 'pull_request'].includes(workflowEvent)
+              ciWorkflowId <= 0 ||
+              workflowRunId <= 0
             ) {
               core.setFailed('Identificadores do workflow de CI são inválidos.');
               return;
@@ -98,26 +124,18 @@ jobs:
             const sameRepository = pull.head.repo?.full_name === `${owner}/${repo}`;
             const correctRoute = pull.head.ref === headBranch && pull.base.ref === baseBranch;
             const currentHeadWasTested = pull.head.sha === testedSha;
-            const associatedPulls = context.payload.workflow_run.pull_requests ?? [];
-            const triggeringPullMatches =
-              workflowEvent !== 'pull_request' ||
-              associatedPulls.some(
-                ({ number, head, base }) =>
-                  number === pullNumber &&
-                  head.sha === testedSha &&
-                  head.ref === headBranch &&
-                  base.ref === baseBranch,
-              );
 
             if (
               pull.state !== 'open' ||
               pull.draft ||
               !sameRepository ||
               !correctRoute ||
-              !currentHeadWasTested ||
-              !triggeringPullMatches
+              !currentHeadWasTested
             ) {
-              core.notice('Merge não executado: o PR atual não corresponde ao fluxo e ao SHA validados.');
+              await report(
+                'IGNORADO_HEAD_DIVERGENTE',
+                'Merge não executado: o PR atual não corresponde ao fluxo develop → main e ao SHA validados.',
+              );
               return;
             }
 
@@ -130,41 +148,123 @@ jobs:
             const migrationPresent = files.some(({ filename }) => filename.startsWith(migrationRoot));
 
             if (migrationPresent) {
-              core.notice(
+              await report(
+                'BLOQUEADO_MIGRATION',
                 'Migration detectada. Auto-merge bloqueado; o PR deve seguir o fluxo manual de banco.',
               );
               return;
             }
 
-            const checkRuns = await github.paginate(github.rest.checks.listForRef, {
-              owner,
-              repo,
-              ref: testedSha,
-              filter: 'latest',
-              per_page: 100,
-            });
-            const latestRequiredChecks = new Map();
-            for (const checkRun of checkRuns) {
+            let pullRequestCiRun = null;
+            let readyPull = null;
+            for (let attempt = 1; attempt <= maxWaitAttempts; attempt += 1) {
+              const { data: currentPull } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: pullNumber,
+              });
+
+              if (currentPull.state !== 'open') {
+                await report(
+                  currentPull.merged ? 'IGNORADO_JA_INTEGRADO' : 'IGNORADO_PR_FECHADO',
+                  `Merge não executado: o Pull Request #${pullNumber} não está mais aberto.`,
+                );
+                return;
+              }
+              if (currentPull.head.sha !== testedSha) {
+                await report(
+                  'IGNORADO_HEAD_ALTERADA',
+                  'Merge cancelado: a HEAD do PR mudou durante a validação; o novo SHA exige seu próprio CI.',
+                );
+                return;
+              }
+
+              const pullRequestRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner,
+                repo,
+                workflow_id: ciWorkflowId,
+                branch: headBranch,
+                event: 'pull_request',
+                head_sha: testedSha,
+                per_page: 100,
+              });
+              pullRequestCiRun = pullRequestRuns
+                .filter(
+                  (run) =>
+                    run.event === 'pull_request' &&
+                    run.head_branch === headBranch &&
+                    run.head_sha === testedSha,
+                )
+                .sort((left, right) => right.id - left.id)[0];
+
               if (
-                requiredJobs.includes(checkRun.name) &&
-                checkRun.head_sha === testedSha &&
-                checkRun.app?.slug === 'github-actions'
+                pullRequestCiRun &&
+                terminalFailureConclusions.has(pullRequestCiRun.conclusion)
               ) {
-                const current = latestRequiredChecks.get(checkRun.name);
-                if (!current || checkRun.id > current.id) {
-                  latestRequiredChecks.set(checkRun.name, checkRun);
+                await report(
+                  'BLOQUEADO_CI_PR',
+                  `Merge bloqueado: CI do PR para ${testedSha.slice(0, 7)} terminou como ${pullRequestCiRun.conclusion}.`,
+                );
+                return;
+              }
+
+              if (pullRequestCiRun?.conclusion === 'success') {
+                const pullRequestJobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  {
+                    owner,
+                    repo,
+                    run_id: pullRequestCiRun.id,
+                    filter: 'latest',
+                    per_page: 100,
+                  },
+                );
+                const pullRequestJobConclusions = new Map(
+                  pullRequestJobs.map(({ name, conclusion }) => [name, conclusion]),
+                );
+                const invalidPullRequestJobs = requiredJobs.filter(
+                  (name) => pullRequestJobConclusions.get(name) !== 'success',
+                );
+
+                if (invalidPullRequestJobs.length > 0) {
+                  await report(
+                    'BLOQUEADO_CHECK_OBRIGATORIO',
+                    `Merge bloqueado: checks do PR sem sucesso: ${invalidPullRequestJobs.join(', ')}.`,
+                  );
+                  return;
                 }
+
+                if (currentPull.mergeable === true && currentPull.mergeable_state === 'clean') {
+                  readyPull = currentPull;
+                  break;
+                }
+                if (currentPull.mergeable === false || currentPull.mergeable_state === 'dirty') {
+                  await report(
+                    'BLOQUEADO_CONFLITO',
+                    `Merge bloqueado: o Pull Request #${pullNumber} possui conflitos com ${baseBranch}.`,
+                  );
+                  return;
+                }
+              }
+
+              if (attempt < maxWaitAttempts) {
+                const ciState = pullRequestCiRun
+                  ? `${pullRequestCiRun.status}/${pullRequestCiRun.conclusion ?? 'pending'}`
+                  : 'ainda não criado';
+                core.info(
+                  `Aguardando CI do PR e mergeabilidade (${attempt}/${maxWaitAttempts}); CI=${ciState}; mergeable_state=${currentPull.mergeable_state ?? 'unknown'}.`,
+                );
+                await delay(waitIntervalMilliseconds);
               }
             }
 
-            const unavailableChecks = requiredJobs.filter((name) => {
-              const checkRun = latestRequiredChecks.get(name);
-              return !checkRun || checkRun.status !== 'completed' || checkRun.conclusion !== 'success';
-            });
-
-            if (unavailableChecks.length > 0) {
-              core.notice(
-                `Merge não executado: checks do SHA atual ainda não concluídos com sucesso: ${unavailableChecks.join(', ')}.`,
+            if (!readyPull) {
+              const ciState = pullRequestCiRun
+                ? `${pullRequestCiRun.status}/${pullRequestCiRun.conclusion ?? 'pending'}`
+                : 'não encontrado';
+              await report(
+                'AGUARDANDO_REQUISITOS',
+                `Merge não executado no intervalo limitado: CI do PR=${ciState}. Nenhum requisito foi ignorado.`,
               );
               return;
             }
@@ -191,7 +291,10 @@ jobs:
             } while (cursor);
 
             if (unresolvedThreads > 0) {
-              core.notice(`Merge não executado: ${unresolvedThreads} conversa(s) ainda não resolvida(s).`);
+              await report(
+                'BLOQUEADO_CONVERSAS',
+                `Merge não executado: ${unresolvedThreads} conversa(s) ainda não resolvida(s).`,
+              );
               return;
             }
 
@@ -215,11 +318,17 @@ jobs:
               pull_number: pullNumber,
             });
             if (currentPull.state !== 'open' || currentPull.head.sha !== testedSha) {
-              core.notice('Merge cancelado: a HEAD do PR mudou depois das validações.');
+              await report(
+                'IGNORADO_HEAD_ALTERADA',
+                'Merge cancelado: a HEAD do PR mudou depois das validações.',
+              );
               return;
             }
             if (currentPull.mergeable !== true || currentPull.mergeable_state !== 'clean') {
-              core.notice(
+              await report(
+                currentPull.mergeable === false || currentPull.mergeable_state === 'dirty'
+                  ? 'BLOQUEADO_CONFLITO'
+                  : 'AGUARDANDO_REQUISITOS',
                 `Merge não executado: estado atual do PR é ${currentPull.mergeable_state ?? 'desconhecido'}.`,
               );
               return;
@@ -238,4 +347,7 @@ jobs:
               return;
             }
 
-            core.info(`Pull Request #${pullNumber} integrado com sucesso por Merge.`);
+            await report(
+              'MERGE_CONCLUIDO',
+              `Pull Request #${pullNumber} integrado com sucesso por Merge commit.`,
+            );
