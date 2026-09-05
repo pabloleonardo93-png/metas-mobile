@@ -169,7 +169,7 @@ Antes de ativar o Admin em produção ainda são obrigatórios: aplicar e inspec
 
 ### Hospedagem do Admin na Vercel
 
-O projeto Vercel deve usar `metas-admin` como **Root Directory**, Node.js 24 e o preset/configuração versionada em `metas-admin/vercel.json`. O build raiz valida o adaptador serverless e gera o frontend; `metas-admin/api/[...path].ts` instancia o BFF sem chamar `app.listen()`. O fallback da SPA exclui `/api`, portanto uma rota BFF ausente retorna JSON/404 e nunca `index.html`. Assets versionados podem ser armazenados em cache; HTML e toda resposta `/api/*` usam `no-store`.
+O projeto Vercel deve usar `metas-admin` como **Root Directory**, Node.js 24 e o preset/configuração versionada em `metas-admin/vercel.json`. O build raiz valida o adaptador serverless e gera o frontend; uma rewrite explícita encaminha `/api/:path*` para `metas-admin/api/index.ts`, que preserva o caminho capturado ao instanciar o BFF sem chamar `app.listen()`. O fallback da SPA exclui `/api`, portanto uma rota BFF ausente retorna JSON/404 e nunca `index.html`. Assets versionados podem ser armazenados em cache; HTML e toda resposta `/api/*` usam `no-store`.
 
 Use uma origem fixa e exata no domínio gratuito do projeto, sem wildcard:
 
