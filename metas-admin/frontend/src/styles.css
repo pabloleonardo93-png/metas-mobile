@@ -93,23 +93,24 @@ button {
 }
 
 .admin-login-page {
+  --admin-login-top-gap: clamp(40px, 6vh, 64px);
   display: grid;
   min-height: 100vh;
   min-height: 100dvh;
-  place-items: center;
-  padding: clamp(24px, 5vh, 48px) 24px;
+  align-items: end;
+  padding: var(--admin-login-top-gap) clamp(16px, 2vw, 32px) 0;
   background: var(--metas-primary);
 }
 .admin-login-card {
   display: flex;
-  width: min(680px, 100%);
-  min-height: min(720px, calc(100dvh - 48px));
+  width: 100%;
+  min-height: calc(100dvh - var(--admin-login-top-gap));
   flex-direction: column;
   justify-content: space-between;
-  padding: clamp(40px, 7vw, 72px);
-  border-radius: 48px;
+  padding: clamp(40px, 6vw, 72px) clamp(24px, 6vw, 88px) clamp(28px, 4vw, 48px);
+  border-radius: clamp(40px, 4vw, 56px) clamp(40px, 4vw, 56px) 0 0;
   background: var(--metas-surface);
-  box-shadow: 0 28px 80px rgba(91, 7, 10, 0.2);
+  box-shadow: 0 -16px 48px rgba(91, 7, 10, 0.14);
 }
 .admin-login-content {
   display: flex;
@@ -516,15 +517,12 @@ button {
 
 @media (max-width: 560px) {
   .admin-login-page {
-    align-items: end;
-    padding: clamp(36px, 9vh, 72px) 0 0;
+    --admin-login-top-gap: clamp(36px, 9vh, 72px);
+    padding-inline: 0;
   }
   .admin-login-card {
-    width: 100%;
-    min-height: calc(100dvh - clamp(36px, 9vh, 72px));
     padding: 40px 24px 28px;
     border-radius: 48px 48px 0 0;
-    box-shadow: 0 -16px 48px rgba(91, 7, 10, 0.12);
   }
   .admin-login-logo {
     width: 96px;

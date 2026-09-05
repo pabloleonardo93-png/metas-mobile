@@ -147,11 +147,34 @@ describe('Vercel deployment adapter', () => {
       headers.some(({ key }) => key === 'Content-Security-Policy'),
     );
     const csp = spaHeaders?.headers.find(({ key }) => key === 'Content-Security-Policy')?.value;
+    const directives = new Map(
+      csp
+        ?.split(';')
+        .map((directive) => directive.trim().split(/\s+/u))
+        .filter(([name]) => name)
+        .map(([name, ...sources]) => [name, sources]),
+    );
 
-    expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain('https://accounts.google.com/gsi/client');
-    expect(csp).not.toContain("'unsafe-inline'");
-    expect(csp).not.toContain("'unsafe-eval'");
-    expect(csp).not.toMatch(/(?:^|\s)\*(?:;|\s|$)/u);
+    expect(directives.get('default-src')).toEqual(["'self'"]);
+    expect(directives.get('style-src')).toEqual([
+      "'self'",
+      'https://accounts.google.com/gsi/style',
+    ]);
+    expect(directives.get('style-src-elem')).toEqual([
+      "'self'",
+      "'unsafe-inline'",
+      'https://accounts.google.com/gsi/style',
+    ]);
+    expect(directives.get('style-src-attr')).toEqual(["'unsafe-inline'"]);
+    expect(directives.get('script-src')).toEqual([
+      "'self'",
+      'https://accounts.google.com/gsi/client',
+    ]);
+    expect(directives.get('connect-src')).toEqual(["'self'", 'https://accounts.google.com/gsi/']);
+    expect(directives.get('frame-src')).toEqual(['https://accounts.google.com/gsi/']);
+    expect(directives.get('img-src')).toEqual(["'self'", 'data:']);
+    expect(directives.get('script-src')).not.toContain("'unsafe-inline'");
+    expect(directives.get('script-src')).not.toContain("'unsafe-eval'");
+    expect([...directives.values()].flat()).not.toContain('*');
   });
 });
