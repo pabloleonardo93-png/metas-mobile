@@ -39,12 +39,12 @@ export const GoogleSignInButton = ({
         containerRef.current.replaceChildren();
         google.accounts.id.renderButton(containerRef.current, {
           locale: 'pt-BR',
-          shape: 'pill',
+          logo_alignment: 'left',
+          shape: 'rectangular',
           size: 'large',
-          text: 'continue_with',
+          text: 'signin_with',
           theme: 'outline',
           type: 'standard',
-          width: '320',
         });
         setReady(true);
       })
@@ -59,7 +59,12 @@ export const GoogleSignInButton = ({
 
   return (
     <div className={disabled ? 'google-button google-button--disabled' : 'google-button'}>
-      <div ref={containerRef} aria-hidden={!ready || disabled} />
+      <div
+        ref={containerRef}
+        aria-hidden={!ready || disabled}
+        className="google-button__surface"
+        data-testid="google-sign-in-container"
+      />
       {!ready && <span className="button-placeholder">Carregando acesso seguro…</span>}
     </div>
   );

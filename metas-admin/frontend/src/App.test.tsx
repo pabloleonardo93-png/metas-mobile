@@ -24,12 +24,14 @@ const me = (
 });
 
 let googleCallback: ((response: { credential?: string }) => void) | null = null;
+let googleRenderButton = vi.fn();
 
 describe('admin authentication routes', () => {
   beforeEach(() => {
     resetAdminApiStateForTests();
     window.history.replaceState({}, '', '/');
     googleCallback = null;
+    googleRenderButton = vi.fn();
     window.google = {
       accounts: {
         id: {
@@ -39,7 +41,7 @@ describe('admin authentication routes', () => {
               googleCallback = options.callback;
             },
           ),
-          renderButton: vi.fn(),
+          renderButton: googleRenderButton,
         },
       },
     };
@@ -53,7 +55,37 @@ describe('admin authentication routes', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Entrar no painel' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Logo Metas' })).toBeInTheDocument();
     expect(screen.queryByLabelText(/senha/iu)).not.toBeInTheDocument();
+  });
+
+  it('renders the official textual GIS button in an isolated responsive container', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ code: 'UNAUTHORIZED', message: 'Sessão necessária.' }, 401),
+    );
+    render(<App />);
+
+    const container = await screen.findByTestId('google-sign-in-container');
+    await waitFor(() => expect(googleRenderButton).toHaveBeenCalledOnce());
+
+    const [renderTarget, options] = googleRenderButton.mock.calls[0] as [
+      HTMLElement,
+      Record<string, string>,
+    ];
+    expect(renderTarget).toBe(container);
+    expect(container).toHaveClass('google-button__surface');
+    expect(options).toEqual(
+      expect.objectContaining({
+        logo_alignment: 'left',
+        shape: 'rectangular',
+        size: 'large',
+        text: 'signin_with',
+        theme: 'outline',
+        type: 'standard',
+      }),
+    );
+    expect(options).not.toHaveProperty('width');
+    expect(screen.queryByRole('button', { name: /google/iu })).not.toBeInTheDocument();
   });
 
   it('routes GOOGLE_ONLY sessions to the passkey step', async () => {
