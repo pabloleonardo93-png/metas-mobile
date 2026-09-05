@@ -1,9 +1,16 @@
+/// <reference types="node" />
+
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetAdminApiStateForTests } from './api/adminApi';
 import { App } from './App';
+
+const styles = readFileSync(path.join(process.cwd(), 'src', 'styles.css'), 'utf8');
 
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -123,6 +130,19 @@ describe('admin authentication routes', () => {
       expect.objectContaining({ client_id: 'admin-ci.apps.googleusercontent.com' }),
     );
     expect(screen.queryByRole('button', { name: /google/iu })).not.toBeInTheDocument();
+  });
+
+  it('uses a viewport-wide login surface while keeping its content readable', () => {
+    const loginCardRule = styles.match(/\.admin-login-card\s*\{[^}]*\}/u)?.[0];
+    const loginCopyRule = styles.match(/\.admin-login-copy\s*\{[^}]*\}/u)?.[0];
+    const loginAccessRule = styles.match(/\.admin-login-access\s*\{[^}]*\}/u)?.[0];
+
+    expect(loginCardRule).toContain('width: 100%');
+    expect(loginCardRule).toContain('min-height: calc(100dvh - var(--admin-login-top-gap))');
+    expect(loginCardRule).not.toContain('680px');
+    expect(loginCopyRule).toContain('max-width: 500px');
+    expect(loginAccessRule).toContain('max-width: 400px');
+    expect(styles).not.toContain('width: min(680px, 100%)');
   });
 
   it('rerenders the official GIS button only when its available width changes', async () => {
