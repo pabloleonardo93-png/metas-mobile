@@ -1,4 +1,6 @@
-export type LogContext = Readonly<Record<string, boolean | null | number | string>>;
+export type LogContext = Readonly<
+  Record<string, boolean | null | number | readonly string[] | string>
+>;
 
 export interface Logger {
   error(event: string, context?: LogContext): void;
