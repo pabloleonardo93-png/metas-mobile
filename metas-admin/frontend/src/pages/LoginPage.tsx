@@ -26,63 +26,37 @@ export const LoginPage = (): React.JSX.Element => {
   const handleError = useCallback((message: string) => setError(message), []);
 
   return (
-    <main className="auth-layout">
-      <section className="auth-story" aria-labelledby="login-title">
-        <div className="brand">
-          <BrandLogo className="brand-logo brand-logo--story" />
-          <div>
-            <strong>Metas</strong>
-            <span>Administração da plataforma</span>
+    <main className="admin-login-page">
+      <section className="admin-login-card" aria-labelledby="login-title">
+        <div className="admin-login-content">
+          <BrandLogo className="brand-logo admin-login-logo" />
+          <div className="admin-login-copy">
+            <h1 id="login-title">Administre suas metas</h1>
+            <p>Gerencie a plataforma, acompanhe a operação e mantenha tudo sob controle.</p>
+          </div>
+          <div className="admin-login-access">
+            <GoogleSignInButton
+              clientId={googleAdminClientId}
+              disabled={busy}
+              onCredential={handleCredential}
+              onError={handleError}
+            />
+            {busy && (
+              <p className="admin-login-status" role="status">
+                Validando sua identidade…
+              </p>
+            )}
+            {error && (
+              <p className="alert" role="alert">
+                {error}
+              </p>
+            )}
           </div>
         </div>
-        <div className="story-copy">
-          <span className="eyebrow">Acesso restrito</span>
-          <h1 id="login-title">Administre suas metas com segurança.</h1>
-          <p>
-            Uma área exclusiva para administrar a operação Metas com identidade verificada e
-            autenticação forte.
-          </p>
-        </div>
-        <ul className="trust-list" aria-label="Proteções deste acesso">
-          <li>
-            <span aria-hidden="true">01</span> Identidade administrativa separada
-          </li>
-          <li>
-            <span aria-hidden="true">02</span> Passkey obrigatória após o Google
-          </li>
-          <li>
-            <span aria-hidden="true">03</span> Sessão protegida no servidor
-          </li>
-        </ul>
-      </section>
-      <section className="auth-card" aria-label="Entrar no painel administrativo">
-        <div>
-          <span className="status-pill">
-            <i aria-hidden="true" /> Ambiente protegido
-          </span>
-          <h2>Entrar no painel</h2>
-          <p>Use a conta Google previamente autorizada para a plataforma.</p>
-        </div>
-        <GoogleSignInButton
-          clientId={googleAdminClientId}
-          disabled={busy}
-          onCredential={handleCredential}
-          onError={handleError}
-        />
-        {busy && (
-          <p className="inline-status" role="status">
-            Validando sua identidade…
-          </p>
-        )}
-        {error && (
-          <p className="alert" role="alert">
-            {error}
-          </p>
-        )}
-        <p className="privacy-note">
-          A credencial Google é enviada somente ao servidor seguro e não fica armazenada no
-          navegador.
-        </p>
+        <footer className="admin-login-footer">
+          <div aria-hidden="true" />
+          <p>Acesso exclusivo para administradores autorizados.</p>
+        </footer>
       </section>
     </main>
   );

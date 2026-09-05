@@ -24,28 +24,52 @@ const me = (
 });
 
 let googleCallback: ((response: { credential?: string }) => void) | null = null;
+let googleInitialize = vi.fn();
 let googleRenderButton = vi.fn();
+let googleButtonWidth = 360;
+let resizeObserverCallback: ResizeObserverCallback | null = null;
 
 describe('admin authentication routes', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     resetAdminApiStateForTests();
     window.history.replaceState({}, '', '/');
     googleCallback = null;
+    googleButtonWidth = 360;
+    resizeObserverCallback = null;
+    googleInitialize = vi.fn(
+      (options: { callback: (response: { credential?: string }) => void }) => {
+        googleCallback = options.callback;
+      },
+    );
     googleRenderButton = vi.fn();
     window.google = {
       accounts: {
         id: {
           cancel: vi.fn(),
-          initialize: vi.fn(
-            (options: { callback: (response: { credential?: string }) => void }) => {
-              googleCallback = options.callback;
-            },
-          ),
+          initialize: googleInitialize,
           renderButton: googleRenderButton,
         },
       },
     };
-    vi.restoreAllMocks();
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(
+      () => googleButtonWidth,
+    );
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallback = callback;
+        }
+
+        disconnect(): void {}
+
+        observe(): void {}
+
+        unobserve(): void {}
+      },
+    );
   });
 
   it('routes an unauthenticated browser to Google login and never asks for a password', async () => {
@@ -54,8 +78,18 @@ describe('admin authentication routes', () => {
     );
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: 'Entrar no painel' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Administre suas metas' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Logo Metas' })).toBeInTheDocument();
+    expect(
+      screen.getByText('Gerencie a plataforma, acompanhe a operação e mantenha tudo sob controle.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Acesso exclusivo para administradores autorizados.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Ambiente protegido')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Administre suas metas com segurança/iu)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/senha/iu)).not.toBeInTheDocument();
   });
 
@@ -73,7 +107,7 @@ describe('admin authentication routes', () => {
       Record<string, string>,
     ];
     expect(renderTarget).toBe(container);
-    expect(container).toHaveClass('google-button__surface');
+    expect(container).not.toHaveAttribute('class');
     expect(options).toEqual(
       expect.objectContaining({
         logo_alignment: 'left',
@@ -82,10 +116,35 @@ describe('admin authentication routes', () => {
         text: 'signin_with',
         theme: 'outline',
         type: 'standard',
+        width: '360',
       }),
     );
-    expect(options).not.toHaveProperty('width');
+    expect(googleInitialize).toHaveBeenCalledWith(
+      expect.objectContaining({ client_id: 'admin-ci.apps.googleusercontent.com' }),
+    );
     expect(screen.queryByRole('button', { name: /google/iu })).not.toBeInTheDocument();
+  });
+
+  it('rerenders the official GIS button only when its available width changes', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ code: 'UNAUTHORIZED', message: 'Sessão necessária.' }, 401),
+    );
+    render(<App />);
+
+    await waitFor(() => expect(googleRenderButton).toHaveBeenCalledOnce());
+    googleButtonWidth = 280;
+    act(() => {
+      resizeObserverCallback?.([], {} as ResizeObserver);
+    });
+    await waitFor(() => expect(googleRenderButton).toHaveBeenCalledTimes(2));
+    expect(googleRenderButton.mock.calls[1]?.[1]).toEqual(
+      expect.objectContaining({ type: 'standard', width: '280' }),
+    );
+
+    act(() => {
+      resizeObserverCallback?.([], {} as ResizeObserver);
+    });
+    expect(googleRenderButton).toHaveBeenCalledTimes(2);
   });
 
   it('routes GOOGLE_ONLY sessions to the passkey step', async () => {
@@ -219,7 +278,9 @@ describe('admin authentication routes', () => {
 
     await user.click(screen.getByRole('button', { name: 'Sair' }));
 
-    expect(await screen.findByRole('heading', { name: 'Entrar no painel' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Administre suas metas' }),
+    ).toBeInTheDocument();
   });
 
   it('sends a GIS callback to the BFF then advances to MFA', async () => {
@@ -242,7 +303,7 @@ describe('admin authentication routes', () => {
       )
       .mockResolvedValueOnce(jsonResponse(me('GOOGLE_ONLY')));
     render(<App />);
-    await screen.findByRole('heading', { name: 'Entrar no painel' });
+    await screen.findByRole('heading', { name: 'Administre suas metas' });
     await waitFor(() => expect(googleCallback).not.toBeNull());
 
     act(() => {
@@ -273,7 +334,7 @@ describe('admin authentication routes', () => {
         ),
       );
     render(<App />);
-    await screen.findByRole('heading', { name: 'Entrar no painel' });
+    await screen.findByRole('heading', { name: 'Administre suas metas' });
     await waitFor(() => expect(googleCallback).not.toBeNull());
 
     act(() => googleCallback?.({ credential: 'denied-google-id-token' }));
