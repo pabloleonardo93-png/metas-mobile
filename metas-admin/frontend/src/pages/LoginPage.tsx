@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import { useAuth } from '../auth/AuthContext';
+import { BrandLogo } from '../components/BrandLogo';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { loadPublicConfig } from '../config';
 
@@ -28,9 +29,7 @@ export const LoginPage = (): React.JSX.Element => {
     <main className="auth-layout">
       <section className="auth-story" aria-labelledby="login-title">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            M
-          </span>
+          <BrandLogo className="brand-logo brand-logo--story" />
           <div>
             <strong>Metas</strong>
             <span>Administração da plataforma</span>
@@ -38,7 +37,7 @@ export const LoginPage = (): React.JSX.Element => {
         </div>
         <div className="story-copy">
           <span className="eyebrow">Acesso restrito</span>
-          <h1 id="login-title">Controle seguro, visão clara.</h1>
+          <h1 id="login-title">Administre suas metas com segurança.</h1>
           <p>
             Uma área exclusiva para administrar a operação Metas com identidade verificada e
             autenticação forte.

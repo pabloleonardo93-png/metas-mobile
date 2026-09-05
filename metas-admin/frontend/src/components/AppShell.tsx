@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from 'react';
 
 import { useAuth } from '../auth/AuthContext';
+import { BrandLogo } from './BrandLogo';
 
 export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => {
   const { logout, state } = useAuth();
@@ -10,9 +11,7 @@ export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => 
     <div className="admin-shell">
       <aside className="sidebar">
         <div className="brand brand--sidebar">
-          <span className="brand-mark" aria-hidden="true">
-            M
-          </span>
+          <BrandLogo className="brand-logo brand-logo--sidebar" />
           <div>
             <strong>Metas</strong>
             <span>Administração</span>
