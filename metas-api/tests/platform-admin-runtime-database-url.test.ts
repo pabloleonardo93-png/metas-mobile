@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import test from 'node:test';
 
 import { isPlatformAdminDatabaseUrlValid } from '../src/config/env.js';
@@ -17,6 +20,7 @@ import {
 import type { LogContext, Logger } from '../src/shared/logging/logger.js';
 
 const runtimePassword = "synthetic runtime p@ssword:/?#[]!'";
+const execFileAsync = promisify(execFile);
 const validEnvironment = {
   NORTHFLANK_ADMIN_DB_HOST: 'database.example.test',
   NORTHFLANK_ADMIN_DB_NAME: 'metas admin/database',
@@ -170,5 +174,58 @@ await test('package script targets the dedicated preparation entrypoint', async 
   assert.equal(
     packageJson.scripts['db:admin:runtime-url:prepare:northflank'],
     'tsx src/database/admin/preparePlatformAdminRuntimeDatabaseUrl.ts',
+  );
+});
+
+await test('importing the CLI entrypoint has no operational side effects', async () => {
+  const entrypointUrl = new URL(
+    '../src/database/admin/preparePlatformAdminRuntimeDatabaseUrl.ts',
+    import.meta.url,
+  ).href;
+  const probe = [
+    'const initialExitCode = process.exitCode;',
+    `await import(${JSON.stringify(entrypointUrl)});`,
+    'await new Promise((resolve) => setImmediate(resolve));',
+    "if (process.exitCode !== initialExitCode) throw new Error('PROCESS_EXIT_CODE_CHANGED');",
+  ].join('\n');
+
+  const result = await execFileAsync(
+    process.execPath,
+    ['--import', 'tsx', '--input-type=module', '--eval', probe],
+    {
+      cwd: process.cwd(),
+      env: { NODE_ENV: 'test' },
+      windowsHide: true,
+    },
+  );
+
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+  await assert.rejects(
+    readFile(join(process.cwd(), platformAdminRuntimeDatabaseUrlTemporaryFile), 'utf8'),
+  );
+});
+
+await test('direct CLI execution still runs the preparation command', async () => {
+  const entrypointPath = fileURLToPath(
+    new URL('../src/database/admin/preparePlatformAdminRuntimeDatabaseUrl.ts', import.meta.url),
+  );
+  const result = await execFileAsync(process.execPath, ['--import', 'tsx', entrypointPath], {
+    cwd: process.cwd(),
+    env: { ...validEnvironment, NODE_ENV: 'test' },
+    windowsHide: true,
+  });
+
+  assert.equal(result.stderr, '');
+  const serialized = result.stdout.trim();
+  const parsedLog: unknown = JSON.parse(serialized);
+  assert.ok(typeof parsedLog === 'object' && parsedLog !== null);
+  assert.equal(Reflect.get(parsedLog, 'event'), 'platform_admin_runtime_database_url_prepared');
+  assert.doesNotMatch(
+    serialized,
+    /synthetic|database\.example|metas admin|postgresql:|must-not-be-used|must_not_be_used/iu,
+  );
+  await assert.rejects(
+    readFile(join(process.cwd(), platformAdminRuntimeDatabaseUrlTemporaryFile), 'utf8'),
   );
 });
