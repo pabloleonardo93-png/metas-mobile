@@ -73,7 +73,7 @@ A URL de conexão desse runtime pode ser construída e validada sem exibir crede
 npm run db:admin:runtime-url:prepare:northflank
 ```
 
-O comando usa `NORTHFLANK_ADMIN_DB_HOST`, `NORTHFLANK_ADMIN_DB_PORT`, `NORTHFLANK_ADMIN_DB_NAME`, `NORTHFLANK_DATABASE_SSL=true` e `PLATFORM_ADMIN_RUNTIME_DB_PASSWORD`; o usuário permanece fixo em `metas_platform_admin_runtime`. Por padrão ele somente valida a URL em memória. Para entrega local, grave-a no arquivo temporário ignorado pelo Git, sem imprimir o conteúdo:
+O comando usa a topologia já funcional de `DATABASE_URL` e substitui somente suas credenciais por `PLATFORM_ADMIN_RUNTIME_DB_PASSWORD` e pelo usuário fixo `metas_platform_admin_runtime`. As variáveis administrativas `NORTHFLANK_ADMIN_DB_*` não participam da construção dessa URL runtime. Os query parameters de `DATABASE_URL` são preservados; ao conectar, a API continua aplicando `DATABASE_SSL`, `DATABASE_SSL_SERVERNAME` e o tratamento TLS comum. Por padrão o comando somente valida a URL em memória. Para entrega local, grave-a no arquivo temporário ignorado pelo Git, sem imprimir o conteúdo:
 
 ```bash
 npm run db:admin:runtime-url:prepare:northflank -- --write-temporary-file
