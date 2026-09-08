@@ -1,5 +1,4 @@
 import { open, rm } from 'node:fs/promises';
-import { isIP } from 'node:net';
 import { resolve } from 'node:path';
 
 import { z } from 'zod';
@@ -13,20 +12,16 @@ export const platformAdminRuntimeDatabaseUrlTemporaryFile = '.platform-admin-run
 
 export type PlatformAdminRuntimeDatabaseUrlFailureCode =
   | 'GENERATED_RUNTIME_DB_URL_INVALID'
+  | 'INVALID_DATABASE_URL'
   | 'INVALID_COMMAND_ARGUMENT'
-  | 'INVALID_RUNTIME_DB_HOST'
-  | 'INVALID_RUNTIME_DB_NAME'
-  | 'INVALID_RUNTIME_DB_PORT'
-  | 'INVALID_RUNTIME_DB_SSL'
+  | 'MISSING_DATABASE_URL'
   | 'MISSING_RUNTIME_DB_PASSWORD'
   | 'TEMPORARY_FILE_ALREADY_EXISTS'
   | 'TEMPORARY_FILE_WRITE_FAILED';
 
 interface PlatformAdminRuntimeDatabaseUrlConfiguration {
-  database: string;
-  host: string;
+  databaseUrl: string;
   password: string;
-  port: number;
 }
 
 export class PlatformAdminRuntimeDatabaseUrlError extends Error {
@@ -36,20 +31,6 @@ export class PlatformAdminRuntimeDatabaseUrlError extends Error {
   }
 }
 
-const hostnameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(253)
-  .refine(
-    (value) =>
-      isIP(value) !== 0 ||
-      /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu.test(
-        value,
-      ),
-  );
-const portSchema = z.coerce.number().int().min(1).max(65_535);
-const databaseSchema = z.string().trim().min(1).max(63);
 const passwordSchema = z
   .string()
   .min(1)
@@ -70,41 +51,37 @@ const parseField = <Result>(
 export const parsePlatformAdminRuntimeDatabaseUrlConfiguration = (
   environment: NodeJS.ProcessEnv,
 ): PlatformAdminRuntimeDatabaseUrlConfiguration => {
-  const host = parseField(
-    hostnameSchema,
-    environment.NORTHFLANK_ADMIN_DB_HOST,
-    'INVALID_RUNTIME_DB_HOST',
-  );
-  const port = parseField(
-    portSchema,
-    environment.NORTHFLANK_ADMIN_DB_PORT,
-    'INVALID_RUNTIME_DB_PORT',
-  );
-  const database = parseField(
-    databaseSchema,
-    environment.NORTHFLANK_ADMIN_DB_NAME,
-    'INVALID_RUNTIME_DB_NAME',
-  );
+  const databaseUrl = environment.DATABASE_URL;
+  if (typeof databaseUrl !== 'string' || databaseUrl.length === 0) {
+    throw new PlatformAdminRuntimeDatabaseUrlError('MISSING_DATABASE_URL');
+  }
+  if (!isPlatformAdminDatabaseUrlValid(databaseUrl)) {
+    throw new PlatformAdminRuntimeDatabaseUrlError('INVALID_DATABASE_URL');
+  }
+  try {
+    const parsedDatabaseUrl = new URL(databaseUrl);
+    if (!parsedDatabaseUrl.hostname || parsedDatabaseUrl.pathname.length <= 1) {
+      throw new PlatformAdminRuntimeDatabaseUrlError('INVALID_DATABASE_URL');
+    }
+  } catch {
+    throw new PlatformAdminRuntimeDatabaseUrlError('INVALID_DATABASE_URL');
+  }
+
   const password = parseField(
     passwordSchema,
     environment.PLATFORM_ADMIN_RUNTIME_DB_PASSWORD,
     'MISSING_RUNTIME_DB_PASSWORD',
   );
-  parseField(z.literal('true'), environment.NORTHFLANK_DATABASE_SSL, 'INVALID_RUNTIME_DB_SSL');
 
-  return { database, host, password, port };
+  return { databaseUrl, password };
 };
 
 export const buildPlatformAdminRuntimeDatabaseUrl = (
   configuration: PlatformAdminRuntimeDatabaseUrlConfiguration,
 ): string => {
-  const serializedHost =
-    isIP(configuration.host) === 6 ? `[${configuration.host}]` : configuration.host;
-  const databaseUrl = new URL(`postgresql://${serializedHost}`);
+  const databaseUrl = new URL(configuration.databaseUrl);
   databaseUrl.username = platformAdminRuntimeDatabaseUser;
   databaseUrl.password = configuration.password;
-  databaseUrl.port = String(configuration.port);
-  databaseUrl.pathname = `/${encodeURIComponent(configuration.database)}`;
 
   const generatedUrl = databaseUrl.toString();
   if (!isPlatformAdminDatabaseUrlValid(generatedUrl)) {
@@ -177,10 +154,7 @@ export const runPlatformAdminRuntimeDatabaseUrlPreparation = async (
       : undefined;
 
     dependencies.logger.info('platform_admin_runtime_database_url_prepared', {
-      databasePresent: true,
-      hostPresent: true,
       platformAdminDatabaseUrlPrepared: true,
-      portValid: true,
       roleName: platformAdminRuntimeDatabaseUser,
       schemaValid: true,
       ...(outputPath ? { outputPath } : {}),
