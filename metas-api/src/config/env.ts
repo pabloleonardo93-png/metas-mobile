@@ -608,6 +608,10 @@ export const parseEnv = (environment: NodeJS.ProcessEnv): AppEnv => {
   };
 };
 
+export const isPlatformAdminDatabaseUrlValid = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  rawEnvSchema.shape.PLATFORM_ADMIN_DATABASE_URL.safeParse(value).success;
+
 export const loadEnv = (): AppEnv => {
   loadDotEnv();
   return parseEnv(process.env);

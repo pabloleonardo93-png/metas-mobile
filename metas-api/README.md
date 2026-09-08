@@ -67,6 +67,27 @@ npm run db:admin:runtime-password:rotate:northflank
 
 O comando altera somente a senha do role fixo `metas_platform_admin_runtime`, não registra o segredo e valida a nova credencial abrindo uma segunda conexão como esse role e consultando `current_user`. A conexão que executa a rotação usa exclusivamente as variáveis administrativas `NORTHFLANK_ADMIN_DB_*` e a configuração TLS existente; a senha administrativa nunca é reutilizada como senha do runtime.
 
+A URL de conexão desse runtime pode ser construída e validada sem exibir credenciais com:
+
+```bash
+npm run db:admin:runtime-url:prepare:northflank
+```
+
+O comando usa `NORTHFLANK_ADMIN_DB_HOST`, `NORTHFLANK_ADMIN_DB_PORT`, `NORTHFLANK_ADMIN_DB_NAME`, `NORTHFLANK_DATABASE_SSL=true` e `PLATFORM_ADMIN_RUNTIME_DB_PASSWORD`; o usuário permanece fixo em `metas_platform_admin_runtime`. Por padrão ele somente valida a URL em memória. Para entrega local, grave-a no arquivo temporário ignorado pelo Git, sem imprimir o conteúdo:
+
+```bash
+npm run db:admin:runtime-url:prepare:northflank -- --write-temporary-file
+```
+
+No PowerShell, copie o valor para o clipboard e depois remova o temporário com dois comandos separados:
+
+```powershell
+Get-Content -Raw -LiteralPath .platform-admin-runtime-db-url.tmp | Set-Clipboard
+Remove-Item -LiteralPath .platform-admin-runtime-db-url.tmp
+```
+
+O modo padrão é apropriado para Job/container sem clipboard: confirma construção e schema sem criar arquivo nem registrar URL, host, database ou senha.
+
 Somente `CREATE` é revogado de `PUBLIC` no schema `public`; `USAGE` é preservado para os objetos das extensões. No schema `metas`, `CREATE` e `USAGE` de `PUBLIC` são revogados e concedidos explicitamente aos roles necessários.
 
 ## Migrations
@@ -203,6 +224,7 @@ npm run test:integration    executa testes PostgreSQL reais
 npm run db:admin:bootstrap  prepara infraestrutura administrativa
 npm run db:admin:bootstrap:test prepara infraestrutura no banco exclusivo de teste
 npm run db:admin:runtime-password:rotate:northflank rotaciona somente a senha do runtime administrativo
+npm run db:admin:runtime-url:prepare:northflank constrói e valida sem exibir a URL do runtime administrativo
 npm run db:migrate          aplica migrations pendentes
 npm run db:migrate:status   lista migrations executadas/pendentes
 npm run db:migrate:test     aplica migrations no banco de teste
