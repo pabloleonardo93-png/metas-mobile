@@ -96,7 +96,7 @@ const readResponse = async (response: Response): Promise<unknown> => {
   }
 };
 
-const request = async (path: string, init: RequestInit = {}): Promise<unknown> => {
+export const request = async (path: string, init: RequestInit = {}): Promise<unknown> => {
   const response = await fetch(path, {
     ...init,
     credentials: 'same-origin',
@@ -129,7 +129,7 @@ const refreshCsrfToken = async (): Promise<string> => {
   return parsed.csrfToken;
 };
 
-const mutation = async (path: string, body: unknown, retry = true): Promise<unknown> => {
+export const mutation = async (path: string, body: unknown, retry = true): Promise<unknown> => {
   const token = csrfToken ?? (await refreshCsrfToken());
   try {
     return await request(path, {

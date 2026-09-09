@@ -282,7 +282,7 @@ describe('admin authentication routes', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(me('MFA_VERIFIED')));
     render(<App />);
     expect(
-      await screen.findByRole('heading', { name: 'Painel da plataforma' }),
+      await screen.findByRole('heading', { name: 'Gestão da plataforma' }),
     ).toBeInTheDocument();
     expect(screen.getByText('MFA verificado')).toBeInTheDocument();
   });
@@ -294,7 +294,7 @@ describe('admin authentication routes', () => {
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'session.csrf' }))
       .mockResolvedValueOnce(jsonResponse({ csrfToken: 'anonymous.csrf' }));
     render(<App />);
-    await screen.findByRole('heading', { name: 'Painel da plataforma' });
+    await screen.findByRole('heading', { name: 'Gestão da plataforma' });
 
     await user.click(screen.getByRole('button', { name: 'Sair' }));
 

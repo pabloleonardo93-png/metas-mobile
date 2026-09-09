@@ -1,15 +1,25 @@
-import type { PropsWithChildren } from 'react';
-
+import { useState, type PropsWithChildren } from 'react';
+import { NavLink } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
 import { BrandLogo } from './BrandLogo';
 
+const navigation = [
+  ['/dashboard', 'Visão geral', '◫'],
+  ['/pharmacies', 'Farmácias', '⌂'],
+  ['/employees', 'Funcionários / Gestores', '◎'],
+  ['/audit', 'Auditoria', '≡'],
+  ['/settings', 'Configurações', '⚙'],
+] as const;
 export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => {
   const { logout, state } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
   const admin = state.kind === 'verified' ? state.admin : null;
-
   return (
     <div className="admin-shell">
-      <aside className="sidebar">
+      <a className="skip-link" href="#admin-content">
+        Pular para o conteúdo
+      </a>
+      <aside className={`sidebar ${menuOpen ? 'sidebar--open' : ''}`} id="admin-navigation">
         <div className="brand brand--sidebar">
           <BrandLogo className="brand-logo brand-logo--sidebar" />
           <div>
@@ -18,27 +28,38 @@ export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => 
           </div>
         </div>
         <nav aria-label="Navegação principal">
-          <a className="nav-item nav-item--active" href="/dashboard" aria-current="page">
-            <span aria-hidden="true">◫</span> Visão geral
-          </a>
-          <span className="nav-item nav-item--disabled">
-            <span aria-hidden="true">⌂</span> Farmácias
-          </span>
-          <span className="nav-item nav-item--disabled">
-            <span aria-hidden="true">◎</span> Gestores
-          </span>
-          <span className="nav-item nav-item--disabled">
-            <span aria-hidden="true">≡</span> Auditoria
-          </span>
+          {navigation.map(([to, label, icon]) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}
+              onClick={() => setMenuOpen(false)}
+            >
+              <span aria-hidden="true">{icon}</span>
+              {label}
+            </NavLink>
+          ))}
         </nav>
-        <p className="sidebar-note">Funções administrativas serão liberadas em etapas revisadas.</p>
+        <p className="sidebar-note">
+          Gestão da plataforma
+          <br />
+          Acesso administrativo protegido
+        </p>
       </aside>
       <main className="main-panel">
         <header className="topbar">
-          <div>
-            <span className="eyebrow">Ambiente administrativo</span>
+          <button
+            className="button button--ghost menu-toggle"
+            aria-controls="admin-navigation"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(!menuOpen)}
+            type="button"
+          >
+            {menuOpen ? 'Fechar menu' : 'Menu'}
+          </button>
+          <div className="topbar-identity">
+            <span className="eyebrow">Platform Admin</span>
             <strong>{admin?.displayName}</strong>
-            <span className="admin-email">{admin?.primaryEmail}</span>
           </div>
           <button
             className="button button--ghost"
@@ -48,7 +69,9 @@ export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => 
             Sair
           </button>
         </header>
-        {children}
+        <div id="admin-content" tabIndex={-1}>
+          {children}
+        </div>
       </main>
     </div>
   );

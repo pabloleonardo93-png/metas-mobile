@@ -21,12 +21,15 @@ import { createPlatformAdminRouter } from './modules/platformAdmin/platformAdmin
 import type { PlatformAdminRateLimiter } from './modules/platformAdmin/platformAdminRateLimiter.js';
 import type { PlatformAdminAuthenticationService } from './modules/platformAdmin/platformAdmin.types.js';
 import type { PlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthn.types.js';
+import { createManagementRouter } from './modules/platformManagement/management.routes.js';
+import type { ManagementService } from './modules/platformManagement/management.service.js';
 import type { RealtimePublisher } from './realtime/realtime.types.js';
 import { healthRouter } from './routes/health.routes.js';
 import { AppError } from './shared/errors/AppError.js';
 import { logger as defaultLogger, type Logger } from './shared/logging/logger.js';
 
 export interface AppOptions {
+  managementService?: ManagementService;
   authRateLimit?: AuthRateLimitOptions;
   authenticationService?: AuthenticationService;
   campaignService?: CampaignService;
@@ -67,6 +70,15 @@ export const createApp = (options: AppOptions = {}): express.Express => {
 
   app.use('/health', healthRouter);
   if (options.platformAdminAuthenticationService) {
+    if (options.managementService) {
+      app.use(
+        '/v1/platform-admin/management',
+        createManagementRouter(
+          options.platformAdminAuthenticationService,
+          options.managementService,
+        ),
+      );
+    }
     if (!options.platformAdminRateLimiter) {
       throw new Error('Platform admin rate limiter is required.');
     }
