@@ -67,6 +67,18 @@ npm run db:admin:runtime-password:rotate:northflank
 
 O comando altera somente a senha do role fixo `metas_platform_admin_runtime`, não registra o segredo e valida a nova credencial abrindo uma segunda conexão como esse role e consultando `current_user`. A conexão que executa a rotação usa exclusivamente as variáveis administrativas `NORTHFLANK_ADMIN_DB_*` e a configuração TLS existente; a senha administrativa nunca é reutilizada como senha do runtime.
 
+Antes de configurar o contexto operacional isolado do Platform Admin, defina ou rotacione separadamente a senha da operator com uma variável administrativa temporária:
+
+```text
+PLATFORM_ADMIN_OPERATOR_DB_PASSWORD=<SECRET>
+```
+
+```bash
+npm run db:admin:operator-password:rotate:northflank
+```
+
+O comando altera somente a senha do role fixo `metas_platform_admin_operator`, nunca registra o segredo e valida a nova credencial em memória com `current_user` e com a política completa de menor privilégio da operator. Depois da rotação, configure o mesmo valor como `NORTHFLANK_PLATFORM_ADMIN_OPERATOR_DB_PASSWORD` somente no Secret Group operacional isolado e remova imediatamente `PLATFORM_ADMIN_OPERATOR_DB_PASSWORD` do Job administrativo. Não mantenha a variável temporária junto das credenciais permanentes da operator.
+
 A URL de conexão desse runtime pode ser construída e validada sem exibir credenciais com:
 
 ```bash
