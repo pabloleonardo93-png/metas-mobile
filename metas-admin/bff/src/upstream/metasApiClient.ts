@@ -4,6 +4,7 @@ import type { AdminBffConfig } from '../config.js';
 import { BffError } from '../errors.js';
 
 export type MetasApiPath =
+  | `/v1/platform-admin/management/${'pharmacies' | 'employees' | 'audit'}${string}`
   | '/v1/platform-admin/auth/google'
   | '/v1/platform-admin/auth/logout'
   | '/v1/platform-admin/me'
@@ -31,6 +32,16 @@ const upstreamErrorSchema = z
   .passthrough();
 
 const allowedErrorCodes = new Set([
+  'MANAGEMENT_MFA_REQUIRED',
+  'MANAGEMENT_FORBIDDEN',
+  'MANAGEMENT_NOT_FOUND',
+  'MANAGEMENT_VERSION_CONFLICT',
+  'MANAGEMENT_INVALID_INPUT',
+  'MANAGEMENT_DUPLICATE',
+  'MANAGEMENT_STORE_INACTIVE',
+  'MANAGEMENT_LINK_EXISTS',
+  'LAST_ACTIVE_MANAGER_REQUIRED',
+  'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER',
   'FIRST_ENROLLMENT_APPROVAL_REQUIRED',
   'FIRST_ENROLLMENT_NOT_ALLOWED',
   'INVALID_GOOGLE_TOKEN',
@@ -47,6 +58,16 @@ const allowedErrorCodes = new Set([
 ]);
 
 const errorMessageFor = (status: number, code: string): string => {
+  if (code === 'MANAGEMENT_VERSION_CONFLICT')
+    return 'Este registro mudou. Atualize a lista e tente novamente.';
+  if (code === 'MANAGEMENT_DUPLICATE') return 'Já existe um registro com esse identificador.';
+  if (code === 'MANAGEMENT_LINK_EXISTS')
+    return 'Esta pessoa já possui vínculo com a farmácia. Edite o vínculo existente.';
+  if (code === 'MANAGEMENT_STORE_INACTIVE') return 'Selecione uma farmácia ativa.';
+  if (code === 'LAST_ACTIVE_MANAGER_REQUIRED')
+    return 'A farmácia precisa manter ao menos um gestor ativo.';
+  if (code === 'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER')
+    return 'O primeiro vínculo da farmácia deve ser um gestor ativo.';
   if (code === 'INVALID_GOOGLE_TOKEN' || code === 'PLATFORM_ADMIN_ACCESS_NOT_AUTHORIZED') {
     return 'Não foi possível autorizar este acesso.';
   }

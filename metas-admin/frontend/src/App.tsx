@@ -4,6 +4,8 @@ import { AuthProvider, useAuth } from './auth/AuthContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { MfaPage } from './pages/MfaPage';
+import { DirectoryPage } from './pages/DirectoryPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 const destinationFor = (kind: string): string => {
   if (kind === 'google-only') return '/mfa';
@@ -62,6 +64,29 @@ const RouteController = (): React.JSX.Element => {
         }
       />
       <Route path="*" element={<Navigate replace to={destinationFor(state.kind)} />} />
+      {(['pharmacies', 'employees', 'audit'] as const).map((resource) => (
+        <Route
+          key={resource}
+          path={`/${resource}`}
+          element={
+            state.kind === 'verified' ? (
+              <DirectoryPage key={resource} resource={resource} />
+            ) : (
+              <Navigate replace to={destinationFor(state.kind)} />
+            )
+          }
+        />
+      ))}
+      <Route
+        path="/settings"
+        element={
+          state.kind === 'verified' ? (
+            <SettingsPage />
+          ) : (
+            <Navigate replace to={destinationFor(state.kind)} />
+          )
+        }
+      />
     </Routes>
   );
 };

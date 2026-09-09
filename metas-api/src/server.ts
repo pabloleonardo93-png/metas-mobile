@@ -24,6 +24,7 @@ import {
 } from './modules/platformAdmin/platformAdminRateLimiter.js';
 import { officialPlatformAdminWebAuthnAdapter } from './modules/platformAdmin/platformAdminWebAuthnAdapter.js';
 import { PostgresPlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthnService.js';
+import { PostgresManagementService } from './modules/platformManagement/management.service.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
 import { logger } from './shared/logging/logger.js';
 import {
@@ -215,6 +216,9 @@ const bootstrap = async (): Promise<void> => {
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),
     ...(platformAdminAuthenticationService ? { platformAdminAuthenticationService } : {}),
+    ...(platformAdminDatabase
+      ? { managementService: new PostgresManagementService(platformAdminDatabase) }
+      : {}),
     ...(platformAdminRateLimiter ? { platformAdminRateLimiter } : {}),
     ...(platformAdminWebAuthnService ? { platformAdminWebAuthnService } : {}),
     realtimePublisher: realtimeServer,

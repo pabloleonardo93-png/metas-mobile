@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import type { AdminBffConfig } from './config.js';
 import { BffError } from './errors.js';
 import { createAdminAuthRouter } from './routes/adminAuth.routes.js';
+import { createManagementRouter } from './routes/management.routes.js';
 import { createApiHostProtection, createCsrfProtection } from './security/csrf.js';
 import type { MetasApiClient } from './upstream/metasApiClient.js';
 
@@ -147,6 +148,7 @@ export const createApp = ({
   app.use('/api', requireJsonForMutations);
   app.use('/api', express.json({ limit: '128kb', strict: true, type: 'application/json' }));
   app.use('/api', createAdminAuthRouter(config, client, createCsrfProtection(config)));
+  app.use('/api/management', createManagementRouter(config, client, createCsrfProtection(config)));
   app.use('/api', (_request, _response, next) => {
     next(new BffError(404, 'NOT_FOUND', 'Recurso não encontrado.'));
   });
