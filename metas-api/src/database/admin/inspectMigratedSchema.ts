@@ -143,16 +143,19 @@ const expectedSecurityDefinerFunctions = [
   'manager_set_employee_status',
   'manager_update_campaign',
   'manager_update_employee',
+  'read_platform_directory',
   'record_platform_admin_webauthn_failure',
   'register_platform_admin_webauthn_credential',
   'request_platform_admin_first_enrollment',
   'request_platform_admin_mfa_recovery',
   'require_manager_store',
   'require_platform_admin_context',
+  'require_platform_management_context',
   'resolve_platform_admin_session',
   'resolve_session',
   'revoke_platform_admin_session',
   'revoke_session',
+  'write_platform_directory',
 ] as const;
 
 interface NamedObject {
@@ -424,12 +427,14 @@ export const validateMigratedSchema = async (databaseOverride?: Sequelize): Prom
       'get_platform_admin_me',
       'has_platform_admin_webauthn_credential_history',
       'list_platform_admin_webauthn_credentials',
+      'read_platform_directory',
       'record_platform_admin_webauthn_failure',
       'register_platform_admin_webauthn_credential',
       'request_platform_admin_first_enrollment',
       'request_platform_admin_mfa_recovery',
       'resolve_platform_admin_session',
       'revoke_platform_admin_session',
+      'write_platform_directory',
     ]);
     const migrationRunnerExecutableFunctions = new Set([
       'bootstrap_first_manager',
