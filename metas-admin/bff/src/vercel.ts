@@ -47,6 +47,12 @@ export const createVercelHandler = (
   const app = createVercelApp(environment);
   return (request, response) => {
     request.url = resolveExpressRequestUrl(request.url);
+    if (
+      Object.prototype.hasOwnProperty.call(request, 'query') &&
+      !Reflect.deleteProperty(request, 'query')
+    ) {
+      request.url = invalidRoutePath;
+    }
     app(request, response);
   };
 };

@@ -33,6 +33,14 @@ describe('gestão no BFF', () => {
           .set('cookie', cookie)
       ).status,
     ).toBe(422);
+    expect(
+      (
+        await request(app)
+          .get('/api/management/pharmacies?unexpected=true')
+          .set('host', config.expectedHost)
+          .set('cookie', cookie)
+      ).status,
+    ).toBe(422);
     expect(upstream).not.toHaveBeenCalled();
     expect(
       (
@@ -46,6 +54,26 @@ describe('gestão no BFF', () => {
       expect.objectContaining({ method: 'GET', sessionToken: 'a'.repeat(64) }),
     );
   });
+  it.each(['pharmacies', 'employees'] as const)(
+    'aceita os filtros iniciais do frontend para %s e preserva o contrato upstream',
+    async (resource) => {
+      const upstream = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+      const app = createApp({ config, client: { request: upstream }, staticDirectory: null });
+
+      const response = await request(app)
+        .get(`/api/management/${resource}?page=1&pageSize=20&q=&status=ALL&role=ALL`)
+        .set('host', config.expectedHost)
+        .set('cookie', cookie);
+
+      expect(response.status).toBe(200);
+      expect(upstream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'GET',
+          path: `/v1/platform-admin/management/${resource}?q=&status=ALL&role=ALL&page=1&pageSize=20`,
+        }),
+      );
+    },
+  );
   it('mutações exigem CSRF e Origin, preservando token somente no servidor', async () => {
     const upstream = vi.fn().mockResolvedValue({ id, sessionToken: 'must-not-leak' });
     const app = createApp({ config, client: { request: upstream }, staticDirectory: null });

@@ -125,6 +125,33 @@ describe('gestão administrativa', () => {
       ),
     );
   });
+  it.each([
+    ['/pharmacies', [pharmacy], 'pharmacies', 'Farmácia Centro'],
+    ['/employees', [employee], 'employees', 'Pessoa Teste'],
+  ] as const)(
+    'constrói os filtros iniciais compatíveis com o BFF em %s',
+    async (route, items, resource, expectedName) => {
+      setup(route, [...items]);
+      await screen.findByText(expectedName, { selector: 'strong' });
+
+      const call = fetchMock.mock.calls.find(([input]) => {
+        const value = input instanceof Request ? input.url : input.toString();
+        return value.startsWith(`/api/management/${resource}?`);
+      });
+      const input = call?.[0];
+      if (input === undefined) throw new Error('Requisição de gestão esperada.');
+      const url = new URL(input instanceof Request ? input.url : input.toString(), window.origin);
+
+      expect(url.pathname).toBe(`/api/management/${resource}`);
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        page: '1',
+        pageSize: '20',
+        q: '',
+        status: 'ALL',
+        role: 'ALL',
+      });
+    },
+  );
   it('mostra estado vazio sem números fictícios', async () => {
     setup('/pharmacies', []);
     expect(
