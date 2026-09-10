@@ -58,7 +58,6 @@ export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => 
             {menuOpen ? 'Fechar menu' : 'Menu'}
           </button>
           <div className="topbar-identity">
-            <span className="eyebrow">Platform Admin</span>
             <strong>{admin?.displayName}</strong>
           </div>
           <button

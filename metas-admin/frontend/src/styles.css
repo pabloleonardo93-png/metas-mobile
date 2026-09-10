@@ -928,9 +928,6 @@ select[aria-invalid='true'] {
   .search-field {
     flex-basis: calc(100% - 100px);
   }
-  .topbar-identity .eyebrow {
-    font-size: 0.6rem;
-  }
   .topbar-identity strong {
     font-size: 0.8125rem;
   }

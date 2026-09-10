@@ -9,7 +9,6 @@ export const DashboardPage = (): React.JSX.Element => (
           <h1>Gestão da plataforma</h1>
           <p>Farmácias, pessoas e o histórico das decisões, em um só lugar.</p>
         </div>
-        <span className="status-badge status-badge--active">MFA verificado</span>
       </header>
       <div className="home-intro">
         <span className="eyebrow">Seu espaço de trabalho</span>
