@@ -13,7 +13,7 @@ export const SettingsPage = (): React.JSX.Element => {
             <p>Informações da sessão atual. Não há configurações editáveis nesta etapa.</p>
           </div>
         </header>
-        <dl className="detail-list">
+        <dl className="detail-list settings-card">
           <div>
             <dt>Administrador</dt>
             <dd>{admin?.displayName}</dd>
@@ -21,10 +21,6 @@ export const SettingsPage = (): React.JSX.Element => {
           <div>
             <dt>E-mail</dt>
             <dd>{admin?.primaryEmail}</dd>
-          </div>
-          <div>
-            <dt>Autenticação</dt>
-            <dd>MFA verificado</dd>
           </div>
         </dl>
       </section>

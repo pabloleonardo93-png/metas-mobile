@@ -1,14 +1,15 @@
 import { useState, type PropsWithChildren } from 'react';
 import { NavLink } from 'react-router';
 import { useAuth } from '../auth/AuthContext';
+import { AdminIcon } from './AdminIcon';
 import { BrandLogo } from './BrandLogo';
 
 const navigation = [
-  ['/dashboard', 'Visão geral', '◫'],
-  ['/pharmacies', 'Farmácias', '⌂'],
-  ['/employees', 'Funcionários / Gestores', '◎'],
-  ['/audit', 'Auditoria', '≡'],
-  ['/settings', 'Configurações', '⚙'],
+  ['/dashboard', 'Visão geral', 'dashboard'],
+  ['/pharmacies', 'Farmácias', 'pharmacy'],
+  ['/employees', 'Funcionários / Gestores', 'employees'],
+  ['/audit', 'Auditoria', 'audit'],
+  ['/settings', 'Configurações', 'settings'],
 ] as const;
 export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => {
   const { logout, state } = useAuth();
@@ -35,16 +36,12 @@ export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => 
               className={({ isActive }) => `nav-item ${isActive ? 'nav-item--active' : ''}`}
               onClick={() => setMenuOpen(false)}
             >
-              <span aria-hidden="true">{icon}</span>
+              <AdminIcon name={icon} />
               {label}
             </NavLink>
           ))}
         </nav>
-        <p className="sidebar-note">
-          Gestão da plataforma
-          <br />
-          Acesso administrativo protegido
-        </p>
+        <p className="sidebar-note">Gestão da plataforma</p>
       </aside>
       <main className="main-panel">
         <header className="topbar">
@@ -58,6 +55,7 @@ export const AppShell = ({ children }: PropsWithChildren): React.JSX.Element => 
             {menuOpen ? 'Fechar menu' : 'Menu'}
           </button>
           <div className="topbar-identity">
+            <span aria-hidden="true">{admin?.displayName.trim().charAt(0).toUpperCase()}</span>
             <strong>{admin?.displayName}</strong>
           </div>
           <button

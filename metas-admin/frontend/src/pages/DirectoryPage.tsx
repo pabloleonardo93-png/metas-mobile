@@ -16,6 +16,7 @@ import {
   type Pharmacy,
 } from '../api/management.contracts';
 import { managementApi } from '../api/managementApi';
+import { formatManagementDate, managementActionLabels } from '../management/presentation';
 
 const descriptions = {
   pharmacies: ['Farmácias', 'Organize as unidades e acompanhe os vínculos de cada farmácia.'],
@@ -28,26 +29,24 @@ const descriptions = {
     'Histórico das operações de gestão. Dados de autenticação e informações técnicas sensíveis não são exibidos.',
   ],
 } as const;
-const actionLabels: Record<string, string> = {
-  STORE_CREATED: 'Farmácia criada',
-  STORE_UPDATED: 'Farmácia editada',
-  STORE_ACTIVATED: 'Farmácia ativada',
-  STORE_DEACTIVATED: 'Farmácia desativada',
-  EMPLOYEE_UPDATED: 'Pessoa editada',
-  EMPLOYEE_ROLE_CHANGED: 'Função alterada',
-  EMPLOYEE_ACTIVATED: 'Vínculo reativado',
-  EMPLOYEE_DEACTIVATED: 'Vínculo desativado',
-  EMPLOYEE_LINKED: 'Vínculo criado',
-};
-const formatDate = (value: string) =>
-  new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(
-    new Date(value),
-  );
 export const StatusBadge = ({ active }: { active: boolean }): React.JSX.Element => (
   <span className={`status-badge ${active ? 'status-badge--active' : ''}`}>
+    <i aria-hidden="true" />
     {active ? 'Ativo' : 'Inativo'}
   </span>
 );
+
+const accountStatusLabels = {
+  ACTIVE: 'Ativa',
+  DISABLED: 'Desabilitada',
+  PENDING: 'Pendente',
+} as const;
+
+const outcomeLabels = {
+  DENIED: 'Negada',
+  FAILURE: 'Falhou',
+  SUCCESS: 'Concluída',
+} as const;
 export const DirectoryPage = ({
   resource,
 }: {
@@ -129,7 +128,7 @@ export const DirectoryPage = ({
   );
   return (
     <AppShell>
-      <section className="directory-content">
+      <section className={`directory-content directory-content--${resource}`}>
         <header className="page-heading">
           <div>
             <span className="eyebrow">Gestão da plataforma</span>
@@ -148,6 +147,7 @@ export const DirectoryPage = ({
         </header>
         <form
           className="directory-toolbar"
+          role="search"
           onSubmit={(event) => {
             event.preventDefault();
             updateFilters({ q: query });
@@ -272,8 +272,10 @@ export const DirectoryPage = ({
                   ) : resource === 'employees' ? (
                     <>
                       <th scope="col">Pessoa</th>
+                      <th scope="col">E-mail</th>
                       <th scope="col">Farmácia</th>
                       <th scope="col">Função</th>
+                      <th scope="col">Status</th>
                       <th scope="col">Vínculo</th>
                       <th scope="col">Ações</th>
                     </>
@@ -303,22 +305,25 @@ export const DirectoryPage = ({
                         <td data-label="Status">
                           <StatusBadge active={item.isActive} />
                         </td>
-                        <td data-label="Atualização">{formatDate(item.updatedAt)}</td>
+                        <td data-label="Atualização">{formatManagementDate(item.updatedAt)}</td>
                         <td data-label="Ações">{actions(item)}</td>
                       </>
                     ) : 'userId' in item ? (
                       <>
                         <td data-label="Pessoa">
                           <strong>{item.name}</strong>
-                          <span className="cell-secondary">{item.email}</span>
-                          {item.accountStatus !== 'ACTIVE' && (
-                            <span className="cell-secondary">
-                              Conta {item.accountStatus === 'PENDING' ? 'pendente' : 'desabilitada'}
-                            </span>
-                          )}
                         </td>
+                        <td data-label="E-mail">{item.email}</td>
                         <td data-label="Farmácia">{item.storeName}</td>
                         <td data-label="Função">{roleLabels[item.role]}</td>
+                        <td data-label="Status">
+                          <span
+                            className={`status-badge status-badge--account-${item.accountStatus.toLowerCase()}`}
+                          >
+                            <i aria-hidden="true" />
+                            {accountStatusLabels[item.accountStatus]}
+                          </span>
+                        </td>
                         <td data-label="Vínculo">
                           <StatusBadge active={item.status === 'ATIVO'} />
                         </td>
@@ -327,17 +332,20 @@ export const DirectoryPage = ({
                     ) : (
                       <>
                         <td data-label="Operação">
-                          {actionLabels[item.action] ?? 'Operação administrativa'}
+                          <strong>
+                            {managementActionLabels[item.action] ?? 'Operação administrativa'}
+                          </strong>
                         </td>
                         <td data-label="Administrador">{item.actor}</td>
                         <td data-label="Resultado">
-                          {
-                            { SUCCESS: 'Concluída', DENIED: 'Negada', FAILURE: 'Falhou' }[
-                              item.outcome
-                            ]
-                          }
+                          <span
+                            className={`status-badge status-badge--outcome-${item.outcome.toLowerCase()}`}
+                          >
+                            <i aria-hidden="true" />
+                            {outcomeLabels[item.outcome]}
+                          </span>
                         </td>
-                        <td data-label="Data">{formatDate(item.createdAt)}</td>
+                        <td data-label="Data">{formatManagementDate(item.createdAt)}</td>
                       </>
                     )}
                   </tr>
