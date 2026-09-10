@@ -30,6 +30,13 @@ const me = (
   primaryEmail: 'admin@example.test',
 });
 
+const managementPage = (total: number, items: unknown[] = []) => ({
+  items,
+  page: 1,
+  pageSize: 20,
+  total,
+});
+
 let googleCallback: ((response: { credential?: string }) => void) | null = null;
 let googleInitialize = vi.fn();
 let googleRenderButton = vi.fn();
@@ -296,8 +303,53 @@ describe('admin authentication routes', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('Admin Teste')).toBeInTheDocument();
     expect(screen.queryByText('MFA verificado')).not.toBeInTheDocument();
-    expect(screen.queryByText('Platform Admin')).not.toBeInTheDocument();
+    expect(screen.queryByText('MFA ativo')).not.toBeInTheDocument();
+    expect(screen.queryByText(/platform admin/iu)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Farmácias' })).toBeInTheDocument();
+  });
+
+  it('renders dashboard summaries from real API responses without exposing authentication details', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, '', '/dashboard');
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      if (url === '/api/auth/me') return Promise.resolve(jsonResponse(me('MFA_VERIFIED')));
+      if (url.startsWith('/api/management/pharmacies'))
+        return Promise.resolve(jsonResponse(managementPage(11)));
+      if (url.startsWith('/api/management/employees'))
+        return Promise.resolve(jsonResponse(managementPage(14)));
+      if (url.startsWith('/api/management/audit'))
+        return Promise.resolve(
+          jsonResponse(
+            managementPage(5, [
+              {
+                action: 'STORE_CREATED',
+                actor: 'Admin Teste',
+                createdAt: '2026-09-10T12:00:00.000Z',
+                id: '11111111-1111-4111-8111-111111111111',
+                outcome: 'SUCCESS',
+                targetId: null,
+                targetType: null,
+              },
+            ]),
+          ),
+        );
+      return Promise.resolve(jsonResponse({}, 404));
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('Farmácias: 11')).toBeInTheDocument();
+    expect(screen.getByLabelText('Funcionários: 14')).toBeInTheDocument();
+    expect(screen.getByLabelText('Auditoria: 5')).toBeInTheDocument();
+    expect(screen.getByText('Farmácia criada')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Acesso rápido' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('link', { name: 'Configurações' }));
+    expect(await screen.findByRole('heading', { name: 'Configurações' })).toBeInTheDocument();
+    expect(screen.getByText('admin@example.test')).toBeInTheDocument();
+    expect(screen.queryByText(/MFA (?:ativo|verificado)/iu)).not.toBeInTheDocument();
+    expect(screen.queryByText(/platform admin/iu)).not.toBeInTheDocument();
   });
 
   it('logs out through the BFF and returns to the unauthenticated state', async () => {

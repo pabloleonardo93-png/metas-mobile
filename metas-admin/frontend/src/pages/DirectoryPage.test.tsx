@@ -42,6 +42,15 @@ const employee = {
   userVersion: 1,
   updatedAt: '2026-09-09T12:00:00Z',
 };
+const auditEvent = {
+  id,
+  action: 'EMPLOYEE_DEACTIVATED',
+  actor: 'Admin Teste',
+  targetType: 'employee',
+  targetId: id,
+  outcome: 'SUCCESS',
+  createdAt: '2026-09-09T12:00:00Z',
+};
 const me = {
   assuranceLevel: 'MFA_VERIFIED',
   displayName: 'Admin Teste',
@@ -225,6 +234,21 @@ describe('gestão administrativa', () => {
     await user.selectOptions(within(dialog).getByLabelText('Função'), 'GESTOR');
     await user.click(within(dialog).getByRole('button', { name: 'Salvar cadastro' }));
     expect(within(dialog).getByRole('button', { name: 'Confirmar alteração' })).toBeInTheDocument();
+  });
+  it('organiza os campos existentes de pessoas em colunas compactas', async () => {
+    setup('/employees', [employee]);
+    await screen.findByText('Pessoa Teste', { selector: 'strong' });
+    expect(screen.getByRole('columnheader', { name: 'E-mail' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
+    expect(screen.getByText('person@example.test')).toBeInTheDocument();
+    expect(screen.getByText('Ativa')).toBeInTheDocument();
+  });
+
+  it('apresenta o resultado da auditoria sem expor detalhes de autenticação', async () => {
+    setup('/audit', [auditEvent]);
+    expect(await screen.findByText('Vínculo desativado')).toBeInTheDocument();
+    expect(screen.getByText('Concluída')).toBeInTheDocument();
+    expect(screen.queryByText(/MFA|WebAuthn|passkey|platform admin/iu)).not.toBeInTheDocument();
   });
   it('sessão sem MFA não acessa gestão', async () => {
     setup('/pharmacies', [], { assurance: 'GOOGLE_ONLY' });
