@@ -189,7 +189,10 @@ describe('admin authentication routes', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText('Mais segurança para o que importa.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Perdi acesso a este dispositivo' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Cadastrar um novo dispositivo' })).toBeDisabled();
+    expect(screen.queryByText('Cadastrar um novo dispositivo')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Adicione outro dispositivo para acessar sua conta.'),
+    ).not.toBeInTheDocument();
 
     expect(screen.getByRole('button', { name: 'Continuar com biometria ou PIN' })).toBeDisabled();
   });
@@ -217,7 +220,7 @@ describe('admin authentication routes', () => {
     expect(
       await screen.findByRole('heading', { name: 'Cadastre seu dispositivo' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cadastrar um novo dispositivo' })).toBeDisabled();
+    expect(screen.queryByText('Cadastrar um novo dispositivo')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Solicitar primeiro cadastro' }));
 
     expect(await screen.findByText('Aguardando autorização operacional')).toBeInTheDocument();

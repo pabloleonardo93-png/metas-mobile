@@ -154,15 +154,21 @@ export const MfaPage = (): React.JSX.Element => {
               )}
               <button
                 className="button button--secondary"
-                disabled={busy !== null}
+                disabled={busy !== null || (recoveryRequest?.status === 'APPROVED' && !supported)}
                 type="button"
-                onClick={() => void requestRecovery()}
+                onClick={() =>
+                  void (recoveryRequest?.status === 'APPROVED' ? recover() : requestRecovery())
+                }
               >
-                {busy === 'recovery-request'
-                  ? 'Solicitando…'
-                  : recoveryRequest
-                    ? 'Solicitar ou verificar nova autorização'
-                    : 'Perdi acesso a este dispositivo'}
+                {busy === 'recover'
+                  ? 'Cadastrando…'
+                  : busy === 'recovery-request'
+                    ? 'Solicitando…'
+                    : recoveryRequest?.status === 'APPROVED'
+                      ? 'Continuar recuperação'
+                      : recoveryRequest
+                        ? 'Solicitar ou verificar nova autorização'
+                        : 'Perdi acesso a este dispositivo'}
               </button>
               {recoveryRequest && (
                 <div className="enrollment-status" role="status">
@@ -184,35 +190,28 @@ export const MfaPage = (): React.JSX.Element => {
                   </span>
                 </div>
               )}
-              <div className="mfa-device-action">
-                <div>
-                  <strong>Cadastrar um novo dispositivo</strong>
-                  <span>Adicione outro dispositivo para acessar sua conta.</span>
-                </div>
-                <button
-                  aria-label="Cadastrar um novo dispositivo"
-                  className="button button--ghost"
-                  disabled={!supported || busy !== null || recoveryRequest?.status !== 'APPROVED'}
-                  type="button"
-                  onClick={() => void recover()}
-                >
-                  {busy === 'recover' ? 'Cadastrando…' : 'Cadastrar'}
-                </button>
-              </div>
             </>
           ) : (
             <>
               <button
                 className="button button--primary"
-                disabled={busy !== null}
+                disabled={busy !== null || (enrollmentRequest?.status === 'APPROVED' && !supported)}
                 type="button"
-                onClick={() => void requestEnrollment()}
+                onClick={() =>
+                  void (enrollmentRequest?.status === 'APPROVED'
+                    ? run('register')
+                    : requestEnrollment())
+                }
               >
-                {busy === 'request'
-                  ? 'Solicitando…'
-                  : enrollmentRequest
-                    ? 'Verificar autorização'
-                    : 'Solicitar primeiro cadastro'}
+                {busy === 'register'
+                  ? 'Cadastrando…'
+                  : busy === 'request'
+                    ? 'Solicitando…'
+                    : enrollmentRequest?.status === 'APPROVED'
+                      ? 'Concluir cadastro neste dispositivo'
+                      : enrollmentRequest
+                        ? 'Verificar autorização'
+                        : 'Solicitar primeiro cadastro'}
               </button>
               {enrollmentRequest && (
                 <div className="enrollment-status" role="status">
@@ -228,21 +227,6 @@ export const MfaPage = (): React.JSX.Element => {
                   </span>
                 </div>
               )}
-              <div className="mfa-device-action">
-                <div>
-                  <strong>Cadastrar um novo dispositivo</strong>
-                  <span>Adicione este dispositivo para acessar sua conta.</span>
-                </div>
-                <button
-                  aria-label="Cadastrar um novo dispositivo"
-                  className="button button--ghost"
-                  disabled={!supported || busy !== null || enrollmentRequest?.status !== 'APPROVED'}
-                  type="button"
-                  onClick={() => void run('register')}
-                >
-                  {busy === 'register' ? 'Cadastrando…' : 'Cadastrar'}
-                </button>
-              </div>
             </>
           )}
         </div>
