@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
+import type { RequestListener } from 'node:http';
 import path from 'node:path';
 
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createVercelApp, createVercelHandler } from '../src/vercel.js';
 
@@ -18,6 +19,10 @@ const environment = {
 const deploymentRoot = path.resolve(import.meta.dirname, '../..');
 
 describe('Vercel deployment adapter', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('creates the Express handler without opening a local listener', async () => {
     const listen = vi.spyOn(express.application, 'listen');
     const app = createVercelApp(environment);
@@ -46,6 +51,43 @@ describe('Vercel deployment adapter', () => {
     expect(authenticatedRoute.status).toBe(401);
     expect(authenticatedRoute.body).toMatchObject({ code: 'UNAUTHORIZED' });
   });
+
+  it.each(['pharmacies', 'employees'] as const)(
+    'removes the Vercel routing parameter before validating %s filters',
+    async (resource) => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ items: [], total: 0, page: 1, pageSize: 20 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+      const handler = createVercelHandler(environment);
+      const vercelLikeHandler: RequestListener = (incomingRequest, response) => {
+        Object.defineProperty(incomingRequest, 'query', {
+          configurable: true,
+          enumerable: true,
+          value: {
+            path: `management/${resource}`,
+            page: '1',
+            pageSize: '20',
+            q: '',
+            role: 'ALL',
+            status: 'ALL',
+          },
+        });
+        handler(incomingRequest, response);
+      };
+
+      const response = await request(vercelLikeHandler)
+        .get(`/api/index?path=management%2F${resource}&page=1&pageSize=20&q=&status=ALL&role=ALL`)
+        .set('host', 'project-name.vercel.app')
+        .set('cookie', `__Host-metas-admin-session=${'a'.repeat(64)}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ items: [], total: 0, page: 1, pageSize: 20 });
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     'auth/google',
