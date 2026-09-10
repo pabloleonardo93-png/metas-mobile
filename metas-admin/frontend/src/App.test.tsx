@@ -284,7 +284,10 @@ describe('admin authentication routes', () => {
     expect(
       await screen.findByRole('heading', { name: 'Gestão da plataforma' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('MFA verificado')).toBeInTheDocument();
+    expect(screen.getByText('Admin Teste')).toBeInTheDocument();
+    expect(screen.queryByText('MFA verificado')).not.toBeInTheDocument();
+    expect(screen.queryByText('Platform Admin')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Farmácias' })).toBeInTheDocument();
   });
 
   it('logs out through the BFF and returns to the unauthenticated state', async () => {
