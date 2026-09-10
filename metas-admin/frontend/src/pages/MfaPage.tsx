@@ -9,6 +9,7 @@ import {
   registerFirstPasskey,
   supportsWebAuthn,
 } from '../auth/webauthn';
+import { BrandLogo } from '../components/BrandLogo';
 import type { FirstEnrollmentRequestResult, MfaRecoveryRequestResult } from '../types';
 
 type BusyAction = 'authenticate' | 'recover' | 'recovery-request' | 'register' | 'request';
@@ -103,21 +104,31 @@ export const MfaPage = (): React.JSX.Element => {
 
   return (
     <main className="mfa-layout">
+      <header className="mfa-header">
+        <div className="brand brand--mfa">
+          <BrandLogo className="brand-logo brand-logo--mfa" />
+          <div>
+            <strong>Metas</strong>
+            <span>Administração</span>
+          </div>
+        </div>
+      </header>
       <section className="mfa-card" aria-labelledby="mfa-title">
         <div className="security-icon" aria-hidden="true">
-          ⌑
+          <svg viewBox="0 0 24 24">
+            <path d="M12 3 5.5 5.8v5.4c0 4.1 2.6 7.8 6.5 9.3 3.9-1.5 6.5-5.2 6.5-9.3V5.8L12 3Z" />
+            <path d="m9.2 11.8 1.8 1.8 3.9-4" />
+          </svg>
         </div>
-        <span className="eyebrow">Segunda etapa</span>
+        <span className="eyebrow mfa-step">Etapa 2 de 2</span>
         <h1 id="mfa-title">
           {hasCredential
-            ? 'Confirme com sua passkey'
+            ? 'Confirme sua identidade'
             : hasCredentialHistory
-              ? 'Recupere o acesso com uma nova passkey'
-              : 'Proteja sua conta com uma passkey'}
+              ? 'Recupere o acesso'
+              : 'Cadastre seu dispositivo'}
         </h1>
-        <p>
-          A passkey usa a proteção do seu dispositivo para concluir o acesso sem expor uma senha.
-        </p>
+        <p>Use a biometria, PIN ou bloqueio de tela do seu dispositivo para continuar.</p>
         {!supported && (
           <p className="alert" role="alert">
             Este navegador não oferece suporte a WebAuthn.
@@ -138,7 +149,7 @@ export const MfaPage = (): React.JSX.Element => {
                   type="button"
                   onClick={() => void run('authenticate')}
                 >
-                  {busy === 'authenticate' ? 'Validando…' : 'Usar passkey cadastrada'}
+                  {busy === 'authenticate' ? 'Validando…' : 'Continuar com biometria ou PIN'}
                 </button>
               )}
               <button
@@ -151,13 +162,13 @@ export const MfaPage = (): React.JSX.Element => {
                   ? 'Solicitando…'
                   : recoveryRequest
                     ? 'Solicitar ou verificar nova autorização'
-                    : 'Perdi acesso às minhas passkeys'}
+                    : 'Perdi acesso a este dispositivo'}
               </button>
               {recoveryRequest && (
                 <div className="enrollment-status" role="status">
                   <strong>
                     {recoveryRequest.status === 'APPROVED'
-                      ? 'Recovery autorizado por tempo limitado'
+                      ? 'Recuperação autorizada por tempo limitado'
                       : recoveryRequest.status === 'ENROLLMENT_STARTED'
                         ? 'Cadastro de recuperação iniciado'
                         : 'Aguardando confirmação independente'}
@@ -168,19 +179,26 @@ export const MfaPage = (): React.JSX.Element => {
                     {new Date(recoveryRequest.expiresAt).toLocaleString('pt-BR')}
                   </span>
                   <span>
-                    Ao continuar, as passkeys anteriores serão revogadas e outras sessões
+                    Ao continuar, os dispositivos anteriores serão revogados e outras sessões
                     administrativas poderão ser encerradas.
                   </span>
                 </div>
               )}
-              <button
-                className="button button--secondary"
-                disabled={!supported || busy !== null || recoveryRequest?.status !== 'APPROVED'}
-                type="button"
-                onClick={() => void recover()}
-              >
-                {busy === 'recover' ? 'Cadastrando…' : 'Cadastrar nova passkey autorizada'}
-              </button>
+              <div className="mfa-device-action">
+                <div>
+                  <strong>Cadastrar um novo dispositivo</strong>
+                  <span>Adicione outro dispositivo para acessar sua conta.</span>
+                </div>
+                <button
+                  aria-label="Cadastrar um novo dispositivo"
+                  className="button button--ghost"
+                  disabled={!supported || busy !== null || recoveryRequest?.status !== 'APPROVED'}
+                  type="button"
+                  onClick={() => void recover()}
+                >
+                  {busy === 'recover' ? 'Cadastrando…' : 'Cadastrar'}
+                </button>
+              </div>
             </>
           ) : (
             <>
@@ -210,14 +228,21 @@ export const MfaPage = (): React.JSX.Element => {
                   </span>
                 </div>
               )}
-              <button
-                className="button button--secondary"
-                disabled={!supported || busy !== null || enrollmentRequest?.status !== 'APPROVED'}
-                type="button"
-                onClick={() => void run('register')}
-              >
-                {busy === 'register' ? 'Cadastrando…' : 'Cadastrar passkey autorizada'}
-              </button>
+              <div className="mfa-device-action">
+                <div>
+                  <strong>Cadastrar um novo dispositivo</strong>
+                  <span>Adicione este dispositivo para acessar sua conta.</span>
+                </div>
+                <button
+                  aria-label="Cadastrar um novo dispositivo"
+                  className="button button--ghost"
+                  disabled={!supported || busy !== null || enrollmentRequest?.status !== 'APPROVED'}
+                  type="button"
+                  onClick={() => void run('register')}
+                >
+                  {busy === 'register' ? 'Cadastrando…' : 'Cadastrar'}
+                </button>
+              </div>
             </>
           )}
         </div>

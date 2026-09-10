@@ -171,8 +171,20 @@ describe('admin authentication routes', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(me('GOOGLE_ONLY')));
     render(<App />);
     expect(
-      await screen.findByRole('heading', { name: 'Confirme com sua passkey' }),
+      await screen.findByRole('heading', { name: 'Confirme sua identidade' }),
     ).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Logo Metas' })).toBeInTheDocument();
+    expect(screen.getByText('Etapa 2 de 2')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Use a biometria, PIN ou bloqueio de tela do seu dispositivo para continuar.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Mais segurança para o que importa.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Perdi acesso a este dispositivo' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cadastrar um novo dispositivo' })).toBeDisabled();
+
+    expect(screen.getByRole('button', { name: 'Continuar com biometria ou PIN' })).toBeDisabled();
   });
 
   it('requests controlled first enrollment without polling or browser-stored authority', async () => {
@@ -196,9 +208,9 @@ describe('admin authentication routes', () => {
     render(<App />);
 
     expect(
-      await screen.findByRole('heading', { name: 'Proteja sua conta com uma passkey' }),
+      await screen.findByRole('heading', { name: 'Cadastre seu dispositivo' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Cadastrar passkey autorizada' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cadastrar um novo dispositivo' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Solicitar primeiro cadastro' }));
 
     expect(await screen.findByText('Aguardando autorização operacional')).toBeInTheDocument();
@@ -231,12 +243,12 @@ describe('admin authentication routes', () => {
       );
     render(<App />);
 
-    await screen.findByRole('heading', { name: 'Confirme com sua passkey' });
-    await user.click(screen.getByRole('button', { name: 'Perdi acesso às minhas passkeys' }));
+    await screen.findByRole('heading', { name: 'Confirme sua identidade' });
+    await user.click(screen.getByRole('button', { name: 'Perdi acesso a este dispositivo' }));
 
     expect(await screen.findByText('Aguardando confirmação independente')).toBeInTheDocument();
     expect(screen.getByText(`Identificador: ${requestId}`)).toBeInTheDocument();
-    expect(screen.getByText(/passkeys anteriores serão revogadas/iu)).toBeInTheDocument();
+    expect(screen.getByText(/dispositivos anteriores serão revogados/iu)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/mfa/recovery/request',
       expect.objectContaining({ body: '{}', method: 'POST' }),
@@ -265,12 +277,10 @@ describe('admin authentication routes', () => {
       );
     render(<App />);
 
-    expect(
-      await screen.findByRole('heading', { name: 'Recupere o acesso com uma nova passkey' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Recupere o acesso' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Solicitar primeiro cadastro' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Usar passkey cadastrada' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Perdi acesso às minhas passkeys' }));
+    expect(screen.queryByRole('button', { name: 'Continuar com biometria ou PIN' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Perdi acesso a este dispositivo' }));
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/mfa/recovery/request',
@@ -334,7 +344,7 @@ describe('admin authentication routes', () => {
     });
 
     expect(
-      await screen.findByRole('heading', { name: 'Confirme com sua passkey' }),
+      await screen.findByRole('heading', { name: 'Confirme sua identidade' }),
     ).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/auth/google',
