@@ -256,7 +256,9 @@ describe('gestão administrativa', () => {
     const dialog = screen.getByRole('dialog', { name: 'Novo funcionário' });
     await user.type(within(dialog).getByLabelText('Nome completo'), 'Nova Pessoa');
     await user.type(within(dialog).getByLabelText('E-mail da conta Google'), 'nova@example.test');
-    await user.selectOptions(within(dialog).getByLabelText('Farmácia'), id);
+    const pharmacySelect = within(dialog).getByLabelText('Farmácia');
+    await within(pharmacySelect).findByRole('option', { name: 'Farmácia Centro' });
+    await user.selectOptions(pharmacySelect, id);
     expect(within(dialog).getByLabelText('Função')).toHaveValue('');
     await user.selectOptions(within(dialog).getByLabelText('Função'), 'CAIXA');
     await user.click(within(dialog).getByRole('button', { name: 'Adicionar funcionário' }));
