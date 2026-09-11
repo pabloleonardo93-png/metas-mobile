@@ -1,4 +1,4 @@
-export type AdminIconName = 'audit' | 'dashboard' | 'employees' | 'pharmacy' | 'settings';
+export type AdminIconName = 'audit' | 'dashboard' | 'employees' | 'more' | 'pharmacy' | 'settings';
 
 export const AdminIcon = ({ name }: { name: AdminIconName }): React.JSX.Element => (
   <svg aria-hidden="true" className="admin-icon" viewBox="0 0 24 24">
@@ -25,6 +25,8 @@ export const AdminIcon = ({ name }: { name: AdminIconName }): React.JSX.Element 
         <path d="M6 3h9l3 3v15H6z" />
         <path d="M14 3v4h4M9 11h6M9 15h6M9 19h4" />
       </>
+    ) : name === 'more' ? (
+      <path d="M5 12h.01M12 12h.01M19 12h.01" />
     ) : (
       <>
         <circle cx="12" cy="12" r="3" />

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppShell } from '../components/AppShell';
+import { PharmacyActionsMenu } from '../components/PharmacyActionsMenu';
 import {
   ManagementDialog,
   roleLabels,
@@ -98,6 +99,10 @@ export const DirectoryPage = ({
     setFilters((current) => ({ ...current, ...change, page: 1 }));
     setSuccess('');
   };
+  const openManagerCreation = (pharmacy: Pick<Pharmacy, 'id' | 'name'>) => {
+    setSelection(null);
+    setEmployeeCreation({ initialRole: 'GESTOR', initialStore: pharmacy });
+  };
   const title = descriptions[resource][0];
   const actions = (item: Pharmacy | Employee) => (
     <div className="row-actions">
@@ -135,6 +140,9 @@ export const DirectoryPage = ({
       >
         {('isActive' in item ? item.isActive : item.status === 'ATIVO') ? 'Desativar' : 'Reativar'}
       </button>
+      {'isActive' in item && (
+        <PharmacyActionsMenu pharmacy={item} addManager={openManagerCreation} />
+      )}
     </div>
   );
   return (
@@ -244,9 +252,7 @@ export const DirectoryPage = ({
               <button
                 className="button button--primary"
                 type="button"
-                onClick={() =>
-                  setEmployeeCreation({ initialRole: 'GESTOR', initialStore: createdPharmacy })
-                }
+                onClick={() => openManagerCreation(createdPharmacy)}
               >
                 Adicionar gestor agora
               </button>
@@ -430,13 +436,6 @@ export const DirectoryPage = ({
             resource={resource}
             selection={selection}
             close={() => setSelection(null)}
-            addManager={(pharmacy) => {
-              setSelection(null);
-              setEmployeeCreation({
-                initialRole: 'GESTOR',
-                initialStore: { id: pharmacy.id, name: pharmacy.name },
-              });
-            }}
             saved={(result: ManagementSaveResult) => {
               if (resource === 'pharmacies' && selection.mode === 'create') {
                 const input = pharmacyInputSchema.safeParse(result.input);
