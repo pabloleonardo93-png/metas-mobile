@@ -13,6 +13,15 @@ import {
 } from 'vitest';
 import { App } from '../App';
 import { resetAdminApiStateForTests } from '../api/adminApi';
+import { authenticateWithPasskey } from '../auth/webauthn';
+
+vi.mock('../auth/webauthn', () => ({
+  authenticateWithPasskey: vi.fn().mockResolvedValue(undefined),
+  describeWebAuthnError: () => 'Não foi possível confirmar sua identidade.',
+  recoverWithNewPasskey: vi.fn(),
+  registerFirstPasskey: vi.fn(),
+  supportsWebAuthn: () => true,
+}));
 
 const id = '11111111-1111-4111-8111-111111111111';
 const pharmacy = {
@@ -26,6 +35,7 @@ const pharmacy = {
   managers: ['Gestora Teste'],
   updatedAt: '2026-09-09T12:00:00Z',
 };
+const pharmacyWithoutManager = { ...pharmacy, employeeCount: 0, managers: [] };
 const employee = {
   id,
   userId: id,
@@ -76,6 +86,8 @@ const setup = (
       );
     if (url === '/api/security/csrf') return Promise.resolve(json({ csrfToken: 'synthetic-csrf' }));
     if (init?.method === 'POST') return Promise.resolve(json({ id }));
+    if (url.startsWith('/api/management/pharmacies') && route !== '/pharmacies')
+      return Promise.resolve(json(page([pharmacy])));
     return Promise.resolve(
       options.fail
         ? json({ code: 'MANAGEMENT_UNAVAILABLE', message: 'Serviço indisponível.' }, 503)
@@ -105,6 +117,7 @@ describe('gestão administrativa', () => {
   });
   beforeEach(() => {
     resetAdminApiStateForTests();
+    vi.mocked(authenticateWithPasskey).mockReset().mockResolvedValue(undefined);
     vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (
       this: HTMLDialogElement,
     ) {
@@ -188,9 +201,8 @@ describe('gestão administrativa', () => {
     await user.type(within(dialog).getByLabelText('Nome da farmácia'), 'Farmácia Norte');
     await user.type(within(dialog).getByLabelText('Identificador público'), 'norte');
     await user.dblClick(within(dialog).getByRole('button', { name: 'Salvar cadastro' }));
-    expect(
-      await screen.findByText('Alteração salva e registrada em auditoria.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Farmácia Norte foi criada com sucesso.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Adicionar gestor agora' })).toBeEnabled();
     const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST');
     expect(posts).toHaveLength(1);
     expect(posts[0]?.[0]).toBe('/api/management/pharmacies');
@@ -201,6 +213,80 @@ describe('gestão administrativa', () => {
       slug: 'norte',
       isActive: true,
     });
+  });
+  it('após criar a farmácia abre o formulário compartilhado com gestor e unidade definidos', async () => {
+    setup();
+    const user = userEvent.setup();
+    await screen.findByText('Farmácia Centro', { selector: 'strong' });
+    await user.click(screen.getByRole('button', { name: 'Nova farmácia' }));
+    const pharmacyDialog = screen.getByRole('dialog');
+    await user.type(within(pharmacyDialog).getByLabelText('Nome da farmácia'), 'Santa Afonso');
+    await user.type(within(pharmacyDialog).getByLabelText('Identificador público'), 'santa-afonso');
+    await user.click(within(pharmacyDialog).getByRole('button', { name: 'Salvar cadastro' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Adicionar gestor agora' }));
+    const employeeDialog = screen.getByRole('dialog', { name: 'Adicionar gestor' });
+    expect(within(employeeDialog).getByText('Santa Afonso')).toBeInTheDocument();
+    expect(within(employeeDialog).getByText('Gestor')).toBeInTheDocument();
+    await user.type(within(employeeDialog).getByLabelText('Nome completo'), 'Gestora Santa Afonso');
+    await user.type(
+      within(employeeDialog).getByLabelText('E-mail da conta Google'),
+      'gestora.santa@example.test',
+    );
+    await user.click(within(employeeDialog).getByRole('button', { name: 'Adicionar gestor' }));
+    await waitFor(() => expect(authenticateWithPasskey).toHaveBeenCalledOnce());
+    const employeePost = fetchMock.mock.calls.find(
+      ([input, init]) => input === '/api/management/employees' && init?.method === 'POST',
+    );
+    expect(employeePost).toBeDefined();
+    const body = employeePost?.[1]?.body;
+    if (typeof body !== 'string') throw new Error('Corpo JSON esperado.');
+    expect(JSON.parse(body)).toEqual({
+      email: 'gestora.santa@example.test',
+      name: 'Gestora Santa Afonso',
+      role: 'GESTOR',
+      storeId: id,
+    });
+  });
+  it('adiciona funcionário pelo caso de uso compartilhado após confirmação de identidade', async () => {
+    setup('/employees', [employee]);
+    const user = userEvent.setup();
+    await screen.findByText('Pessoa Teste', { selector: 'strong' });
+    await user.click(screen.getByRole('button', { name: '+ Novo funcionário' }));
+    const dialog = screen.getByRole('dialog', { name: 'Novo funcionário' });
+    await user.type(within(dialog).getByLabelText('Nome completo'), 'Nova Pessoa');
+    await user.type(within(dialog).getByLabelText('E-mail da conta Google'), 'nova@example.test');
+    const pharmacySelect = within(dialog).getByLabelText('Farmácia');
+    await within(pharmacySelect).findByRole('option', { name: 'Farmácia Centro' });
+    await user.selectOptions(pharmacySelect, id);
+    expect(within(dialog).getByLabelText('Função')).toHaveValue('');
+    await user.selectOptions(within(dialog).getByLabelText('Função'), 'CAIXA');
+    await user.click(within(dialog).getByRole('button', { name: 'Adicionar funcionário' }));
+
+    await waitFor(() => expect(authenticateWithPasskey).toHaveBeenCalledOnce());
+    const post = fetchMock.mock.calls.find(
+      ([input, init]) => input === '/api/management/employees' && init?.method === 'POST',
+    );
+    expect(post).toBeDefined();
+    const body = post?.[1]?.body;
+    if (typeof body !== 'string') throw new Error('Corpo JSON esperado.');
+    expect(JSON.parse(body)).toEqual({
+      email: 'nova@example.test',
+      name: 'Nova Pessoa',
+      role: 'CAIXA',
+      storeId: id,
+    });
+    expect(await screen.findByText(/O acesso foi autorizado/iu)).toBeInTheDocument();
+  });
+  it('oferece adicionar gestor nos detalhes de uma farmácia sem gestor ativo', async () => {
+    setup('/pharmacies', [pharmacyWithoutManager]);
+    const user = userEvent.setup();
+    await screen.findByText('Farmácia Centro', { selector: 'strong' });
+    await user.click(screen.getByRole('button', { name: 'Detalhes de Farmácia Centro' }));
+    const details = screen.getByRole('dialog');
+    expect(within(details).getByText('Nenhum gestor cadastrado')).toBeInTheDocument();
+    await user.click(within(details).getByRole('button', { name: '+ Adicionar gestor' }));
+    expect(screen.getByRole('dialog', { name: 'Adicionar gestor' })).toBeInTheDocument();
   });
   it('desativar exige confirmação, preserva versão e não envia DELETE', async () => {
     setup();

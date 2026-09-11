@@ -13,6 +13,7 @@ import { PostgresManagementService } from '../src/modules/platformManagement/man
 import { listInputSchema } from '../src/modules/platformManagement/management.contracts.js';
 import { PostgresPlatformAdminAccessService } from '../src/modules/platformAdminAccess/platformAdminAccess.service.js';
 import type { PlatformAdminSession } from '../src/modules/platformAdmin/platformAdmin.types.js';
+import { withDatabaseContext } from '../src/shared/database/withDatabaseContext.js';
 import { withPlatformAdminDatabaseContext } from '../src/shared/database/withPlatformAdminDatabaseContext.js';
 
 const execute = (
@@ -119,6 +120,7 @@ void test(
         { replacements: { adminId, identityId, sessionId } },
       );
       const runtime = connect('metas_platform_admin_runtime');
+      const appRuntime = connect('metas_app_runtime');
       const service = new PostgresManagementService(runtime);
       const accessService = new PostgresPlatformAdminAccessService(runtime, 300, 604800, 300);
       const session: PlatformAdminSession = {
@@ -156,6 +158,27 @@ void test(
         id: string | null,
         input: unknown,
       ) => service.write(session, operation, id, input, randomUUID());
+      const createEmployee = (input: {
+        email: string;
+        name: string;
+        role: 'GESTOR' | 'BALCONISTA' | 'CAIXA' | 'FARMACEUTICO';
+        storeId: string;
+      }) => service.createEmployee(session, input, randomUUID());
+      const employeeGoogleLogin = (email: string, subject: string) =>
+        appRuntime.query<{
+          employee_id: string;
+          role: string;
+          store_id: string;
+          user_id: string;
+        }>(
+          `SELECT * FROM metas.authenticate_google_identity(
+            :subject,:email,:tokenHash,CURRENT_TIMESTAMP+interval '1 hour',NULL,NULL
+          )`,
+          {
+            replacements: { email, subject, tokenHash: randomBytes(32) },
+            type: QueryTypes.SELECT,
+          },
+        );
       let storeId = '';
       await t.test(
         'criar, buscar, filtrar, paginar, editar e desativar farmácia com auditoria',
@@ -210,6 +233,238 @@ void test(
           assert.equal(audit.total, 3);
         },
       );
+      await t.test(
+        'provisiona gestor e funcionario atomicamente, associa Google verificado e audita',
+        async () => {
+          const store = await write('savePharmacy', null, {
+            name: 'Santa Afonso',
+            slug: 'santa-afonso',
+            timezone: 'America/Sao_Paulo',
+            isActive: true,
+          });
+          await assert.rejects(
+            createEmployee({
+              name: 'Primeira Pessoa Invalida',
+              email: 'primeira-invalida@example.test',
+              storeId: store.id,
+              role: 'CAIXA',
+            }),
+            { code: 'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER' },
+          );
+          const [rolledBack] = await admin.query<{ total: string }>(
+            "SELECT count(*)::TEXT total FROM metas.users WHERE primary_email='primeira-invalida@example.test'",
+            { type: QueryTypes.SELECT },
+          );
+          assert.equal(rolledBack?.total, '0');
+
+          const manager = await createEmployee({
+            name: 'Gestora Santa Afonso',
+            email: 'gestora.santa@example.test',
+            storeId: store.id,
+            role: 'GESTOR',
+          });
+          const employee = await createEmployee({
+            name: 'Funcionaria Santa Afonso',
+            email: 'funcionaria.santa@example.test',
+            storeId: store.id,
+            role: 'FARMACEUTICO',
+          });
+          const records = await admin.query<{
+            account_status: string;
+            created_by_platform_admin_id: string;
+            id: string;
+            role: string;
+            store_id: string;
+          }>(
+            `SELECT e.id,e.store_id,e.role::TEXT,u.account_status,e.created_by_platform_admin_id
+             FROM metas.employees e JOIN metas.users u ON u.id=e.user_id
+             WHERE e.id IN(:managerId,:employeeId) ORDER BY e.role`,
+            {
+              replacements: { employeeId: employee.id, managerId: manager.id },
+              type: QueryTypes.SELECT,
+            },
+          );
+          assert.equal(records.length, 2);
+          assert.equal(
+            records.every((record) => record.store_id === store.id),
+            true,
+          );
+          assert.equal(
+            records.every((record) => record.account_status === 'PENDING'),
+            true,
+          );
+          assert.equal(
+            records.every((record) => record.created_by_platform_admin_id === adminId),
+            true,
+          );
+
+          await assert.rejects(
+            employeeGoogleLogin('outra@example.test', 'employee-google-subject'),
+            hasDatabaseMessage('AUTH_ACCESS_DENIED'),
+          );
+          const [login] = await employeeGoogleLogin(
+            'FUNCIONARIA.SANTA@example.test',
+            'employee-google-subject',
+          );
+          assert.equal(login?.employee_id, employee.id);
+          assert.equal(login?.store_id, store.id);
+          assert.equal(login?.role, 'FARMACEUTICO');
+
+          const [identity] = await admin.query<{ provider_subject: string }>(
+            `SELECT provider_subject FROM metas.auth_identities
+             WHERE user_id=:userId AND provider='GOOGLE' AND disabled_at IS NULL`,
+            { replacements: { userId: login?.user_id }, type: QueryTypes.SELECT },
+          );
+          assert.equal(identity?.provider_subject, 'employee-google-subject');
+          const [audit] = await admin.query<{ metadata: { role: string }; store_id: string }>(
+            `SELECT store_id,metadata FROM metas.platform_admin_audit_events
+             WHERE action='EMPLOYEE_CREATED' AND target_id=:employeeId`,
+            { replacements: { employeeId: employee.id }, type: QueryTypes.SELECT },
+          );
+          assert.equal(audit?.store_id, store.id);
+          assert.equal(audit?.metadata.role, 'FARMACEUTICO');
+        },
+      );
+      let restrictedStoreId = '';
+      await t.test(
+        'rejeita duplicidade, loja inativa, multiplas farmacias e step-up vencido',
+        async () => {
+          const destination = await write('savePharmacy', null, {
+            name: 'Farmacia Restrita',
+            slug: 'restrita',
+            timezone: 'America/Sao_Paulo',
+            isActive: true,
+          });
+          restrictedStoreId = destination.id;
+          await createEmployee({
+            name: 'Gestora Restrita',
+            email: 'gestora.restrita@example.test',
+            storeId: destination.id,
+            role: 'GESTOR',
+          });
+          await assert.rejects(
+            createEmployee({
+              name: 'Gestora Restrita',
+              email: 'gestora.restrita@example.test',
+              storeId: destination.id,
+              role: 'GESTOR',
+            }),
+            { code: 'MANAGEMENT_LINK_EXISTS' },
+          );
+
+          const another = await write('savePharmacy', null, {
+            name: 'Farmacia Outra',
+            slug: 'outra',
+            timezone: 'America/Sao_Paulo',
+            isActive: true,
+          });
+          await assert.rejects(
+            createEmployee({
+              name: 'Gestora Restrita',
+              email: 'gestora.restrita@example.test',
+              storeId: another.id,
+              role: 'GESTOR',
+            }),
+            { code: 'MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED' },
+          );
+          await admin.query(
+            `INSERT INTO metas.users(full_name,primary_email,account_status)
+             VALUES('Pessoa sem vínculo','sem-vinculo@example.test','PENDING')`,
+          );
+          await assert.rejects(
+            createEmployee({
+              name: 'Pessoa sem vínculo',
+              email: 'sem-vinculo@example.test',
+              storeId: destination.id,
+              role: 'CAIXA',
+            }),
+            { code: 'MANAGEMENT_EMPLOYEE_EMAIL_EXISTS' },
+          );
+          await assert.rejects(
+            createEmployee({
+              name: 'Farmácia inexistente',
+              email: 'loja-inexistente@example.test',
+              storeId: randomUUID(),
+              role: 'GESTOR',
+            }),
+            { code: 'MANAGEMENT_STORE_INACTIVE' },
+          );
+          await write('savePharmacy', another.id, {
+            name: 'Farmacia Outra',
+            slug: 'outra',
+            timezone: 'America/Sao_Paulo',
+            isActive: false,
+            version: 1,
+          });
+          await assert.rejects(
+            createEmployee({
+              name: 'Pessoa Inativa',
+              email: 'inativa@example.test',
+              storeId: another.id,
+              role: 'GESTOR',
+            }),
+            { code: 'MANAGEMENT_STORE_INACTIVE' },
+          );
+
+          await admin.query(
+            `UPDATE metas.platform_admin_sessions
+             SET created_at=now()-interval '10 minutes',
+                 mfa_verified_at=now()-interval '6 minutes',
+                 step_up_verified_at=now()-interval '6 minutes'
+             WHERE id=:sessionId`,
+            { replacements: { sessionId } },
+          );
+          await assert.rejects(
+            createEmployee({
+              name: 'Sem Step-up',
+              email: 'sem-step-up-employee@example.test',
+              storeId: destination.id,
+              role: 'CAIXA',
+            }),
+            { code: 'PLATFORM_ADMIN_STEP_UP_REQUIRED' },
+          );
+          await admin.query(
+            'UPDATE metas.platform_admin_sessions SET mfa_verified_at=now(),step_up_verified_at=now() WHERE id=:sessionId',
+            { replacements: { sessionId } },
+          );
+        },
+      );
+      await t.test('RLS impede leitura cruzada e troca arbitraria de farmacia', async () => {
+        const [userA] = await employeeGoogleLogin(
+          'gestora.santa@example.test',
+          'manager-a-subject',
+        );
+        const [userB] = await employeeGoogleLogin(
+          'gestora.restrita@example.test',
+          'manager-b-subject',
+        );
+        assert.ok(userA && userB);
+        const visibleStores = async (context: typeof userA) =>
+          withDatabaseContext(
+            appRuntime,
+            {
+              employeeId: context.employee_id,
+              storeId: context.store_id,
+              userId: context.user_id,
+            },
+            (transaction) =>
+              appRuntime.query<{ id: string }>('SELECT id FROM metas.stores', {
+                transaction,
+                type: QueryTypes.SELECT,
+              }),
+          );
+        assert.deepEqual(
+          (await visibleStores(userA)).map(({ id }) => id),
+          [userA.store_id],
+        );
+        assert.deepEqual(
+          (await visibleStores(userB)).map(({ id }) => id),
+          [userB.store_id],
+        );
+        assert.equal(userB.store_id, restrictedStoreId);
+        assert.deepEqual(await visibleStores({ ...userA, store_id: userB.store_id }), []);
+      });
+
       const userId = randomUUID(),
         employeeId = randomUUID();
       await admin.query(
@@ -613,19 +868,50 @@ void test(
           );
           const [privileges] = await admin.query<{
             app_runtime: boolean;
+            app_runtime_create: boolean;
+            operator_create: boolean;
             platform_runtime: boolean;
+            platform_runtime_create: boolean;
             public_role: boolean;
+            public_create: boolean;
           }>(
             `SELECT
               has_function_privilege('metas_app_runtime','metas.read_platform_admin_access()','EXECUTE') app_runtime,
+              has_function_privilege('metas_app_runtime','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') app_runtime_create,
+              has_function_privilege('metas_platform_admin_operator','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') operator_create,
               has_function_privilege('metas_platform_admin_runtime','metas.read_platform_admin_access()','EXECUTE') platform_runtime,
-              has_function_privilege('public','metas.read_platform_admin_access()','EXECUTE') public_role`,
+              has_function_privilege('metas_platform_admin_runtime','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') platform_runtime_create,
+              has_function_privilege('public','metas.read_platform_admin_access()','EXECUTE') public_role,
+              has_function_privilege('public','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') public_create`,
             { type: QueryTypes.SELECT },
           );
           assert.deepEqual(privileges, {
             app_runtime: false,
+            app_runtime_create: false,
+            operator_create: false,
             platform_runtime: true,
+            platform_runtime_create: true,
             public_role: false,
+            public_create: false,
+          });
+          const [functionSecurity] = await admin.query<{
+            fixed_search_path: boolean;
+            owner_name: string;
+            security_definer: boolean;
+          }>(
+            `SELECT
+              pg_get_userbyid(proowner) owner_name,
+              prosecdef security_definer,
+              COALESCE(proconfig,ARRAY[]::TEXT[]) @> ARRAY['search_path=pg_catalog'] fixed_search_path
+             FROM pg_proc procedure
+             JOIN pg_namespace namespace ON namespace.oid=procedure.pronamespace
+             WHERE namespace.nspname='metas' AND procedure.proname='create_platform_employee'`,
+            { type: QueryTypes.SELECT },
+          );
+          assert.deepEqual(functionSecurity, {
+            fixed_search_path: true,
+            owner_name: 'metas_migration_owner',
+            security_definer: true,
           });
           await assert.rejects(
             runtime.query("SELECT metas.read_platform_directory('pharmacies','{}'::jsonb)"),

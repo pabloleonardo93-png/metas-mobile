@@ -111,6 +111,45 @@ describe('gestão no BFF', () => {
     expect(upstream).toHaveBeenCalledWith(
       expect.objectContaining({ path: '/v1/platform-admin/management/pharmacies', body }),
     );
+
+    const employee = {
+      name: 'Pessoa Teste',
+      email: 'pessoa@example.test',
+      storeId: id,
+      role: 'GESTOR',
+    };
+    const employeeResponse = await request(app)
+      .post('/api/management/employees')
+      .set('host', config.expectedHost)
+      .set('cookie', cookie + '; ' + csrfCookie)
+      .set('origin', config.publicOrigin)
+      .set('x-csrf-token', token)
+      .send(employee);
+    expect(employeeResponse.status).toBe(201);
+    expect(upstream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: '/v1/platform-admin/management/employees',
+        body: employee,
+      }),
+    );
+
+    for (const invalid of [
+      { ...employee, role: 'ROOT' },
+      { ...employee, email: 'invalido' },
+      { ...employee, unexpected: true },
+    ]) {
+      expect(
+        (
+          await request(app)
+            .post('/api/management/employees')
+            .set('host', config.expectedHost)
+            .set('cookie', cookie + '; ' + csrfCookie)
+            .set('origin', config.publicOrigin)
+            .set('x-csrf-token', token)
+            .send(invalid)
+        ).status,
+      ).toBe(422);
+    }
   });
   it('rejeita resposta inesperada e sanitiza erro de domínio e mensagem upstream', async () => {
     const app = createApp({

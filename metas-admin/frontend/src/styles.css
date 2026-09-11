@@ -751,6 +751,39 @@ select[aria-invalid='true'] {
 .feedback--error {
   background: var(--metas-danger-subtle);
 }
+.creation-follow-up {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--metas-primary);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.creation-follow-up > div:first-child,
+.readonly-field {
+  display: grid;
+  gap: 4px;
+}
+.creation-follow-up span,
+.readonly-field span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.detail-action {
+  display: block;
+  margin-top: 6px;
+}
+.readonly-field {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--cream);
+}
 .dialog-backdrop {
   --dialog-top-offset: clamp(80px, 10vh, 110px);
   position: fixed;
@@ -1084,6 +1117,14 @@ select[aria-invalid='true'] {
     flex-direction: column;
   }
   .section-heading .button {
+    width: 100%;
+  }
+  .creation-follow-up {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .creation-follow-up .row-actions,
+  .creation-follow-up .button {
     width: 100%;
   }
 }

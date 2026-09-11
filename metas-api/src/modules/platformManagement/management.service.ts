@@ -1,4 +1,5 @@
 import { QueryTypes, type Sequelize } from 'sequelize';
+import type { z } from 'zod';
 import { withPlatformAdminDatabaseContext } from '../../shared/database/withPlatformAdminDatabaseContext.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import type { PlatformAdminSession } from '../platformAdmin/platformAdmin.types.js';
@@ -7,6 +8,7 @@ import {
   employeeSchema,
   pharmacySchema,
   pageSchema,
+  type employeeCreateInputSchema,
   type ListInput,
   type ManagementResource,
 } from './management.contracts.js';
@@ -18,6 +20,11 @@ export interface ManagementService {
     resource: ManagementResource,
     filters: ListInput,
   ): Promise<unknown>;
+  createEmployee(
+    session: PlatformAdminSession,
+    input: z.output<typeof employeeCreateInputSchema>,
+    requestId: string,
+  ): Promise<{ id: string }>;
   write(
     session: PlatformAdminSession,
     operation: ManagementOperation,
@@ -43,6 +50,12 @@ const errors: Readonly<Record<string, [number, string]>> = {
     409,
     'Esta pessoa já possui vínculo com a farmácia. Edite o vínculo existente.',
   ],
+  MANAGEMENT_EMPLOYEE_EMAIL_EXISTS: [409, 'Já existe uma pessoa cadastrada com este e-mail.'],
+  MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED: [
+    409,
+    'Esta pessoa já está vinculada a outra farmácia. O acesso a múltiplas farmácias ainda não está disponível.',
+  ],
+  PLATFORM_ADMIN_STEP_UP_REQUIRED: [403, 'Confirme sua identidade novamente para continuar.'],
 };
 export const managementError = (error: unknown): AppError => {
   const parent = error && typeof error === 'object' && 'parent' in error ? error.parent : null;
@@ -67,7 +80,43 @@ export const managementError = (error: unknown): AppError => {
   );
 };
 export class PostgresManagementService implements ManagementService {
-  public constructor(private readonly database: Sequelize) {}
+  public constructor(
+    private readonly database: Sequelize,
+    private readonly stepUpTtlSeconds = 300,
+  ) {}
+  public async createEmployee(
+    session: PlatformAdminSession,
+    input: z.output<typeof employeeCreateInputSchema>,
+    requestId: string,
+  ): Promise<{ id: string }> {
+    try {
+      return await withPlatformAdminDatabaseContext(
+        this.database,
+        { platformAdminId: session.platformAdminId, sessionId: session.sessionId },
+        async (transaction) => {
+          const rows = await this.database.query<{ id: string }>(
+            `SELECT metas.create_platform_employee(
+              :name, :email, CAST(:storeId AS UUID), :role,
+              :minimumStepUpAt, CAST(:requestId AS UUID)
+            ) AS id`,
+            {
+              replacements: {
+                ...input,
+                minimumStepUpAt: new Date(Date.now() - this.stepUpTtlSeconds * 1000),
+                requestId,
+              },
+              type: QueryTypes.SELECT,
+              transaction,
+            },
+          );
+          if (!rows[0]?.id) throw new Error('MANAGEMENT_UNAVAILABLE');
+          return { id: rows[0].id };
+        },
+      );
+    } catch (error) {
+      throw managementError(error);
+    }
+  }
   public async list(
     session: PlatformAdminSession,
     resource: ManagementResource,

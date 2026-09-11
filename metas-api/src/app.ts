@@ -85,12 +85,14 @@ export const createApp = (options: AppOptions = {}): express.Express => {
         ),
       );
     }
-    if (options.managementService) {
+    if (options.managementService && options.platformAdminRateLimiter) {
       app.use(
         '/v1/platform-admin/management',
         createManagementRouter(
           options.platformAdminAuthenticationService,
           options.managementService,
+          options.platformAdminRateLimiter,
+          options.platformAdminStepUpTtlSeconds ?? 300,
         ),
       );
     }

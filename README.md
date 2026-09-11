@@ -171,6 +171,8 @@ O painel permite gerenciar farmácias, vínculos de funcionários e gestores, au
 
 Novos administradores são autorizados pelo e-mail Google verificado, normalizado somente com trim e lowercase. O subject é obtido do token validado no backend, sem entrada manual, e a nova sessão permanece limitada até o primeiro cadastro de dispositivo. As migrations aditivas `017-add-platform-management.ts` e `018-add-platform-admin-invitations.ts` devem seguir o fluxo controlado de migrations antes da versão da API que depende delas; o runtime recebe somente EXECUTE nas funções previstas e não possui acesso direto às tabelas administrativas.
 
+Novos funcionários e gestores também são autorizados pelo e-mail Google verificado, sem entrada manual do subject. A migration aditiva `019-add-platform-employee-provisioning.ts` cria pessoa e vínculo de forma atômica, exige step-up administrativo recente, registra auditoria e limita cada pessoa a uma única farmácia enquanto o aplicativo não oferece seleção de vínculo. A conta permanece pendente até o primeiro login válido; a sessão resultante recebe somente a farmácia e a função associadas ao vínculo.
+
 Antes de ativar o Admin em produção ainda são obrigatórios: aplicar e inspecionar a migration 016 pelo fluxo manual, configurar Redis/Valkey com TLS, ensaiar as aprovações por canal independente, validar BFF/cookie/CSRF no ambiente final, estabelecer identidade individual do operador e executar E2E com navegador/autenticador real. Esta fase não habilita o Admin nem acessa produção.
 
 ### Hospedagem do Admin na Vercel
