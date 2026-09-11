@@ -174,6 +174,7 @@ const createRateLimiter = (
 ): MemoryPlatformAdminRateLimiter => {
   const policy = { limit: 100, windowMs: 60_000 };
   return new MemoryPlatformAdminRateLimiter('test-rate-limit-key-secret-32-bytes', {
+    ADMIN_ACCESS_WRITE: policy,
     FIRST_ENROLLMENT_REQUEST: policy,
     GOOGLE_LOGIN: policy,
     MFA_RECOVERY_OPTIONS: policy,

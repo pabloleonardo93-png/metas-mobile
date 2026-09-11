@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -11,6 +11,7 @@ import test from 'node:test';
 import { Sequelize, QueryTypes } from 'sequelize';
 import { PostgresManagementService } from '../src/modules/platformManagement/management.service.js';
 import { listInputSchema } from '../src/modules/platformManagement/management.contracts.js';
+import { PostgresPlatformAdminAccessService } from '../src/modules/platformAdminAccess/platformAdminAccess.service.js';
 import type { PlatformAdminSession } from '../src/modules/platformAdmin/platformAdmin.types.js';
 import { withPlatformAdminDatabaseContext } from '../src/shared/database/withPlatformAdminDatabaseContext.js';
 
@@ -24,7 +25,9 @@ const execute = (
     const process = spawn(command, args, { windowsHide: true, stdio: 'ignore', timeout: 30000 });
     process.once('error', reject);
     process.once('exit', (code) =>
-      code === 0 ? resolve() : reject(new Error('LOCAL_POSTGRES_PROCESS_FAILED')),
+      code === 0
+        ? resolve()
+        : reject(new Error(`LOCAL_POSTGRES_PROCESS_FAILED:${path.basename(command)}:${code}`)),
     );
   });
 const binaries = process.env.METAS_LOCAL_POSTGRES_BIN ?? 'C:/Program Files/PostgreSQL/18/bin';
@@ -110,21 +113,44 @@ void test(
       INSERT INTO metas.platform_admins(id,display_name,primary_email) VALUES (:adminId,'Admin Sintético','admin@example.test');
       INSERT INTO metas.platform_admin_identities(id,platform_admin_id,provider,provider_subject,provider_verified_at)
         VALUES (:identityId,:adminId,'GOOGLE','synthetic-subject',now());
-      INSERT INTO metas.platform_admin_sessions(id,platform_admin_id,identity_id,token_hash,assurance_level,mfa_verified_at,expires_at,idle_expires_at)
-        VALUES (:sessionId,:adminId,:identityId,decode(repeat('ab',32),'hex'),'MFA_VERIFIED',now(),now()+interval '1 hour',now()+interval '30 minutes');
+      INSERT INTO metas.platform_admin_sessions(id,platform_admin_id,identity_id,token_hash,assurance_level,mfa_verified_at,step_up_verified_at,expires_at,idle_expires_at)
+        VALUES (:sessionId,:adminId,:identityId,decode(repeat('ab',32),'hex'),'MFA_VERIFIED',now(),now(),now()+interval '1 hour',now()+interval '30 minutes');
     `,
         { replacements: { adminId, identityId, sessionId } },
       );
       const runtime = connect('metas_platform_admin_runtime');
       const service = new PostgresManagementService(runtime);
+      const accessService = new PostgresPlatformAdminAccessService(runtime, 300, 604800, 300);
       const session: PlatformAdminSession = {
         platformAdminId: adminId,
         sessionId,
         assuranceLevel: 'MFA_VERIFIED',
         expiresAt: '',
         mfaVerifiedAt: '',
-        stepUpVerifiedAt: null,
+        stepUpVerifiedAt: new Date().toISOString(),
       };
+      const hasDatabaseMessage = (expected: string) => (error: unknown) =>
+        error instanceof Error &&
+        'parent' in error &&
+        error.parent instanceof Error &&
+        error.parent.message === expected;
+      const googleLogin = (email: string, subject: string) =>
+        runtime.query<{
+          platform_admin_id: string;
+          session_id: string;
+          assurance_level: string;
+        }>(
+          `SELECT * FROM metas.authenticate_platform_admin_google(
+            :subject,:email,:tokenHash,
+            CURRENT_TIMESTAMP + interval '1 hour',
+            CURRENT_TIMESTAMP + interval '30 minutes',
+            NULL,NULL,CAST(:requestId AS UUID)
+          )`,
+          {
+            replacements: { email, requestId: randomUUID(), subject, tokenHash: randomBytes(32) },
+            type: QueryTypes.SELECT,
+          },
+        );
       const write = (
         operation: 'savePharmacy' | 'updateEmployee' | 'linkEmployee',
         id: string | null,
@@ -323,6 +349,236 @@ void test(
         assert.equal(record?.revoked, true);
       });
       await t.test(
+        'autoriza e cancela acessos pendentes com step-up, unicidade e auditoria transacional',
+        async () => {
+          await admin.query(
+            `UPDATE metas.platform_admin_sessions
+             SET created_at=now()-interval '10 minutes',
+                 mfa_verified_at=now()-interval '6 minutes',
+                 step_up_verified_at=now()-interval '6 minutes'
+             WHERE id=:id`,
+            { replacements: { id: sessionId } },
+          );
+          await assert.rejects(
+            accessService.invite(
+              session,
+              { displayName: 'Sem Step-up', email: 'sem-step-up@example.test' },
+              randomUUID(),
+            ),
+            { code: 'PLATFORM_ADMIN_STEP_UP_REQUIRED' },
+          );
+          await admin.query(
+            'UPDATE metas.platform_admin_sessions SET mfa_verified_at=now(),step_up_verified_at=now() WHERE id=:id',
+            { replacements: { id: sessionId } },
+          );
+          const invitation = await accessService.invite(
+            session,
+            { displayName: 'Nova Admin', email: 'nova@example.test' },
+            randomUUID(),
+          );
+          const listed = await accessService.list(session);
+          assert.equal(
+            listed.items.some((item) => item.invitationId === invitation.id),
+            true,
+          );
+          await assert.rejects(
+            accessService.invite(
+              session,
+              { displayName: 'Duplicada', email: 'NOVA@example.test' },
+              randomUUID(),
+            ),
+            { code: 'PLATFORM_ADMIN_INVITATION_ALREADY_PENDING' },
+          );
+          await assert.rejects(
+            accessService.invite(
+              session,
+              { displayName: 'Existente', email: 'admin@example.test' },
+              randomUUID(),
+            ),
+            { code: 'PLATFORM_ADMIN_ACCESS_ALREADY_EXISTS' },
+          );
+          await accessService.cancel(session, invitation.id, randomUUID());
+          await assert.rejects(
+            googleLogin('nova@example.test', 'cancelled-subject'),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_DENIED'),
+          );
+
+          await assert.rejects(
+            withPlatformAdminDatabaseContext(
+              runtime,
+              { platformAdminId: adminId, sessionId },
+              (transaction) =>
+                runtime.query(
+                  `SELECT metas.create_platform_admin_invitation(
+                    NULL,NULL,NULL,CURRENT_TIMESTAMP-interval '5 minutes',NULL
+                  )`,
+                  { transaction },
+                ),
+            ),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_INVALID_INPUT'),
+          );
+          const [audit] = await admin.query<{ total: string }>(
+            `SELECT count(*)::TEXT total FROM metas.platform_admin_audit_events
+             WHERE action IN ('PLATFORM_ADMIN_INVITATION_CREATED','PLATFORM_ADMIN_INVITATION_CANCELLED')`,
+            { type: QueryTypes.SELECT },
+          );
+          assert.equal(audit?.total, '2');
+        },
+      );
+
+      let invitedAdminId = '';
+      let invitedSessionId = '';
+      await t.test(
+        'aceita somente o e-mail Google autorizado e nunca reassocia um subject existente',
+        async () => {
+          await accessService.invite(
+            session,
+            { displayName: 'Pessoa Convidada', email: 'convidada@example.test' },
+            randomUUID(),
+          );
+          await assert.rejects(
+            googleLogin('outra@example.test', 'invited-subject'),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_DENIED'),
+          );
+          const authenticated = await googleLogin('CONVIDADA@example.test', 'invited-subject');
+          assert.equal(authenticated[0]?.assurance_level, 'GOOGLE_ONLY');
+          invitedAdminId = authenticated[0].platform_admin_id;
+          invitedSessionId = authenticated[0].session_id;
+
+          await accessService.invite(
+            session,
+            { displayName: 'Outro Convite', email: 'outro@example.test' },
+            randomUUID(),
+          );
+          await assert.rejects(
+            googleLogin('outro@example.test', 'invited-subject'),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_DENIED'),
+          );
+          const [otherInvitation] = await admin.query<{ status: string }>(
+            "SELECT status FROM metas.platform_admin_invitations WHERE email='outro@example.test'",
+            { type: QueryTypes.SELECT },
+          );
+          assert.equal(otherInvitation?.status, 'PENDING');
+
+          await admin.query(
+            `INSERT INTO metas.platform_admin_invitations(
+              display_name,email,status,expires_at,created_at,created_by_platform_admin_id
+            ) VALUES(
+              'Expirada','expirada@example.test','EXPIRED',now()-interval '1 day',
+              now()-interval '2 days',:adminId
+            )`,
+            { replacements: { adminId } },
+          );
+          await assert.rejects(
+            googleLogin('expirada@example.test', 'expired-subject'),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_DENIED'),
+          );
+
+          await assert.rejects(
+            new PostgresManagementService(runtime).list(
+              {
+                assuranceLevel: 'GOOGLE_ONLY',
+                expiresAt: '',
+                mfaVerifiedAt: null,
+                platformAdminId: invitedAdminId,
+                sessionId: invitedSessionId,
+                stepUpVerifiedAt: null,
+              },
+              'pharmacies',
+              listInputSchema.parse({}),
+            ),
+            { code: 'MANAGEMENT_MFA_REQUIRED' },
+          );
+          const [acceptedAudit] = await admin.query<{ total: string }>(
+            "SELECT count(*)::TEXT total FROM metas.platform_admin_audit_events WHERE action='PLATFORM_ADMIN_INVITATION_ACCEPTED'",
+            { type: QueryTypes.SELECT },
+          );
+          assert.equal(acceptedAudit?.total, '1');
+        },
+      );
+
+      await t.test(
+        'outro administrador com step-up aprova o primeiro dispositivo por prazo curto e o próprio alvo não pode aprovar',
+        async () => {
+          const [requested] = await withPlatformAdminDatabaseContext(
+            runtime,
+            { platformAdminId: invitedAdminId, sessionId: invitedSessionId },
+            (transaction) =>
+              runtime.query<{ enrollment_request_id: string }>(
+                `SELECT * FROM metas.request_platform_admin_first_enrollment(
+                  CURRENT_TIMESTAMP + interval '10 minutes',CAST(:requestId AS UUID),NULL,NULL
+                )`,
+                { replacements: { requestId: randomUUID() }, transaction, type: QueryTypes.SELECT },
+              ),
+          );
+          assert.ok(requested?.enrollment_request_id);
+          const invitedIdentity = (
+            await admin.query<{ id: string }>(
+              'SELECT id FROM metas.platform_admin_identities WHERE platform_admin_id=:adminId',
+              { replacements: { adminId: invitedAdminId }, type: QueryTypes.SELECT },
+            )
+          )[0]!.id;
+          const syntheticMfaSession = randomUUID();
+          await admin.query(
+            `INSERT INTO metas.platform_admin_sessions(
+              id,platform_admin_id,identity_id,token_hash,assurance_level,mfa_verified_at,
+              step_up_verified_at,expires_at,idle_expires_at
+            ) VALUES(
+              :sessionId,:adminId,:identityId,:tokenHash,'MFA_VERIFIED',now(),now(),
+              now()+interval '1 hour',now()+interval '30 minutes'
+            )`,
+            {
+              replacements: {
+                adminId: invitedAdminId,
+                identityId: invitedIdentity,
+                sessionId: syntheticMfaSession,
+                tokenHash: randomBytes(32),
+              },
+            },
+          );
+          await assert.rejects(
+            withPlatformAdminDatabaseContext(
+              runtime,
+              { platformAdminId: invitedAdminId, sessionId: syntheticMfaSession },
+              (transaction) =>
+                runtime.query(
+                  `SELECT metas.approve_platform_admin_first_enrollment_by_admin(
+                    CAST(:enrollmentId AS UUID),CURRENT_TIMESTAMP+interval '5 minutes',
+                    CURRENT_TIMESTAMP-interval '5 minutes',CAST(:requestId AS UUID)
+                  )`,
+                  {
+                    replacements: {
+                      enrollmentId: requested.enrollment_request_id,
+                      requestId: randomUUID(),
+                    },
+                    transaction,
+                  },
+                ),
+            ),
+            hasDatabaseMessage('PLATFORM_ADMIN_SELF_APPROVAL_FORBIDDEN'),
+          );
+
+          await accessService.approveFirstEnrollment(
+            session,
+            requested.enrollment_request_id,
+            randomUUID(),
+          );
+          const [approval] = await admin.query<{
+            approved_by_platform_admin_id: string;
+            status: string;
+            ttl_seconds: number;
+          }>(
+            `SELECT status,approved_by_platform_admin_id,
+              extract(epoch FROM approval_expires_at-now())::INTEGER ttl_seconds
+             FROM metas.platform_admin_first_enrollment_requests WHERE id=:id`,
+            { replacements: { id: requested.enrollment_request_id }, type: QueryTypes.SELECT },
+          );
+          assert.equal(approval?.status, 'APPROVED');
+          assert.equal(approval?.approved_by_platform_admin_id, adminId);
+          assert.ok((approval?.ttl_seconds ?? 0) > 0 && (approval?.ttl_seconds ?? 0) <= 300);
+        },
+      );
+      await t.test(
         'runtime sem acesso direto, operator sem EXECUTE, contexto ausente e Google-only bloqueados no banco',
         async () => {
           for (const sql of [
@@ -344,21 +600,44 @@ void test(
             );
           }
           await assert.rejects(runtime.query('SELECT * FROM metas.users'));
+          await assert.rejects(runtime.query('SELECT * FROM metas.platform_admin_invitations'));
           await assert.rejects(
             connect('metas_platform_admin_operator').query(
               "SELECT metas.read_platform_directory('pharmacies','{}'::jsonb)",
             ),
           );
           await assert.rejects(
+            connect('metas_platform_admin_operator').query(
+              'SELECT metas.read_platform_admin_access()',
+            ),
+          );
+          const [privileges] = await admin.query<{
+            app_runtime: boolean;
+            platform_runtime: boolean;
+            public_role: boolean;
+          }>(
+            `SELECT
+              has_function_privilege('metas_app_runtime','metas.read_platform_admin_access()','EXECUTE') app_runtime,
+              has_function_privilege('metas_platform_admin_runtime','metas.read_platform_admin_access()','EXECUTE') platform_runtime,
+              has_function_privilege('public','metas.read_platform_admin_access()','EXECUTE') public_role`,
+            { type: QueryTypes.SELECT },
+          );
+          assert.deepEqual(privileges, {
+            app_runtime: false,
+            platform_runtime: true,
+            public_role: false,
+          });
+          await assert.rejects(
             runtime.query("SELECT metas.read_platform_directory('pharmacies','{}'::jsonb)"),
           );
           await admin.query(
-            "UPDATE metas.platform_admin_sessions SET assurance_level='GOOGLE_ONLY',mfa_verified_at=NULL WHERE id=:id",
+            "UPDATE metas.platform_admin_sessions SET assurance_level='GOOGLE_ONLY',mfa_verified_at=NULL,step_up_verified_at=NULL WHERE id=:id",
             { replacements: { id: sessionId } },
           );
           await assert.rejects(service.list(session, 'pharmacies', listInputSchema.parse({})), {
             code: 'MANAGEMENT_MFA_REQUIRED',
           });
+          await assert.rejects(accessService.list(session), { code: 'MANAGEMENT_MFA_REQUIRED' });
           await assert.rejects(
             withPlatformAdminDatabaseContext(
               runtime,

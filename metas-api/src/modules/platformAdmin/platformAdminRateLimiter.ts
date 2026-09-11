@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { createClient } from 'redis';
 
 export const platformAdminRateLimitOperations = [
+  'ADMIN_ACCESS_WRITE',
   'GOOGLE_LOGIN',
   'WEBAUTHN_REGISTRATION_OPTIONS',
   'WEBAUTHN_REGISTRATION_VERIFY',

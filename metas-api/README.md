@@ -173,9 +173,12 @@ Antes da primeira execução no banco de teste, um administrador deve criar `met
 npm run db:admin:bootstrap:test
 npm run db:migrate:test
 npm run test:integration
+npm run test:management:integration
 ```
 
 Sem as URLs de teste, a suíte PostgreSQL é marcada como não executada. Nenhum banco temporário ou credencial é inventado.
+
+`test:management:integration` cria um cluster PostgreSQL descartável somente em loopback, aplica as migrations e valida a gestão e as autorizações administrativas com roles separados. No Windows, usa por padrão os binários do PostgreSQL 18; `METAS_LOCAL_POSTGRES_BIN` permite indicar outro diretório. O cluster é encerrado e removido ao final.
 
 ## Desenvolvimento
 
@@ -233,6 +236,7 @@ npm run lint                valida ESLint
 npm run typecheck           valida TypeScript strict
 npm test                    executa testes sem PostgreSQL
 npm run test:integration    executa testes PostgreSQL reais
+npm run test:management:integration executa gestão em PostgreSQL local descartável
 npm run db:admin:bootstrap  prepara infraestrutura administrativa
 npm run db:admin:bootstrap:test prepara infraestrutura no banco exclusivo de teste
 npm run db:admin:runtime-password:rotate:northflank rotaciona somente a senha do runtime administrativo
@@ -359,6 +363,7 @@ PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX
 PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX
 PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_VERIFY_MAX
 PLATFORM_ADMIN_RATE_LIMIT_FIRST_ENROLLMENT_REQUEST_MAX
+PLATFORM_ADMIN_RATE_LIMIT_ACCESS_WRITE_MAX
 ```
 
 Os Client IDs administrativos não podem reutilizar a audience do mobile. A sessão nasce com assurance `GOOGLE_ONLY` e só muda para `MFA_VERIFIED` depois de uma verificação WebAuthn com `userVerification` obrigatório. O challenge tem validade curta, uso único e vínculo com administrador, sessão e finalidade. O token opaco da sessão é rotacionado após o cadastro ou a autenticação da passkey.
@@ -367,7 +372,7 @@ Os Client IDs administrativos não podem reutilizar a audience do mobile. A sess
 
 O componente de rede da chave usa apenas `request.ip`. `TRUST_PROXY_HOPS` deve corresponder exatamente à quantidade de proxies controlados entre o cliente e a API; a API não pode ficar acessível por um caminho alternativo que contorne esses proxies. Headers `Forwarded`/`X-Forwarded-*` não são lidos diretamente pelo limiter. Valide essa topologia no ambiente final antes de habilitar o Admin.
 
-O primeiro cadastro de passkey é permitido somente na sessão `GOOGLE_ONLY` de um administrador previamente provisionado. O administrador solicita uma janela curta pela API; um operador confirma a identidade por canal independente e aprova o UUID exato com a credencial dedicada `metas_platform_admin_operator`. A aprovação fica vinculada ao administrador, sessão e `token_version`, expira em no máximo cinco minutos e é consumida atomicamente ao criar o challenge. Não existe endpoint HTTP de aprovação.
+O primeiro cadastro de passkey é permitido somente na sessão `GOOGLE_ONLY` de um administrador provisionado ou que aceitou uma autorização pendente pelo e-mail Google verificado. O administrador solicita uma janela curta pela API. No bootstrap inicial e em recuperação operacional, um operador pode aprovar o UUID exato com a credencial dedicada `metas_platform_admin_operator`. No fluxo normal, outro Platform Admin com `MFA_VERIFIED` e step-up recente pode aprovar pelo BFF protegido. A autoaprovação é proibida no banco. Em ambos os casos, a aprovação fica vinculada ao administrador, sessão e `token_version`, expira em no máximo cinco minutos e é consumida atomicamente ao criar o challenge.
 
 ```text
 PLATFORM_ADMIN_FIRST_ENROLLMENT_REQUEST_ID

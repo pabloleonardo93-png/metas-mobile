@@ -4,6 +4,7 @@ import type { AdminBffConfig } from '../config.js';
 import { BffError } from '../errors.js';
 
 export type MetasApiPath =
+  | `/v1/platform-admin/administrators${string}`
   | `/v1/platform-admin/management/${'pharmacies' | 'employees' | 'audit'}${string}`
   | '/v1/platform-admin/auth/google'
   | '/v1/platform-admin/auth/logout'
@@ -32,6 +33,14 @@ const upstreamErrorSchema = z
   .passthrough();
 
 const allowedErrorCodes = new Set([
+  'PLATFORM_ADMIN_ACCESS_ALREADY_EXISTS',
+  'PLATFORM_ADMIN_ACCESS_INVALID_INPUT',
+  'PLATFORM_ADMIN_ACCESS_UNAVAILABLE',
+  'FIRST_ENROLLMENT_REQUEST_NOT_AVAILABLE',
+  'PLATFORM_ADMIN_INVITATION_ALREADY_PENDING',
+  'PLATFORM_ADMIN_INVITATION_NOT_AVAILABLE',
+  'PLATFORM_ADMIN_SELF_APPROVAL_FORBIDDEN',
+  'PLATFORM_ADMIN_STEP_UP_REQUIRED',
   'MANAGEMENT_MFA_REQUIRED',
   'MANAGEMENT_FORBIDDEN',
   'MANAGEMENT_NOT_FOUND',

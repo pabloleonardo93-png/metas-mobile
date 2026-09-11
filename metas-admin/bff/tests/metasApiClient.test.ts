@@ -118,4 +118,30 @@ describe('server-side Metas API client', () => {
       }),
     );
   });
+
+  it.each([
+    ['PLATFORM_ADMIN_ACCESS_INVALID_INPUT', 422],
+    ['FIRST_ENROLLMENT_REQUEST_NOT_AVAILABLE', 409],
+  ])('preserves the allowlisted administrative error %s', async (code, status) => {
+    const fetchMock = vi.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code, message: 'internal detail' }), { status }),
+      ),
+    );
+    const client = createMetasApiClient(config, fetchMock);
+
+    await expect(
+      client.request({
+        method: 'POST',
+        path: '/v1/platform-admin/administrators',
+        requestId: 'request-id',
+        sessionToken: 'opaque-session-token',
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        code,
+        statusCode: status,
+      }),
+    );
+  });
 });

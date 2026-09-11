@@ -24,6 +24,7 @@ import {
 } from './modules/platformAdmin/platformAdminRateLimiter.js';
 import { officialPlatformAdminWebAuthnAdapter } from './modules/platformAdmin/platformAdminWebAuthnAdapter.js';
 import { PostgresPlatformAdminWebAuthnService } from './modules/platformAdmin/platformAdminWebAuthnService.js';
+import { PostgresPlatformAdminAccessService } from './modules/platformAdminAccess/platformAdminAccess.service.js';
 import { PostgresManagementService } from './modules/platformManagement/management.service.js';
 import { AuthenticatedRealtimeServer } from './realtime/realtimeServer.js';
 import { logger } from './shared/logging/logger.js';
@@ -130,6 +131,10 @@ const bootstrap = async (): Promise<void> => {
     : undefined;
   const rateLimitWindowMs = env.platformAdminRateLimitWindowSeconds * 1000;
   const platformAdminRateLimitPolicies: PlatformAdminRateLimitPolicies = {
+    ADMIN_ACCESS_WRITE: {
+      limit: env.platformAdminRateLimitAccessWriteMax,
+      windowMs: rateLimitWindowMs,
+    },
     FIRST_ENROLLMENT_REQUEST: {
       limit: env.platformAdminRateLimitFirstEnrollmentRequestMax,
       windowMs: rateLimitWindowMs,
@@ -216,6 +221,17 @@ const bootstrap = async (): Promise<void> => {
     employeeService: new PostgresEmployeeService(database),
     goalService: new PostgresGoalService(database),
     ...(platformAdminAuthenticationService ? { platformAdminAuthenticationService } : {}),
+    ...(platformAdminDatabase
+      ? {
+          platformAdminAccessService: new PostgresPlatformAdminAccessService(
+            platformAdminDatabase,
+            env.platformAdminWebAuthnStepUpTtlSeconds,
+            604_800,
+            env.platformAdminFirstEnrollmentApprovalTtlSeconds,
+          ),
+          platformAdminStepUpTtlSeconds: env.platformAdminWebAuthnStepUpTtlSeconds,
+        }
+      : {}),
     ...(platformAdminDatabase
       ? { managementService: new PostgresManagementService(platformAdminDatabase) }
       : {}),

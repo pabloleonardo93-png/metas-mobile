@@ -10,6 +10,7 @@ import {
 
 const redisUrl = process.env.TEST_PLATFORM_ADMIN_RATE_LIMIT_REDIS_URL;
 const policies: PlatformAdminRateLimitPolicies = {
+  ADMIN_ACCESS_WRITE: { limit: 3, windowMs: 60_000 },
   FIRST_ENROLLMENT_REQUEST: { limit: 3, windowMs: 60_000 },
   MFA_RECOVERY_OPTIONS: { limit: 3, windowMs: 60_000 },
   MFA_RECOVERY_REQUEST: { limit: 2, windowMs: 60_000 },

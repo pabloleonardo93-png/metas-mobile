@@ -337,6 +337,7 @@ describe('admin authentication routes', () => {
             ]),
           ),
         );
+      if (url === '/api/administrators') return Promise.resolve(jsonResponse({ items: [] }));
       return Promise.resolve(jsonResponse({}, 404));
     });
 
