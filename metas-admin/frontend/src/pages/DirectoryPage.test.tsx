@@ -36,6 +36,19 @@ const pharmacy = {
   updatedAt: '2026-09-09T12:00:00Z',
 };
 const pharmacyWithoutManager = { ...pharmacy, employeeCount: 0, managers: [] };
+const secondPharmacy = {
+  ...pharmacyWithoutManager,
+  id: '22222222-2222-4222-8222-222222222222',
+  name: 'Santa Afonso',
+  slug: 'santa-afonso',
+};
+const inactivePharmacy = {
+  ...pharmacyWithoutManager,
+  id: '33333333-3333-4333-8333-333333333333',
+  name: 'Farmácia Inativa',
+  slug: 'inativa',
+  isActive: false,
+};
 const employee = {
   id,
   userId: id,
@@ -278,15 +291,61 @@ describe('gestão administrativa', () => {
     });
     expect(await screen.findByText(/O acesso foi autorizado/iu)).toBeInTheDocument();
   });
-  it('oferece adicionar gestor nos detalhes de uma farmácia sem gestor ativo', async () => {
+  it('abre o cadastro compartilhado pelo menu da farmácia correta', async () => {
+    setup('/pharmacies', [pharmacyWithoutManager, secondPharmacy, inactivePharmacy]);
+    const user = userEvent.setup();
+    await screen.findByText('Farmácia Centro', { selector: 'strong' });
+
+    expect(screen.getByRole('button', { name: 'Detalhes de Farmácia Centro' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Editar Farmácia Centro' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Desativar Farmácia Centro' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Mais ações para Farmácia Centro' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Mais ações para Santa Afonso' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Mais ações para Farmácia Inativa' }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Mais ações para Santa Afonso' }));
+    const menu = screen.getByRole('menu', { name: 'Mais ações para Santa Afonso' });
+    expect(within(menu).getByRole('menuitem', { name: 'Adicionar gestor' })).toHaveFocus();
+    await user.click(within(menu).getByRole('menuitem', { name: 'Adicionar gestor' }));
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    const employeeDialog = screen.getByRole('dialog', { name: 'Adicionar gestor' });
+    expect(within(employeeDialog).getByText('Santa Afonso')).toBeInTheDocument();
+    expect(within(employeeDialog).queryByText('Farmácia Centro')).not.toBeInTheDocument();
+    expect(within(employeeDialog).getByText('Gestor')).toBeInTheDocument();
+  });
+  it('fecha o menu de ações por clique externo e Escape', async () => {
+    setup('/pharmacies', [pharmacyWithoutManager]);
+    const user = userEvent.setup();
+    await screen.findByText('Farmácia Centro', { selector: 'strong' });
+    const moreActions = screen.getByRole('button', { name: 'Mais ações para Farmácia Centro' });
+
+    await user.click(moreActions);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await user.click(screen.getByRole('heading', { name: 'Farmácias' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    await user.click(moreActions);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(moreActions).toHaveFocus();
+  });
+  it('mantém os gestores nos detalhes sem repetir a ação de cadastro', async () => {
     setup('/pharmacies', [pharmacyWithoutManager]);
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: 'Detalhes de Farmácia Centro' }));
     const details = screen.getByRole('dialog');
     expect(within(details).getByText('Nenhum gestor cadastrado')).toBeInTheDocument();
-    await user.click(within(details).getByRole('button', { name: '+ Adicionar gestor' }));
-    expect(screen.getByRole('dialog', { name: 'Adicionar gestor' })).toBeInTheDocument();
+    expect(
+      within(details).queryByRole('button', { name: '+ Adicionar gestor' }),
+    ).not.toBeInTheDocument();
   });
   it('desativar exige confirmação, preserva versão e não envia DELETE', async () => {
     setup();
