@@ -177,10 +177,12 @@ describe('admin authentication routes', () => {
   it('routes GOOGLE_ONLY sessions to the passkey step', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(me('GOOGLE_ONLY')));
     render(<App />);
-    expect(
-      await screen.findByRole('heading', { name: 'Confirme sua identidade' }),
-    ).toBeInTheDocument();
+    const heading = await screen.findByRole('heading', { name: 'Confirme sua identidade' });
+    expect(heading).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Logo Metas' })).toBeInTheDocument();
+    const mfaCard = heading.closest('.mfa-card');
+    expect(mfaCard?.querySelector('svg.mfa-card-logo')).not.toBeNull();
+    expect(mfaCard?.querySelector('.security-icon')).toBeNull();
     expect(screen.getByText('Etapa 2 de 2')).toBeInTheDocument();
     expect(
       screen.getByText(
