@@ -1,17 +1,14 @@
-import { Router, type Request, type RequestHandler } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 
 import { AppError } from '../../shared/errors/AppError.js';
 import { createAuthenticatePlatformAdminSession } from '../platformAdmin/authenticatePlatformAdminSession.js';
-import {
-  PlatformAdminRateLimitStoreUnavailableError,
-  type PlatformAdminRateLimiter,
-} from '../platformAdmin/platformAdminRateLimiter.js';
+import type { PlatformAdminRateLimiter } from '../platformAdmin/platformAdminRateLimiter.js';
+import { createPlatformAdminSensitiveOperation } from '../platformAdmin/platformAdminSensitiveOperation.js';
 import type {
   PlatformAdminAuthenticationService,
   PlatformAdminSession,
 } from '../platformAdmin/platformAdmin.types.js';
-import { requireRecentPlatformAdminStepUp } from '../platformAdmin/requireRecentPlatformAdminStepUp.js';
 import { platformAdminInvitationInputSchema } from './platformAdminAccess.contracts.js';
 import type { PlatformAdminAccessService } from './platformAdminAccess.service.js';
 
@@ -39,46 +36,7 @@ export const createPlatformAdminAccessRouter = (
     }
     next();
   });
-  const sensitiveOperation: RequestHandler = (request, response, next) => {
-    try {
-      requireRecentPlatformAdminStepUp(sessionFrom(request), stepUpTtlSeconds);
-    } catch (error) {
-      next(error);
-      return;
-    }
-    const session = sessionFrom(request);
-    void rateLimiter
-      .consume('ADMIN_ACCESS_WRITE', [
-        session.platformAdminId,
-        session.sessionId,
-        request.ip || 'unresolved',
-      ])
-      .then((decision) => {
-        if (!decision.allowed) {
-          response.setHeader('Retry-After', String(decision.retryAfterSeconds));
-          response.status(429).json({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Muitas tentativas. Tente novamente mais tarde.',
-            requestId: request.requestId,
-          });
-          return;
-        }
-        next();
-      })
-      .catch((error: unknown) => {
-        if (error instanceof PlatformAdminRateLimitStoreUnavailableError) {
-          next(
-            new AppError(
-              503,
-              'PLATFORM_ADMIN_RATE_LIMIT_UNAVAILABLE',
-              'A operação administrativa está temporariamente indisponível.',
-            ),
-          );
-          return;
-        }
-        next(error);
-      });
-  };
+  const sensitiveOperation = createPlatformAdminSensitiveOperation(rateLimiter, stepUpTtlSeconds);
 
   router.get('/', async (request, response) => {
     response.json(await service.list(sessionFrom(request)));

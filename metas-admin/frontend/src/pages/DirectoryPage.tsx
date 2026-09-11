@@ -5,9 +5,13 @@ import {
   roleLabels,
   safeManagementMessage,
   type DialogSelection,
+  type ManagementSaveResult,
 } from '../components/ManagementDialog';
+import { EmployeeCreationDialog } from '../components/EmployeeCreationDialog';
 import {
   employeeRoles,
+  pharmacyInputSchema,
+  type EmployeeRole,
   type AuditEvent,
   type Employee,
   type ListInput,
@@ -39,7 +43,7 @@ export const StatusBadge = ({ active }: { active: boolean }): React.JSX.Element 
 const accountStatusLabels = {
   ACTIVE: 'Ativa',
   DISABLED: 'Desabilitada',
-  PENDING: 'Pendente',
+  PENDING: 'Aguardando primeiro acesso',
 } as const;
 
 const outcomeLabels = {
@@ -66,6 +70,13 @@ export const DirectoryPage = ({
   const [revision, setRevision] = useState(0);
   const [success, setSuccess] = useState('');
   const [selection, setSelection] = useState<DialogSelection | null>(null);
+  const [employeeCreation, setEmployeeCreation] = useState<{
+    initialRole?: EmployeeRole;
+    initialStore?: Pick<Pharmacy, 'id' | 'name'>;
+  } | null>(null);
+  const [createdPharmacy, setCreatedPharmacy] = useState<Pick<Pharmacy, 'id' | 'name'> | null>(
+    null,
+  );
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -135,13 +146,17 @@ export const DirectoryPage = ({
             <h1>{title}</h1>
             <p>{descriptions[resource][1]}</p>
           </div>
-          {resource === 'pharmacies' && (
+          {resource !== 'audit' && (
             <button
               className="button button--primary"
               type="button"
-              onClick={() => setSelection({ mode: 'create', item: null })}
+              onClick={() =>
+                resource === 'pharmacies'
+                  ? setSelection({ mode: 'create', item: null })
+                  : setEmployeeCreation({})
+              }
             >
-              Nova farmácia
+              {resource === 'pharmacies' ? 'Nova farmácia' : '+ Novo funcionário'}
             </button>
           )}
         </header>
@@ -218,6 +233,32 @@ export const DirectoryPage = ({
           <p className="feedback feedback--success" role="status">
             {success}
           </p>
+        )}
+        {createdPharmacy && (
+          <section className="creation-follow-up" aria-label="Próxima etapa">
+            <div>
+              <strong>{createdPharmacy.name} foi criada com sucesso.</strong>
+              <span>Você pode cadastrar o primeiro gestor agora ou fazer isso depois.</span>
+            </div>
+            <div className="row-actions">
+              <button
+                className="button button--primary"
+                type="button"
+                onClick={() =>
+                  setEmployeeCreation({ initialRole: 'GESTOR', initialStore: createdPharmacy })
+                }
+              >
+                Adicionar gestor agora
+              </button>
+              <button
+                className="button button--ghost"
+                type="button"
+                onClick={() => setCreatedPharmacy(null)}
+              >
+                Fazer isso depois
+              </button>
+            </div>
+          </section>
         )}
         {loading ? (
           <div className="table-state" role="status" aria-label="Carregando registros">
@@ -389,9 +430,38 @@ export const DirectoryPage = ({
             resource={resource}
             selection={selection}
             close={() => setSelection(null)}
-            saved={() => {
+            addManager={(pharmacy) => {
               setSelection(null);
-              setSuccess('Alteração salva e registrada em auditoria.');
+              setEmployeeCreation({
+                initialRole: 'GESTOR',
+                initialStore: { id: pharmacy.id, name: pharmacy.name },
+              });
+            }}
+            saved={(result: ManagementSaveResult) => {
+              if (resource === 'pharmacies' && selection.mode === 'create') {
+                const input = pharmacyInputSchema.safeParse(result.input);
+                if (input.success) {
+                  setCreatedPharmacy({ id: result.id, name: input.data.name });
+                  setSuccess('');
+                }
+              } else {
+                setSuccess('Alteração salva e registrada em auditoria.');
+              }
+              setSelection(null);
+              setRevision((value) => value + 1);
+            }}
+          />
+        )}
+        {employeeCreation && (
+          <EmployeeCreationDialog
+            {...employeeCreation}
+            close={() => setEmployeeCreation(null)}
+            saved={() => {
+              setEmployeeCreation(null);
+              setCreatedPharmacy(null);
+              setSuccess(
+                'Funcionário adicionado. O acesso foi autorizado. A pessoa poderá entrar usando esta conta Google.',
+              );
               setRevision((value) => value + 1);
             }}
           />

@@ -2,8 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { AppError } from '../../shared/errors/AppError.js';
 import { createAuthenticatePlatformAdminSession } from '../platformAdmin/authenticatePlatformAdminSession.js';
+import type { PlatformAdminRateLimiter } from '../platformAdmin/platformAdminRateLimiter.js';
+import { createPlatformAdminSensitiveOperation } from '../platformAdmin/platformAdminSensitiveOperation.js';
 import type { PlatformAdminAuthenticationService } from '../platformAdmin/platformAdmin.types.js';
 import {
+  employeeCreateInputSchema,
   employeeInputSchema,
   linkInputSchema,
   listInputSchema,
@@ -21,6 +24,8 @@ const parseInput = <T extends z.ZodType>(schema: T, input: unknown): z.output<T>
 export const createManagementRouter = (
   authentication: PlatformAdminAuthenticationService,
   service: ManagementService,
+  rateLimiter: PlatformAdminRateLimiter,
+  stepUpTtlSeconds: number,
 ): Router => {
   const router = Router();
   router.use(createAuthenticatePlatformAdminSession(authentication));
@@ -69,6 +74,18 @@ export const createManagementRouter = (
       ),
     );
   });
+  router.post(
+    '/employees',
+    createPlatformAdminSensitiveOperation(rateLimiter, stepUpTtlSeconds),
+    async (request, response) => {
+      const input = parseInput(employeeCreateInputSchema, request.body);
+      response
+        .status(201)
+        .json(
+          await service.createEmployee(request.platformAdminSession!, input, request.requestId),
+        );
+    },
+  );
   router.post('/employees/:id', async (request, response) => {
     const id = parseInput(z.uuid(), request.params.id);
     const input = parseInput(employeeInputSchema, request.body);

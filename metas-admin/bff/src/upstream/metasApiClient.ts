@@ -49,6 +49,8 @@ const allowedErrorCodes = new Set([
   'MANAGEMENT_DUPLICATE',
   'MANAGEMENT_STORE_INACTIVE',
   'MANAGEMENT_LINK_EXISTS',
+  'MANAGEMENT_EMPLOYEE_EMAIL_EXISTS',
+  'MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED',
   'LAST_ACTIVE_MANAGER_REQUIRED',
   'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER',
   'FIRST_ENROLLMENT_APPROVAL_REQUIRED',
@@ -73,6 +75,10 @@ const errorMessageFor = (status: number, code: string): string => {
   if (code === 'MANAGEMENT_LINK_EXISTS')
     return 'Esta pessoa já possui vínculo com a farmácia. Edite o vínculo existente.';
   if (code === 'MANAGEMENT_STORE_INACTIVE') return 'Selecione uma farmácia ativa.';
+  if (code === 'MANAGEMENT_EMPLOYEE_EMAIL_EXISTS')
+    return 'Já existe uma pessoa cadastrada com este e-mail.';
+  if (code === 'MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED')
+    return 'Esta pessoa já está vinculada a outra farmácia. O acesso a múltiplas farmácias ainda não está disponível.';
   if (code === 'LAST_ACTIVE_MANAGER_REQUIRED')
     return 'A farmácia precisa manter ao menos um gestor ativo.';
   if (code === 'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER')

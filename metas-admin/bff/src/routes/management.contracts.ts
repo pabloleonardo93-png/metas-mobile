@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const employeeRoles = ['GESTOR', 'BALCONISTA', 'CAIXA', 'FARMACEUTICO'] as const;
+export type EmployeeRole = (typeof employeeRoles)[number];
 export const resourceSchema = z.enum(['pharmacies', 'employees', 'audit']);
 export type ManagementResource = z.infer<typeof resourceSchema>;
 export const listInputSchema = z
@@ -48,6 +49,14 @@ export const employeeInputSchema = z
     status: z.enum(['ATIVO', 'INATIVO']),
     version: z.number().int().positive(),
     userVersion: z.number().int().positive(),
+  })
+  .strict();
+export const employeeCreateInputSchema = z
+  .object({
+    name,
+    email: z.string().trim().toLowerCase().pipe(z.email().max(320)),
+    storeId: z.uuid(),
+    role: z.enum(employeeRoles),
   })
   .strict();
 export const linkInputSchema = z

@@ -20,6 +20,10 @@ export type DialogSelection = {
   mode: 'create' | 'edit' | 'details' | 'status' | 'link';
   item: Pharmacy | Employee | null;
 };
+export interface ManagementSaveResult {
+  id: string;
+  input: unknown;
+}
 export const safeManagementMessage = (error: unknown): string =>
   error instanceof AdminApiError
     ? error.message
@@ -29,12 +33,14 @@ export const ManagementDialog = ({
   resource,
   selection,
   close,
+  addManager,
   saved,
 }: {
+  addManager?: (pharmacy: Pharmacy) => void;
   resource: 'pharmacies' | 'employees';
   selection: DialogSelection;
   close: () => void;
-  saved: () => void;
+  saved: (result: ManagementSaveResult) => void;
 }): React.JSX.Element => {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -99,8 +105,13 @@ export const ManagementDialog = ({
     setBusy(true);
     setError('');
     try {
-      await managementApi.save(resource, item?.id ?? null, input, selection.mode === 'link');
-      saved();
+      const result = await managementApi.save(
+        resource,
+        item?.id ?? null,
+        input,
+        selection.mode === 'link',
+      );
+      saved({ id: result.id, input });
     } catch (reason) {
       setError(safeManagementMessage(reason));
       setPending(null);
@@ -251,7 +262,18 @@ export const ManagementDialog = ({
                 </div>
                 <div>
                   <dt>Gestores ativos</dt>
-                  <dd>{pharmacy.managers.join(', ') || 'Nenhum vínculo de gestor'}</dd>
+                  <dd>
+                    {pharmacy.managers.join(', ') || 'Nenhum gestor cadastrado'}
+                    {pharmacy.managers.length === 0 && addManager && (
+                      <button
+                        className="text-action detail-action"
+                        type="button"
+                        onClick={() => addManager(pharmacy)}
+                      >
+                        + Adicionar gestor
+                      </button>
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt>Funcionários ativos</dt>

@@ -6,6 +6,7 @@ import { readSessionToken } from '../http/cookies.js';
 import type { MetasApiClient, MetasApiPath } from '../upstream/metasApiClient.js';
 import {
   auditSchema,
+  employeeCreateInputSchema,
   employeeInputSchema,
   employeeSchema,
   linkInputSchema,
@@ -64,6 +65,12 @@ export const createManagementRouter = (
       route: '/pharmacies',
       kind: 'pharmacies',
       schema: pharmacyInputSchema.omit({ version: true }),
+      created: true,
+    },
+    {
+      route: '/employees',
+      kind: 'employees',
+      schema: employeeCreateInputSchema,
       created: true,
     },
     {

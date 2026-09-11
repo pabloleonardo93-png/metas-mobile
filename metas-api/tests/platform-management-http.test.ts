@@ -9,6 +9,7 @@ import {
   type ManagementService,
 } from '../src/modules/platformManagement/management.service.js';
 import {
+  employeeCreateInputSchema,
   pharmacyInputSchema,
   employeeInputSchema,
 } from '../src/modules/platformManagement/management.contracts.js';
@@ -27,12 +28,20 @@ const session: PlatformAdminSession = {
   assuranceLevel: 'MFA_VERIFIED',
   mfaVerifiedAt: null,
   expiresAt: '',
-  stepUpVerifiedAt: null,
+  stepUpVerifiedAt: new Date().toISOString(),
 };
-const setup = (assurance: PlatformAdminSession['assuranceLevel'] = 'MFA_VERIFIED') => {
+const setup = (
+  assurance: PlatformAdminSession['assuranceLevel'] = 'MFA_VERIFIED',
+  stepUpVerifiedAt: string | null = session.stepUpVerifiedAt,
+) => {
+  const creates: unknown[][] = [];
   const writes: unknown[][] = [];
   const lists: unknown[][] = [];
   const service: ManagementService = {
+    createEmployee: (...args) => {
+      creates.push(args);
+      return Promise.resolve({ id });
+    },
     list: (...args) => {
       lists.push(args);
       return Promise.resolve({ items: [], total: 0, page: 1, pageSize: 20 });
@@ -46,7 +55,7 @@ const setup = (assurance: PlatformAdminSession['assuranceLevel'] = 'MFA_VERIFIED
     authenticateSession: (token) => {
       if (token !== 'synthetic')
         return Promise.reject(new AppError(401, 'UNAUTHORIZED', 'Sessão necessária.'));
-      return Promise.resolve({ ...session, assuranceLevel: assurance });
+      return Promise.resolve({ ...session, assuranceLevel: assurance, stepUpVerifiedAt });
     },
     getMe: () => Promise.reject(new Error('not used')),
     loginWithGoogle: () => Promise.reject(new Error('not used')),
@@ -54,12 +63,15 @@ const setup = (assurance: PlatformAdminSession['assuranceLevel'] = 'MFA_VERIFIED
   };
   const app = express();
   app.use(express.json(), requestId);
-  app.use('/management', createManagementRouter(authentication, service));
+  const rateLimiter = {
+    consume: () => Promise.resolve({ allowed: true, retryAfterSeconds: 0 }),
+  };
+  app.use('/management', createManagementRouter(authentication, service, rateLimiter, 300));
   app.use(createErrorHandler({ error: () => {}, info: () => {} }));
-  return { app, writes, lists };
+  return { app, creates, writes, lists };
 };
 void test('gestão bloqueia ausência de sessão, token comum e Google-only antes do serviço', async () => {
-  const { app, lists, writes } = setup('GOOGLE_ONLY');
+  const { app, creates, lists, writes } = setup('GOOGLE_ONLY');
   assert.equal((await request(app).get('/management/pharmacies')).status, 401);
   assert.equal(
     (await request(app).get('/management/pharmacies').auth('employee', { type: 'bearer' })).status,
@@ -78,7 +90,18 @@ void test('gestão bloqueia ausência de sessão, token comum e Google-only ante
     ).status,
     403,
   );
-  assert.equal(lists.length + writes.length, 0);
+  assert.equal(
+    (
+      await request(app).post('/management/employees').auth('synthetic', { type: 'bearer' }).send({
+        name: 'Pessoa Teste',
+        email: 'pessoa@example.test',
+        storeId: id,
+        role: 'GESTOR',
+      })
+    ).status,
+    403,
+  );
+  assert.equal(creates.length + lists.length + writes.length, 0);
 });
 void test('gestão lista com filtros validados e transmite contexto administrativo', async () => {
   const { app, lists } = setup();
@@ -171,6 +194,49 @@ void test('gestão cria farmácia, edita vínculo, valida IDs e não possui DELE
     404,
   );
 });
+void test('criação de pessoa exige step-up recente, valida contrato estrito e usa caso de uso único', async () => {
+  const input = {
+    name: 'Pessoa Teste',
+    email: 'pessoa@example.test',
+    storeId: id,
+    role: 'GESTOR',
+  };
+  const { app, creates } = setup();
+  const created = await request(app)
+    .post('/management/employees')
+    .auth('synthetic', { type: 'bearer' })
+    .send(input);
+  assert.equal(created.status, 201);
+  assert.deepEqual(creates[0]?.slice(0, 2), [session, input]);
+
+  for (const invalid of [
+    { ...input, email: 'invalido' },
+    { ...input, role: 'SUPERUSER' },
+    { ...input, unexpected: true },
+  ]) {
+    assert.equal(
+      (
+        await request(app)
+          .post('/management/employees')
+          .auth('synthetic', { type: 'bearer' })
+          .send(invalid)
+      ).status,
+      422,
+    );
+  }
+
+  const stale = setup('MFA_VERIFIED', new Date(Date.now() - 301_000).toISOString());
+  assert.equal(
+    (
+      await request(stale.app)
+        .post('/management/employees')
+        .auth('synthetic', { type: 'bearer' })
+        .send(input)
+    ).status,
+    403,
+  );
+  assert.equal(stale.creates.length, 0);
+});
 void test('gestão rejeita mass assignment, role arbitrário, versão ausente, fuso e slug inválidos', () => {
   assert.equal(
     employeeInputSchema.safeParse({
@@ -179,6 +245,16 @@ void test('gestão rejeita mass assignment, role arbitrário, versão ausente, f
       status: 'ATIVO',
       version: 1,
       userVersion: 1,
+    }).success,
+    false,
+  );
+  assert.equal(
+    employeeCreateInputSchema.safeParse({
+      name: 'Pessoa',
+      email: 'pessoa@example.test',
+      storeId: id,
+      role: 'GESTOR',
+      userId: id,
     }).success,
     false,
   );

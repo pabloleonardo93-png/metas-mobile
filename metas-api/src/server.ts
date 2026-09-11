@@ -233,7 +233,12 @@ const bootstrap = async (): Promise<void> => {
         }
       : {}),
     ...(platformAdminDatabase
-      ? { managementService: new PostgresManagementService(platformAdminDatabase) }
+      ? {
+          managementService: new PostgresManagementService(
+            platformAdminDatabase,
+            env.platformAdminWebAuthnStepUpTtlSeconds,
+          ),
+        }
       : {}),
     ...(platformAdminRateLimiter ? { platformAdminRateLimiter } : {}),
     ...(platformAdminWebAuthnService ? { platformAdminWebAuthnService } : {}),

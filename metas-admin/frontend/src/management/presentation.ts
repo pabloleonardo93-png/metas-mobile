@@ -7,6 +7,7 @@ export const managementActionLabels: Record<string, string> = {
   EMPLOYEE_ROLE_CHANGED: 'Função alterada',
   EMPLOYEE_ACTIVATED: 'Vínculo reativado',
   EMPLOYEE_DEACTIVATED: 'Vínculo desativado',
+  EMPLOYEE_CREATED: 'Pessoa adicionada',
   EMPLOYEE_LINKED: 'Vínculo criado',
 };
 
