@@ -140,6 +140,7 @@ const rawEnvSchema = z
       .max(3_600)
       .default(900),
     PLATFORM_ADMIN_RATE_LIMIT_GOOGLE_LOGIN_MAX: platformAdminRateLimitValueSchema.default(5),
+    PLATFORM_ADMIN_RATE_LIMIT_ACCESS_WRITE_MAX: platformAdminRateLimitValueSchema.default(10),
     PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_OPTIONS_MAX:
       platformAdminRateLimitValueSchema.default(10),
     PLATFORM_ADMIN_RATE_LIMIT_REGISTRATION_VERIFY_MAX: platformAdminRateLimitValueSchema.default(5),
@@ -417,6 +418,7 @@ export interface AppEnv {
   platformAdminFirstEnrollmentPendingTtlSeconds: number;
   platformAdminIdleTimeoutSeconds: number;
   platformAdminMfaRecoveryPendingTtlSeconds: number;
+  platformAdminRateLimitAccessWriteMax: number;
   platformAdminRateLimitAuthenticationOptionsMax: number;
   platformAdminRateLimitAuthenticationVerifyMax: number;
   platformAdminRateLimitFirstEnrollmentRequestMax: number;
@@ -573,6 +575,7 @@ export const parseEnv = (environment: NodeJS.ProcessEnv): AppEnv => {
     platformAdminIdleTimeoutSeconds: parsed.data.PLATFORM_ADMIN_IDLE_TIMEOUT_SECONDS,
     platformAdminMfaRecoveryPendingTtlSeconds:
       parsed.data.PLATFORM_ADMIN_MFA_RECOVERY_PENDING_TTL_SECONDS,
+    platformAdminRateLimitAccessWriteMax: parsed.data.PLATFORM_ADMIN_RATE_LIMIT_ACCESS_WRITE_MAX,
     platformAdminRateLimitAuthenticationOptionsMax:
       parsed.data.PLATFORM_ADMIN_RATE_LIMIT_AUTHENTICATION_OPTIONS_MAX,
     platformAdminRateLimitAuthenticationVerifyMax:

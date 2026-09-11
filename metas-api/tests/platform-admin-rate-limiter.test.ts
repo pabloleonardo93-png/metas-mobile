@@ -9,6 +9,7 @@ import {
 } from '../src/modules/platformAdmin/platformAdminRateLimiter.js';
 
 const policies: PlatformAdminRateLimitPolicies = {
+  ADMIN_ACCESS_WRITE: { limit: 2, windowMs: 60_000 },
   FIRST_ENROLLMENT_REQUEST: { limit: 2, windowMs: 60_000 },
   MFA_RECOVERY_OPTIONS: { limit: 2, windowMs: 60_000 },
   MFA_RECOVERY_REQUEST: { limit: 1, windowMs: 60_000 },

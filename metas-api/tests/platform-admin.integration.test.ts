@@ -38,6 +38,7 @@ import { createIntegrationDatabases } from './integrationDatabase.js';
 
 const silentLogger: Logger = { error: () => undefined, info: () => undefined };
 const integrationRateLimitPolicies: PlatformAdminRateLimitPolicies = {
+  ADMIN_ACCESS_WRITE: { limit: 1_000, windowMs: 60_000 },
   FIRST_ENROLLMENT_REQUEST: { limit: 1_000, windowMs: 60_000 },
   MFA_RECOVERY_OPTIONS: { limit: 1_000, windowMs: 60_000 },
   MFA_RECOVERY_REQUEST: { limit: 1_000, windowMs: 60_000 },
@@ -2603,7 +2604,7 @@ if (testDatabases === null) {
          ORDER BY relation.relname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(tables.length, 8);
+      assert.equal(tables.length, 9);
       assert.ok(
         tables.every(
           ({ forceRls, owner, rls }) => forceRls && rls && owner === 'metas_migration_owner',
@@ -2613,6 +2614,7 @@ if (testDatabases === null) {
       for (const table of [
         'platform_admins',
         'platform_admin_identities',
+        'platform_admin_invitations',
         'platform_admin_mfa_recovery_requests',
         'platform_admin_sessions',
         'platform_admin_audit_events',
@@ -2670,7 +2672,9 @@ if (testDatabases === null) {
          WHERE namespace.nspname = 'metas'
            AND procedure.proname IN (
              'authenticate_platform_admin_google',
+             'approve_platform_admin_first_enrollment_by_admin',
              'bootstrap_platform_admin',
+             'cancel_platform_admin_invitation',
              'resolve_platform_admin_session',
              'require_platform_admin_context',
              'get_platform_admin_me',
@@ -2678,6 +2682,7 @@ if (testDatabases === null) {
              'revoke_platform_admin_session',
              'list_platform_admin_webauthn_credentials',
              'create_platform_admin_webauthn_challenge',
+             'create_platform_admin_invitation',
              'consume_platform_admin_webauthn_challenge',
              'register_platform_admin_webauthn_credential',
              'complete_platform_admin_webauthn_authentication',
@@ -2690,11 +2695,13 @@ if (testDatabases === null) {
              ,'approve_platform_admin_mfa_recovery'
              ,'create_platform_admin_recovery_webauthn_challenge'
              ,'complete_platform_admin_mfa_recovery'
+             ,'read_platform_admin_access'
+             ,'require_platform_admin_step_up_context'
            )
          ORDER BY procedure.proname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(functions.length, 21);
+      assert.equal(functions.length, 26);
       assert.ok(
         functions.every(
           ({ appCanExecute, owner, publicCanExecute, searchPath }) =>
@@ -2710,6 +2717,12 @@ if (testDatabases === null) {
       assert.equal(byName.get('bootstrap_platform_admin')?.platformCanExecute, false);
       assert.equal(byName.get('require_platform_admin_context')?.migrationCanExecute, false);
       assert.equal(byName.get('require_platform_admin_context')?.platformCanExecute, false);
+      assert.equal(
+        byName.get('require_platform_admin_step_up_context')?.migrationCanExecute,
+        false,
+      );
+      assert.equal(byName.get('require_platform_admin_step_up_context')?.operatorCanExecute, false);
+      assert.equal(byName.get('require_platform_admin_step_up_context')?.platformCanExecute, false);
       for (const functionName of [
         'approve_platform_admin_first_enrollment',
         'get_platform_admin_first_enrollment_request_status',
@@ -2722,6 +2735,8 @@ if (testDatabases === null) {
       }
       for (const functionName of [
         'authenticate_platform_admin_google',
+        'approve_platform_admin_first_enrollment_by_admin',
+        'cancel_platform_admin_invitation',
         'get_platform_admin_me',
         'has_platform_admin_webauthn_credential_history',
         'resolve_platform_admin_session',
@@ -2735,7 +2750,9 @@ if (testDatabases === null) {
         'request_platform_admin_first_enrollment',
         'request_platform_admin_mfa_recovery',
         'create_platform_admin_recovery_webauthn_challenge',
+        'create_platform_admin_invitation',
         'complete_platform_admin_mfa_recovery',
+        'read_platform_admin_access',
       ]) {
         assert.equal(byName.get(functionName)?.platformCanExecute, true);
         assert.equal(byName.get(functionName)?.migrationCanExecute, false);
