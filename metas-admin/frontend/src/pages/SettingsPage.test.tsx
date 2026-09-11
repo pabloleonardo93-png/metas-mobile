@@ -114,6 +114,24 @@ describe('configurações de administradores', () => {
     expect(await screen.findByText(/Acesso autorizado/iu)).toBeInTheDocument();
   });
 
+  it('abre e fecha o formulário de novo acesso pelas duas ações disponíveis', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await screen.findByText('Aguardando primeiro acesso');
+
+    await user.click(screen.getByRole('button', { name: '+ Adicionar administrador' }));
+    expect(screen.getByRole('dialog', { name: 'Adicionar administrador' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancelar' }));
+    expect(screen.queryByRole('dialog', { name: 'Adicionar administrador' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '+ Adicionar administrador' }));
+    await user.click(screen.getByRole('button', { name: 'Fechar' }));
+    expect(screen.queryByRole('dialog', { name: 'Adicionar administrador' })).toBeNull();
+    expect(accessApiMocks.invite).not.toHaveBeenCalled();
+    expect(authenticateWithPasskey).not.toHaveBeenCalled();
+  });
+
   it('confirma identidade antes de cancelar um acesso pendente', async () => {
     const user = userEvent.setup();
     render(<SettingsPage />, { wrapper: MemoryRouter });

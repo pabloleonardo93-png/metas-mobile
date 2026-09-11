@@ -114,12 +114,7 @@ export const MfaPage = (): React.JSX.Element => {
         </div>
       </header>
       <section className="mfa-card" aria-labelledby="mfa-title">
-        <div className="security-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <path d="M12 3 5.5 5.8v5.4c0 4.1 2.6 7.8 6.5 9.3 3.9-1.5 6.5-5.2 6.5-9.3V5.8L12 3Z" />
-            <path d="m9.2 11.8 1.8 1.8 3.9-4" />
-          </svg>
-        </div>
+        <BrandLogo className="mfa-card-logo" decorative />
         <span className="eyebrow mfa-step">Etapa 2 de 2</span>
         <h1 id="mfa-title">
           {hasCredential
