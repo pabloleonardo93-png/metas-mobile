@@ -129,23 +129,34 @@ const refreshCsrfToken = async (): Promise<string> => {
   return parsed.csrfToken;
 };
 
-export const mutation = async (path: string, body: unknown, retry = true): Promise<unknown> => {
+const sendMutation = async (
+  path: string,
+  body: unknown,
+  method: 'DELETE' | 'POST',
+  retry: boolean,
+): Promise<unknown> => {
   const token = csrfToken ?? (await refreshCsrfToken());
   try {
     return await request(path, {
       body: JSON.stringify(body),
       headers: { 'content-type': 'application/json', 'x-csrf-token': token },
-      method: 'POST',
+      method,
     });
   } catch (error) {
     if (retry && error instanceof AdminApiError && error.code === 'CSRF_VALIDATION_FAILED') {
       csrfToken = null;
       await refreshCsrfToken();
-      return mutation(path, body, false);
+      return sendMutation(path, body, method, false);
     }
     throw error;
   }
 };
+
+export const mutation = (path: string, body: unknown): Promise<unknown> =>
+  sendMutation(path, body, 'POST', true);
+
+export const destructiveMutation = (path: string, body: unknown): Promise<unknown> =>
+  sendMutation(path, body, 'DELETE', true);
 
 const storeRotatedCsrf = <Result extends { csrfToken: string }>(result: Result): Result => {
   csrfToken = result.csrfToken;

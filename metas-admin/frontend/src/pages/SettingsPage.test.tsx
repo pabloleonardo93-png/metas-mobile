@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -68,6 +68,13 @@ const awaitingApproval = {
   lastAccessAt: '2026-09-10T12:30:00.000Z',
 };
 
+const renderSettings = async () => {
+  await act(async () => {
+    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await Promise.resolve();
+  });
+};
+
 describe('configurações de administradores', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -81,7 +88,7 @@ describe('configurações de administradores', () => {
   });
 
   it('lista situações amigáveis sem expor termos técnicos nem permitir autoaprovação', async () => {
-    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await renderSettings();
 
     expect(await screen.findByText('Aguardando primeiro acesso')).toBeInTheDocument();
     expect(screen.getAllByText('Admin Atual').length).toBeGreaterThan(0);
@@ -98,7 +105,7 @@ describe('configurações de administradores', () => {
 
   it('confirma identidade antes de autorizar acesso e envia somente nome e e-mail', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await renderSettings();
     await screen.findByText('Aguardando primeiro acesso');
 
     await user.click(screen.getByRole('button', { name: '+ Adicionar administrador' }));
@@ -116,7 +123,7 @@ describe('configurações de administradores', () => {
 
   it('abre e fecha o formulário de novo acesso pelas duas ações disponíveis', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await renderSettings();
     await screen.findByText('Aguardando primeiro acesso');
 
     await user.click(screen.getByRole('button', { name: '+ Adicionar administrador' }));
@@ -134,7 +141,7 @@ describe('configurações de administradores', () => {
 
   it('confirma identidade antes de cancelar um acesso pendente', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await renderSettings();
     await user.click(await screen.findByRole('button', { name: 'Cancelar acesso' }));
 
     await waitFor(() => expect(authenticateWithPasskey).toHaveBeenCalledOnce());
@@ -143,7 +150,7 @@ describe('configurações de administradores', () => {
 
   it('permite que outro administrador autorize o primeiro dispositivo após step-up', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />, { wrapper: MemoryRouter });
+    await renderSettings();
     await user.click(await screen.findByRole('button', { name: 'Aprovar dispositivo' }));
 
     await waitFor(() => expect(authenticateWithPasskey).toHaveBeenCalledOnce());

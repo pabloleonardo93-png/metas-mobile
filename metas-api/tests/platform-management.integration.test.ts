@@ -164,6 +164,10 @@ void test(
         role: 'GESTOR' | 'BALCONISTA' | 'CAIXA' | 'FARMACEUTICO';
         storeId: string;
       }) => service.createEmployee(session, input, randomUUID());
+      const deleteEmployee = (
+        employeeId: string,
+        input: { version: number; userVersion: number },
+      ) => service.deleteEmployee(session, employeeId, input, randomUUID());
       const employeeGoogleLogin = (email: string, subject: string) =>
         appRuntime.query<{
           employee_id: string;
@@ -463,6 +467,223 @@ void test(
         );
         assert.equal(userB.store_id, restrictedStoreId);
         assert.deepEqual(await visibleStores({ ...userA, store_id: userB.store_id }), []);
+      });
+
+      await t.test(
+        'exclusão preserva histórico, revoga sessão e identidade e bloqueia novo acesso',
+        async () => {
+          const store = await write('savePharmacy', null, {
+            name: 'Farmácia Exclusão',
+            slug: 'exclusao',
+            timezone: 'America/Sao_Paulo',
+            isActive: true,
+          });
+          const manager = await createEmployee({
+            name: 'Gestora Exclusão',
+            email: 'gestora.exclusao@example.test',
+            storeId: store.id,
+            role: 'GESTOR',
+          });
+          const employee = await createEmployee({
+            name: 'Pessoa Excluída',
+            email: 'excluida@example.test',
+            storeId: store.id,
+            role: 'CAIXA',
+          });
+          const [managerLogin] = await employeeGoogleLogin(
+            'gestora.exclusao@example.test',
+            'manager-delete-subject',
+          );
+          const [employeeLogin] = await employeeGoogleLogin(
+            'excluida@example.test',
+            'employee-delete-subject',
+          );
+          assert.ok(managerLogin && employeeLogin);
+          const [versions] = await admin.query<{ user_version: number; version: number }>(
+            `SELECT e.lock_version version,u.lock_version user_version
+             FROM metas.employees e JOIN metas.users u ON u.id=e.user_id
+             WHERE e.id=:employeeId`,
+            { replacements: { employeeId: employee.id }, type: QueryTypes.SELECT },
+          );
+
+          await assert.rejects(
+            deleteEmployee(employee.id, {
+              version: versions!.version + 1,
+              userVersion: versions!.user_version,
+            }),
+            { code: 'MANAGEMENT_VERSION_CONFLICT' },
+          );
+          await assert.rejects(deleteEmployee(randomUUID(), { version: 1, userVersion: 1 }), {
+            code: 'MANAGEMENT_NOT_FOUND',
+          });
+
+          await deleteEmployee(employee.id, {
+            version: versions!.version,
+            userVersion: versions!.user_version,
+          });
+
+          const listed = (await service.list(
+            session,
+            'employees',
+            listInputSchema.parse({ storeId: store.id }),
+          )) as { items: { id: string }[] };
+          assert.equal(
+            listed.items.some(({ id }) => id === employee.id),
+            false,
+          );
+          const [preserved] = await admin.query<{
+            account_status: string;
+            deleted: boolean;
+            identity_disabled: boolean;
+            session_revoked: boolean;
+          }>(
+            `SELECT u.account_status,e.deleted_at IS NOT NULL deleted,
+              identity.disabled_at IS NOT NULL identity_disabled,
+              session.revoked_at IS NOT NULL session_revoked
+             FROM metas.employees e
+             JOIN metas.users u ON u.id=e.user_id
+             JOIN metas.auth_identities identity ON identity.user_id=u.id
+             JOIN metas.sessions session ON session.employee_id=e.id
+             WHERE e.id=:employeeId`,
+            { replacements: { employeeId: employee.id }, type: QueryTypes.SELECT },
+          );
+          assert.deepEqual(preserved, {
+            account_status: 'DISABLED',
+            deleted: true,
+            identity_disabled: true,
+            session_revoked: true,
+          });
+          await assert.rejects(
+            employeeGoogleLogin('excluida@example.test', 'employee-delete-subject'),
+            hasDatabaseMessage('AUTH_ACCESS_DENIED'),
+          );
+          await assert.rejects(
+            deleteEmployee(employee.id, {
+              version: versions!.version + 1,
+              userVersion: versions!.user_version + 1,
+            }),
+            { code: 'MANAGEMENT_EMPLOYEE_ALREADY_DELETED' },
+          );
+          await assert.rejects(
+            write('updateEmployee', employee.id, {
+              name: 'Pessoa ExcluÃ­da',
+              role: 'CAIXA',
+              status: 'ATIVO',
+              version: versions!.version + 1,
+              userVersion: versions!.user_version + 1,
+            }),
+            { code: 'MANAGEMENT_EMPLOYEE_ALREADY_DELETED' },
+          );
+          await assert.rejects(
+            withDatabaseContext(
+              appRuntime,
+              {
+                employeeId: managerLogin.employee_id,
+                storeId: managerLogin.store_id,
+                userId: managerLogin.user_id,
+              },
+              (transaction) =>
+                appRuntime.query(
+                  `SELECT * FROM metas.manager_change_employee_access_email(
+                    CAST(:employeeId AS UUID), :email
+                  )`,
+                  {
+                    replacements: {
+                      email: 'novo.acesso@example.test',
+                      employeeId: employee.id,
+                    },
+                    transaction,
+                    type: QueryTypes.SELECT,
+                  },
+                ),
+            ),
+            hasDatabaseMessage('EMPLOYEE_NOT_FOUND'),
+          );
+          const visibleEmployees = await withDatabaseContext(
+            appRuntime,
+            {
+              employeeId: managerLogin.employee_id,
+              storeId: managerLogin.store_id,
+              userId: managerLogin.user_id,
+            },
+            (transaction) =>
+              appRuntime.query<{ id: string }>('SELECT id FROM metas.employees ORDER BY id', {
+                transaction,
+                type: QueryTypes.SELECT,
+              }),
+          );
+          assert.deepEqual(
+            visibleEmployees.map(({ id }) => id),
+            [manager.id],
+          );
+          const [audit] = await admin.query<{ total: string }>(
+            `SELECT count(*)::TEXT total FROM metas.platform_admin_audit_events
+             WHERE action='EMPLOYEE_DELETED' AND target_id=:employeeId AND store_id=:storeId`,
+            {
+              replacements: { employeeId: employee.id, storeId: store.id },
+              type: QueryTypes.SELECT,
+            },
+          );
+          assert.equal(audit?.total, '1');
+
+          const pending = await createEmployee({
+            name: 'Pessoa Pendente Excluída',
+            email: 'pendente.excluida@example.test',
+            storeId: store.id,
+            role: 'BALCONISTA',
+          });
+          await deleteEmployee(pending.id, { version: 1, userVersion: 1 });
+          await assert.rejects(
+            employeeGoogleLogin('pendente.excluida@example.test', 'pending-delete-subject'),
+            hasDatabaseMessage('AUTH_ACCESS_DENIED'),
+          );
+
+          const [managerVersions] = await admin.query<{ user_version: number; version: number }>(
+            `SELECT e.lock_version version,u.lock_version user_version
+             FROM metas.employees e JOIN metas.users u ON u.id=e.user_id WHERE e.id=:employeeId`,
+            { replacements: { employeeId: manager.id }, type: QueryTypes.SELECT },
+          );
+          await assert.rejects(
+            deleteEmployee(manager.id, {
+              version: managerVersions!.version,
+              userVersion: managerVersions!.user_version,
+            }),
+            { code: 'LAST_ACTIVE_MANAGER_DELETE_REQUIRED' },
+          );
+        },
+      );
+
+      await t.test('concorrência nunca exclui os dois últimos gestores ativos', async () => {
+        const store = await write('savePharmacy', null, {
+          name: 'Farmácia Concorrente',
+          slug: 'concorrente',
+          timezone: 'America/Sao_Paulo',
+          isActive: true,
+        });
+        const first = await createEmployee({
+          name: 'Primeira Gestora Concorrente',
+          email: 'primeira.concorrente@example.test',
+          storeId: store.id,
+          role: 'GESTOR',
+        });
+        const second = await createEmployee({
+          name: 'Segunda Gestora Concorrente',
+          email: 'segunda.concorrente@example.test',
+          storeId: store.id,
+          role: 'GESTOR',
+        });
+        const results = await Promise.allSettled([
+          deleteEmployee(first.id, { version: 1, userVersion: 1 }),
+          deleteEmployee(second.id, { version: 1, userVersion: 1 }),
+        ]);
+        assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1);
+        assert.equal(results.filter(({ status }) => status === 'rejected').length, 1);
+        const [remaining] = await admin.query<{ total: string }>(
+          `SELECT count(*)::TEXT total FROM metas.employees
+           WHERE store_id=:storeId AND role='GESTOR' AND status='ATIVO' AND deleted_at IS NULL`,
+          { replacements: { storeId: store.id }, type: QueryTypes.SELECT },
+        );
+        assert.equal(remaining?.total, '1');
       });
 
       const userId = randomUUID(),
@@ -840,6 +1061,7 @@ void test(
             "SELECT metas.read_platform_directory(NULL,'{}'::jsonb)",
             "SELECT metas.read_platform_directory('pharmacies',NULL)",
             "SELECT metas.write_platform_directory(NULL,NULL,'{}'::jsonb,gen_random_uuid())",
+            'SELECT metas.delete_platform_employee(NULL,NULL,NULL,NULL,NULL)',
           ]) {
             await assert.rejects(
               withPlatformAdminDatabaseContext(
@@ -869,30 +1091,42 @@ void test(
           const [privileges] = await admin.query<{
             app_runtime: boolean;
             app_runtime_create: boolean;
+            app_runtime_delete: boolean;
             operator_create: boolean;
+            operator_delete: boolean;
             platform_runtime: boolean;
             platform_runtime_create: boolean;
+            platform_runtime_delete: boolean;
             public_role: boolean;
             public_create: boolean;
+            public_delete: boolean;
           }>(
             `SELECT
               has_function_privilege('metas_app_runtime','metas.read_platform_admin_access()','EXECUTE') app_runtime,
               has_function_privilege('metas_app_runtime','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') app_runtime_create,
+              has_function_privilege('metas_app_runtime','metas.delete_platform_employee(uuid,integer,integer,timestamptz,uuid)','EXECUTE') app_runtime_delete,
               has_function_privilege('metas_platform_admin_operator','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') operator_create,
+              has_function_privilege('metas_platform_admin_operator','metas.delete_platform_employee(uuid,integer,integer,timestamptz,uuid)','EXECUTE') operator_delete,
               has_function_privilege('metas_platform_admin_runtime','metas.read_platform_admin_access()','EXECUTE') platform_runtime,
               has_function_privilege('metas_platform_admin_runtime','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') platform_runtime_create,
+              has_function_privilege('metas_platform_admin_runtime','metas.delete_platform_employee(uuid,integer,integer,timestamptz,uuid)','EXECUTE') platform_runtime_delete,
               has_function_privilege('public','metas.read_platform_admin_access()','EXECUTE') public_role,
-              has_function_privilege('public','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') public_create`,
+              has_function_privilege('public','metas.create_platform_employee(text,citext,uuid,text,timestamptz,uuid)','EXECUTE') public_create,
+              has_function_privilege('public','metas.delete_platform_employee(uuid,integer,integer,timestamptz,uuid)','EXECUTE') public_delete`,
             { type: QueryTypes.SELECT },
           );
           assert.deepEqual(privileges, {
             app_runtime: false,
             app_runtime_create: false,
+            app_runtime_delete: false,
             operator_create: false,
+            operator_delete: false,
             platform_runtime: true,
             platform_runtime_create: true,
+            platform_runtime_delete: true,
             public_role: false,
             public_create: false,
+            public_delete: false,
           });
           const [functionSecurity] = await admin.query<{
             fixed_search_path: boolean;
@@ -909,6 +1143,25 @@ void test(
             { type: QueryTypes.SELECT },
           );
           assert.deepEqual(functionSecurity, {
+            fixed_search_path: true,
+            owner_name: 'metas_migration_owner',
+            security_definer: true,
+          });
+          const [deleteFunctionSecurity] = await admin.query<{
+            fixed_search_path: boolean;
+            owner_name: string;
+            security_definer: boolean;
+          }>(
+            `SELECT
+              pg_get_userbyid(proowner) owner_name,
+              prosecdef security_definer,
+              COALESCE(proconfig,ARRAY[]::TEXT[]) @> ARRAY['search_path=pg_catalog'] fixed_search_path
+             FROM pg_proc procedure
+             JOIN pg_namespace namespace ON namespace.oid=procedure.pronamespace
+             WHERE namespace.nspname='metas' AND procedure.proname='delete_platform_employee'`,
+            { type: QueryTypes.SELECT },
+          );
+          assert.deepEqual(deleteFunctionSecurity, {
             fixed_search_path: true,
             owner_name: 'metas_migration_owner',
             security_definer: true,

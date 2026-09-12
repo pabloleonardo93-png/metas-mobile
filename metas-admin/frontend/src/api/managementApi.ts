@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { mutation, request } from './adminApi';
+import { destructiveMutation, mutation, request } from './adminApi';
 import {
   auditSchema,
   employeeSchema,
@@ -35,6 +35,12 @@ export const managementApi = {
         `/api/management/${resource}${id ? '/' + id : ''}${link ? '/link' : ''}`,
         input,
       ),
+    );
+  },
+  async deleteEmployee(employeeId: string, input: { version: number; userVersion: number }) {
+    z.uuid().parse(employeeId);
+    return mutationResultSchema.parse(
+      await destructiveMutation(`/api/management/employees/${employeeId}`, input),
     );
   },
 };

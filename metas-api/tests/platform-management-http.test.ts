@@ -10,6 +10,7 @@ import {
 } from '../src/modules/platformManagement/management.service.js';
 import {
   employeeCreateInputSchema,
+  employeeDeleteInputSchema,
   pharmacyInputSchema,
   employeeInputSchema,
 } from '../src/modules/platformManagement/management.contracts.js';
@@ -33,13 +34,19 @@ const session: PlatformAdminSession = {
 const setup = (
   assurance: PlatformAdminSession['assuranceLevel'] = 'MFA_VERIFIED',
   stepUpVerifiedAt: string | null = session.stepUpVerifiedAt,
+  rateLimitAllowed = true,
 ) => {
   const creates: unknown[][] = [];
+  const deletions: unknown[][] = [];
   const writes: unknown[][] = [];
   const lists: unknown[][] = [];
   const service: ManagementService = {
     createEmployee: (...args) => {
       creates.push(args);
+      return Promise.resolve({ id });
+    },
+    deleteEmployee: (...args) => {
+      deletions.push(args);
       return Promise.resolve({ id });
     },
     list: (...args) => {
@@ -64,14 +71,14 @@ const setup = (
   const app = express();
   app.use(express.json(), requestId);
   const rateLimiter = {
-    consume: () => Promise.resolve({ allowed: true, retryAfterSeconds: 0 }),
+    consume: () => Promise.resolve({ allowed: rateLimitAllowed, retryAfterSeconds: 30 }),
   };
   app.use('/management', createManagementRouter(authentication, service, rateLimiter, 300));
   app.use(createErrorHandler({ error: () => {}, info: () => {} }));
-  return { app, creates, writes, lists };
+  return { app, creates, deletions, writes, lists };
 };
 void test('gestão bloqueia ausência de sessão, token comum e Google-only antes do serviço', async () => {
-  const { app, creates, lists, writes } = setup('GOOGLE_ONLY');
+  const { app, creates, deletions, lists, writes } = setup('GOOGLE_ONLY');
   assert.equal((await request(app).get('/management/pharmacies')).status, 401);
   assert.equal(
     (await request(app).get('/management/pharmacies').auth('employee', { type: 'bearer' })).status,
@@ -101,7 +108,16 @@ void test('gestão bloqueia ausência de sessão, token comum e Google-only ante
     ).status,
     403,
   );
-  assert.equal(creates.length + lists.length + writes.length, 0);
+  assert.equal(
+    (
+      await request(app)
+        .delete('/management/employees/' + id)
+        .auth('synthetic', { type: 'bearer' })
+        .send({ version: 1, userVersion: 1 })
+    ).status,
+    403,
+  );
+  assert.equal(creates.length + deletions.length + lists.length + writes.length, 0);
 });
 void test('gestão lista com filtros validados e transmite contexto administrativo', async () => {
   const { app, lists } = setup();
@@ -132,7 +148,7 @@ void test('gestão lista com filtros validados e transmite contexto administrati
     422,
   );
 });
-void test('gestão cria farmácia, edita vínculo, valida IDs e não possui DELETE', async () => {
+void test('gestão cria farmácia, edita vínculo e valida IDs', async () => {
   const { app, writes } = setup();
   const store = {
     name: 'Farmácia Centro',
@@ -194,6 +210,62 @@ void test('gestão cria farmácia, edita vínculo, valida IDs e não possui DELE
     404,
   );
 });
+void test('exclusão exige step-up recente e contrato estrito', async () => {
+  const input = { version: 1, userVersion: 2 };
+  const { app, deletions } = setup();
+  const response = await request(app)
+    .delete('/management/employees/' + id)
+    .auth('synthetic', { type: 'bearer' })
+    .send(input);
+  assert.equal(response.status, 200);
+  assert.deepEqual(deletions[0]?.slice(0, 3), [session, id, input]);
+
+  for (const invalid of [
+    { version: 0, userVersion: 2 },
+    { version: 1 },
+    { ...input, unexpected: true },
+  ]) {
+    assert.equal(
+      (
+        await request(app)
+          .delete('/management/employees/' + id)
+          .auth('synthetic', { type: 'bearer' })
+          .send(invalid)
+      ).status,
+      422,
+    );
+  }
+  assert.equal(
+    (
+      await request(app)
+        .delete('/management/employees/invalid')
+        .auth('synthetic', { type: 'bearer' })
+        .send(input)
+    ).status,
+    422,
+  );
+
+  const stale = setup('MFA_VERIFIED', new Date(Date.now() - 301_000).toISOString());
+  assert.equal(
+    (
+      await request(stale.app)
+        .delete('/management/employees/' + id)
+        .auth('synthetic', { type: 'bearer' })
+        .send(input)
+    ).status,
+    403,
+  );
+  assert.equal(stale.deletions.length, 0);
+
+  const limited = setup('MFA_VERIFIED', session.stepUpVerifiedAt, false);
+  const limitedResponse = await request(limited.app)
+    .delete('/management/employees/' + id)
+    .auth('synthetic', { type: 'bearer' })
+    .send(input);
+  assert.equal(limitedResponse.status, 429);
+  assert.equal(limitedResponse.headers['retry-after'], '30');
+  assert.equal(limited.deletions.length, 0);
+});
 void test('criação de pessoa exige step-up recente, valida contrato estrito e usa caso de uso único', async () => {
   const input = {
     name: 'Pessoa Teste',
@@ -226,6 +298,10 @@ void test('criação de pessoa exige step-up recente, valida contrato estrito e 
   }
 
   const stale = setup('MFA_VERIFIED', new Date(Date.now() - 301_000).toISOString());
+  assert.equal(
+    employeeDeleteInputSchema.safeParse({ version: 1, userVersion: 1, employeeId: id }).success,
+    false,
+  );
   assert.equal(
     (
       await request(stale.app)
@@ -287,6 +363,14 @@ void test('erros SQL conhecidos usam allowlist e erros desconhecidos não expõe
   assert.equal(
     managementError({ parent: { message: 'LAST_ACTIVE_MANAGER_REQUIRED' } }).code,
     'LAST_ACTIVE_MANAGER_REQUIRED',
+  );
+  assert.equal(
+    managementError({ parent: { message: 'LAST_ACTIVE_MANAGER_DELETE_REQUIRED' } }).message,
+    'Não é possível excluir o único gestor ativo desta farmácia.',
+  );
+  assert.equal(
+    managementError({ parent: { message: 'MANAGEMENT_EMPLOYEE_ALREADY_DELETED' } }).message,
+    'O funcionário já foi excluído.',
   );
   const result = managementError({
     parent: { message: 'password=synthetic-secret SQL host=private', code: 'random-secret' },

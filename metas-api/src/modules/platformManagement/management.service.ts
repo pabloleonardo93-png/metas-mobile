@@ -9,6 +9,7 @@ import {
   pharmacySchema,
   pageSchema,
   type employeeCreateInputSchema,
+  type employeeDeleteInputSchema,
   type ListInput,
   type ManagementResource,
 } from './management.contracts.js';
@@ -23,6 +24,12 @@ export interface ManagementService {
   createEmployee(
     session: PlatformAdminSession,
     input: z.output<typeof employeeCreateInputSchema>,
+    requestId: string,
+  ): Promise<{ id: string }>;
+  deleteEmployee(
+    session: PlatformAdminSession,
+    employeeId: string,
+    input: z.output<typeof employeeDeleteInputSchema>,
     requestId: string,
   ): Promise<{ id: string }>;
   write(
@@ -54,6 +61,11 @@ const errors: Readonly<Record<string, [number, string]>> = {
   MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED: [
     409,
     'Esta pessoa já está vinculada a outra farmácia. O acesso a múltiplas farmácias ainda não está disponível.',
+  ],
+  MANAGEMENT_EMPLOYEE_ALREADY_DELETED: [409, 'O funcionário já foi excluído.'],
+  LAST_ACTIVE_MANAGER_DELETE_REQUIRED: [
+    409,
+    'Não é possível excluir o único gestor ativo desta farmácia.',
   ],
   PLATFORM_ADMIN_STEP_UP_REQUIRED: [403, 'Confirme sua identidade novamente para continuar.'],
 };
@@ -101,6 +113,41 @@ export class PostgresManagementService implements ManagementService {
             ) AS id`,
             {
               replacements: {
+                ...input,
+                minimumStepUpAt: new Date(Date.now() - this.stepUpTtlSeconds * 1000),
+                requestId,
+              },
+              type: QueryTypes.SELECT,
+              transaction,
+            },
+          );
+          if (!rows[0]?.id) throw new Error('MANAGEMENT_UNAVAILABLE');
+          return { id: rows[0].id };
+        },
+      );
+    } catch (error) {
+      throw managementError(error);
+    }
+  }
+  public async deleteEmployee(
+    session: PlatformAdminSession,
+    employeeId: string,
+    input: z.output<typeof employeeDeleteInputSchema>,
+    requestId: string,
+  ): Promise<{ id: string }> {
+    try {
+      return await withPlatformAdminDatabaseContext(
+        this.database,
+        { platformAdminId: session.platformAdminId, sessionId: session.sessionId },
+        async (transaction) => {
+          const rows = await this.database.query<{ id: string }>(
+            `SELECT metas.delete_platform_employee(
+              CAST(:employeeId AS UUID), :version, :userVersion,
+              :minimumStepUpAt, CAST(:requestId AS UUID)
+            ) AS id`,
+            {
+              replacements: {
+                employeeId,
                 ...input,
                 minimumStepUpAt: new Date(Date.now() - this.stepUpTtlSeconds * 1000),
                 requestId,

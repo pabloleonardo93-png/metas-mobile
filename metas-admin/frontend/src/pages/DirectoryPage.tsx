@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AppShell } from '../components/AppShell';
 import { PharmacyActionsMenu } from '../components/PharmacyActionsMenu';
+import { RowActionsMenu } from '../components/RowActionsMenu';
 import {
   ManagementDialog,
   roleLabels,
@@ -142,6 +143,18 @@ export const DirectoryPage = ({
       </button>
       {'isActive' in item && (
         <PharmacyActionsMenu pharmacy={item} addManager={openManagerCreation} />
+      )}
+      {'userId' in item && (
+        <RowActionsMenu
+          ariaLabel={`Mais ações para ${item.name}`}
+          items={[
+            {
+              destructive: true,
+              label: 'Excluir',
+              onSelect: () => setSelection({ mode: 'delete', item }),
+            },
+          ]}
+        />
       )}
     </div>
   );
@@ -443,6 +456,8 @@ export const DirectoryPage = ({
                   setCreatedPharmacy({ id: result.id, name: input.data.name });
                   setSuccess('');
                 }
+              } else if (selection.mode === 'delete') {
+                setSuccess('Funcionário excluído com sucesso.');
               } else {
                 setSuccess('Alteração salva e registrada em auditoria.');
               }

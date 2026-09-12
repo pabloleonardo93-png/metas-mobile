@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   beforeEach,
@@ -85,12 +85,17 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const page = (items: unknown[]) => ({ items, total: items.length, page: 1, pageSize: 20 });
 let fetchMock: MockInstance<typeof fetch>;
-const setup = (
+const setup = async (
   route = '/pharmacies',
   items: unknown[] = [pharmacy],
-  options: { assurance?: string; fail?: boolean } = {},
+  options: {
+    assurance?: string;
+    deleteError?: { code: string; message: string; status: number };
+    fail?: boolean;
+  } = {},
 ) => {
   window.history.replaceState({}, '', route);
+  let employeeDeleted = false;
   fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
     const url = input instanceof Request ? input.url : input.toString();
     if (url === '/api/auth/me')
@@ -98,16 +103,30 @@ const setup = (
         json({ ...me, assuranceLevel: options.assurance ?? me.assuranceLevel }),
       );
     if (url === '/api/security/csrf') return Promise.resolve(json({ csrfToken: 'synthetic-csrf' }));
+    if (init?.method === 'DELETE') {
+      if (options.deleteError)
+        return Promise.resolve(
+          json(
+            { code: options.deleteError.code, message: options.deleteError.message },
+            options.deleteError.status,
+          ),
+        );
+      employeeDeleted = true;
+      return Promise.resolve(json({ id }));
+    }
     if (init?.method === 'POST') return Promise.resolve(json({ id }));
     if (url.startsWith('/api/management/pharmacies') && route !== '/pharmacies')
       return Promise.resolve(json(page([pharmacy])));
     return Promise.resolve(
       options.fail
         ? json({ code: 'MANAGEMENT_UNAVAILABLE', message: 'Serviço indisponível.' }, 503)
-        : json(page(items)),
+        : json(page(employeeDeleted && route === '/employees' ? [] : items)),
     );
   });
-  render(<App />);
+  await act(async () => {
+    render(<App />);
+    await Promise.resolve();
+  });
 };
 describe('gestão administrativa', () => {
   const originalShowModal = Object.getOwnPropertyDescriptor(
@@ -141,7 +160,7 @@ describe('gestão administrativa', () => {
     vi.restoreAllMocks();
   });
   it('lista dados reais do contrato e aplica busca e filtro de status', async () => {
-    setup();
+    await setup();
     const user = userEvent.setup();
     expect(await screen.findByText('Farmácia Centro', { selector: 'strong' })).toBeInTheDocument();
     await user.type(screen.getByRole('searchbox'), 'Centro');
@@ -166,7 +185,7 @@ describe('gestão administrativa', () => {
   ] as const)(
     'constrói os filtros iniciais compatíveis com o BFF em %s',
     async (route, items, resource, expectedName) => {
-      setup(route, [...items]);
+      await setup(route, [...items]);
       await screen.findByText(expectedName, { selector: 'strong' });
 
       const call = fetchMock.mock.calls.find(([input]) => {
@@ -188,14 +207,14 @@ describe('gestão administrativa', () => {
     },
   );
   it('mostra estado vazio sem números fictícios', async () => {
-    setup('/pharmacies', []);
+    await setup('/pharmacies', []);
     expect(
       await screen.findByRole('heading', { name: 'Nenhum registro encontrado' }),
     ).toBeInTheDocument();
     expect(screen.getByText('0 registros · Página 1 de 1')).toBeInTheDocument();
   });
   it('mostra loading e permite tentar novamente após falha', async () => {
-    setup('/pharmacies', [], { fail: true });
+    await setup('/pharmacies', [], { fail: true });
     expect(
       await screen.findByRole('heading', { name: 'Não foi possível carregar a lista' }),
     ).toBeInTheDocument();
@@ -204,7 +223,7 @@ describe('gestão administrativa', () => {
     expect(await screen.findByText('Farmácia Centro', { selector: 'strong' })).toBeInTheDocument();
   });
   it('valida formulário, impede duplo envio e cria farmácia pelo BFF', async () => {
-    setup();
+    await setup();
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: 'Nova farmácia' }));
@@ -228,24 +247,29 @@ describe('gestão administrativa', () => {
     });
   });
   it('após criar a farmácia abre o formulário compartilhado com gestor e unidade definidos', async () => {
-    setup();
+    await setup();
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: 'Nova farmácia' }));
     const pharmacyDialog = screen.getByRole('dialog');
-    await user.type(within(pharmacyDialog).getByLabelText('Nome da farmácia'), 'Santa Afonso');
-    await user.type(within(pharmacyDialog).getByLabelText('Identificador público'), 'santa-afonso');
+    fireEvent.change(within(pharmacyDialog).getByLabelText('Nome da farmácia'), {
+      target: { value: 'Santa Afonso' },
+    });
+    fireEvent.change(within(pharmacyDialog).getByLabelText('Identificador público'), {
+      target: { value: 'santa-afonso' },
+    });
     await user.click(within(pharmacyDialog).getByRole('button', { name: 'Salvar cadastro' }));
 
     await user.click(await screen.findByRole('button', { name: 'Adicionar gestor agora' }));
     const employeeDialog = screen.getByRole('dialog', { name: 'Adicionar gestor' });
     expect(within(employeeDialog).getByText('Santa Afonso')).toBeInTheDocument();
     expect(within(employeeDialog).getByText('Gestor')).toBeInTheDocument();
-    await user.type(within(employeeDialog).getByLabelText('Nome completo'), 'Gestora Santa Afonso');
-    await user.type(
-      within(employeeDialog).getByLabelText('E-mail da conta Google'),
-      'gestora.santa@example.test',
-    );
+    fireEvent.change(within(employeeDialog).getByLabelText('Nome completo'), {
+      target: { value: 'Gestora Santa Afonso' },
+    });
+    fireEvent.change(within(employeeDialog).getByLabelText('E-mail da conta Google'), {
+      target: { value: 'gestora.santa@example.test' },
+    });
     await user.click(within(employeeDialog).getByRole('button', { name: 'Adicionar gestor' }));
     await waitFor(() => expect(authenticateWithPasskey).toHaveBeenCalledOnce());
     const employeePost = fetchMock.mock.calls.find(
@@ -262,7 +286,7 @@ describe('gestão administrativa', () => {
     });
   });
   it('adiciona funcionário pelo caso de uso compartilhado após confirmação de identidade', async () => {
-    setup('/employees', [employee]);
+    await setup('/employees', [employee]);
     const user = userEvent.setup();
     await screen.findByText('Pessoa Teste', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: '+ Novo funcionário' }));
@@ -292,7 +316,7 @@ describe('gestão administrativa', () => {
     expect(await screen.findByText(/O acesso foi autorizado/iu)).toBeInTheDocument();
   });
   it('abre o cadastro compartilhado pelo menu da farmácia correta', async () => {
-    setup('/pharmacies', [pharmacyWithoutManager, secondPharmacy, inactivePharmacy]);
+    await setup('/pharmacies', [pharmacyWithoutManager, secondPharmacy, inactivePharmacy]);
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
 
@@ -320,7 +344,7 @@ describe('gestão administrativa', () => {
     expect(within(employeeDialog).getByText('Gestor')).toBeInTheDocument();
   });
   it('fecha o menu de ações por clique externo e Escape', async () => {
-    setup('/pharmacies', [pharmacyWithoutManager]);
+    await setup('/pharmacies', [pharmacyWithoutManager]);
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     const moreActions = screen.getByRole('button', { name: 'Mais ações para Farmácia Centro' });
@@ -337,7 +361,7 @@ describe('gestão administrativa', () => {
     expect(moreActions).toHaveFocus();
   });
   it('mantém os gestores nos detalhes sem repetir a ação de cadastro', async () => {
-    setup('/pharmacies', [pharmacyWithoutManager]);
+    await setup('/pharmacies', [pharmacyWithoutManager]);
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: 'Detalhes de Farmácia Centro' }));
@@ -348,7 +372,7 @@ describe('gestão administrativa', () => {
     ).not.toBeInTheDocument();
   });
   it('desativar exige confirmação, preserva versão e não envia DELETE', async () => {
-    setup();
+    await setup();
     const user = userEvent.setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: 'Desativar Farmácia Centro' }));
@@ -363,7 +387,7 @@ describe('gestão administrativa', () => {
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
   });
   it('mostra detalhes de pessoa e limita funções ao domínio', async () => {
-    setup('/employees', [employee]);
+    await setup('/employees', [employee]);
     const user = userEvent.setup();
     await screen.findByText('Pessoa Teste', { selector: 'strong' });
     await user.click(screen.getByRole('button', { name: 'Detalhes de Pessoa Teste' }));
@@ -381,22 +405,91 @@ describe('gestão administrativa', () => {
     expect(within(dialog).getByRole('button', { name: 'Confirmar alteração' })).toBeInTheDocument();
   });
   it('organiza os campos existentes de pessoas em colunas compactas', async () => {
-    setup('/employees', [employee]);
+    await setup('/employees', [employee]);
     await screen.findByText('Pessoa Teste', { selector: 'strong' });
     expect(screen.getByRole('columnheader', { name: 'E-mail' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Status' })).toBeInTheDocument();
     expect(screen.getByText('person@example.test')).toBeInTheDocument();
     expect(screen.getByText('Ativa')).toBeInTheDocument();
   });
+  it('confirma a exclusão pelo menu compartilhado, evita duplo envio e atualiza a lista', async () => {
+    await setup('/employees', [employee]);
+    const user = userEvent.setup();
+    await screen.findByText('Pessoa Teste', { selector: 'strong' });
+
+    expect(screen.getByRole('button', { name: 'Detalhes de Pessoa Teste' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Editar Pessoa Teste' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Vincular Pessoa Teste' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Desativar Pessoa Teste' })).toBeEnabled();
+    const moreActions = screen.getByRole('button', { name: 'Mais ações para Pessoa Teste' });
+
+    await user.click(moreActions);
+    const menu = screen.getByRole('menu', { name: 'Mais ações para Pessoa Teste' });
+    const deleteAction = within(menu).getByRole('menuitem', { name: 'Excluir' });
+    expect(deleteAction).toHaveFocus();
+    await user.click(deleteAction);
+
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+    const dialog = screen.getByRole('dialog', { name: 'Excluir funcionário?' });
+    expect(
+      within(dialog).getByText('Tem certeza de que deseja excluir Pessoa Teste?'),
+    ).toBeVisible();
+    expect(within(dialog).getByText('Essa ação não poderá ser desfeita.')).toBeVisible();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+
+    await user.click(moreActions);
+    await user.click(screen.getByRole('menuitem', { name: 'Excluir' }));
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog', { name: 'Excluir funcionário?' })).not.toBeInTheDocument();
+
+    await user.click(moreActions);
+    await user.click(screen.getByRole('menuitem', { name: 'Excluir' }));
+    await user.dblClick(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Excluir' }),
+    );
+
+    await waitFor(() => expect(authenticateWithPasskey).toHaveBeenCalledOnce());
+    await screen.findByText('Funcionário excluído com sucesso.');
+    const deletions = fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE');
+    expect(deletions).toHaveLength(1);
+    expect(deletions[0]?.[0]).toBe(`/api/management/employees/${id}`);
+    const body = deletions[0]?.[1]?.body;
+    if (typeof body !== 'string') throw new Error('Corpo JSON esperado.');
+    expect(JSON.parse(body)).toEqual({ version: 1, userVersion: 1 });
+    expect(screen.queryByText('Pessoa Teste', { selector: 'strong' })).not.toBeInTheDocument();
+  });
+  it('mantém a pessoa na lista e mostra erro amigável quando a exclusão é rejeitada', async () => {
+    await setup('/employees', [employee], {
+      deleteError: {
+        code: 'LAST_ACTIVE_MANAGER_DELETE_REQUIRED',
+        message: 'Não é possível excluir o único gestor ativo desta farmácia.',
+        status: 409,
+      },
+    });
+    const user = userEvent.setup();
+    await screen.findByText('Pessoa Teste', { selector: 'strong' });
+    await user.click(screen.getByRole('button', { name: 'Mais ações para Pessoa Teste' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Excluir' }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Excluir' }));
+
+    expect(
+      await within(dialog).findByText(
+        'Não é possível excluir o único gestor ativo desta farmácia.',
+      ),
+    ).toBeVisible();
+    expect(screen.getByText('Pessoa Teste', { selector: 'strong' })).toBeInTheDocument();
+  });
 
   it('apresenta o resultado da auditoria sem expor detalhes de autenticação', async () => {
-    setup('/audit', [auditEvent]);
+    await setup('/audit', [auditEvent]);
     expect(await screen.findByText('Vínculo desativado')).toBeInTheDocument();
     expect(screen.getByText('Concluída')).toBeInTheDocument();
     expect(screen.queryByText(/MFA|WebAuthn|passkey|platform admin/iu)).not.toBeInTheDocument();
   });
   it('sessão sem MFA não acessa gestão', async () => {
-    setup('/pharmacies', [], { assurance: 'GOOGLE_ONLY' });
+    await setup('/pharmacies', [], { assurance: 'GOOGLE_ONLY' });
     await waitFor(() => expect(window.location.pathname).toBe('/mfa'));
     expect(
       fetchMock.mock.calls.some(([input]) =>
@@ -405,7 +498,7 @@ describe('gestão administrativa', () => {
     ).toBe(false);
   });
   it('menu responsivo mantém links acessíveis e navegação real', async () => {
-    setup();
+    await setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     const menu = screen.getByRole('button', { name: 'Menu' });
     await userEvent.click(menu);
@@ -414,7 +507,7 @@ describe('gestão administrativa', () => {
     expect(await screen.findByRole('heading', { name: 'Auditoria' })).toBeInTheDocument();
   });
   it('cancelamento da requisição evita resposta antiga sobrescrever filtros', async () => {
-    setup();
+    await setup();
     await screen.findByText('Farmácia Centro', { selector: 'strong' });
     let resolve: ((response: Response) => void) | undefined;
     fetchMock.mockImplementationOnce(

@@ -59,6 +59,12 @@ export const employeeCreateInputSchema = z
     role: z.enum(employeeRoles),
   })
   .strict();
+export const employeeDeleteInputSchema = z
+  .object({
+    version: z.number().int().positive(),
+    userVersion: z.number().int().positive(),
+  })
+  .strict();
 export const linkInputSchema = z
   .object({
     storeId: z.uuid(),
