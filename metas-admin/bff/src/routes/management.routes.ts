@@ -7,6 +7,7 @@ import type { MetasApiClient, MetasApiPath } from '../upstream/metasApiClient.js
 import {
   auditSchema,
   employeeCreateInputSchema,
+  employeeDeleteInputSchema,
   employeeInputSchema,
   employeeSchema,
   linkInputSchema,
@@ -59,6 +60,18 @@ export const createManagementRouter = (
           ? pageSchema(employeeSchema)
           : pageSchema(auditSchema);
     response.json(parse(schema, result, true));
+  });
+  router.delete('/employees/:id', csrf, async (request, response) => {
+    const id = parse(z.uuid(), request.params.id);
+    const input = parse(employeeDeleteInputSchema, request.body);
+    const result = await client.request({
+      method: 'DELETE',
+      path: `/v1/platform-admin/management/employees/${id}`,
+      body: input,
+      requestId: request.requestId,
+      sessionToken: readSessionToken(request.get('cookie'), config)!,
+    });
+    response.json(parse(mutationResultSchema, result, true));
   });
   const writes = [
     {

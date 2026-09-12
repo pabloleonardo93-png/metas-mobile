@@ -826,6 +826,16 @@ select[aria-invalid='true'] {
   background: var(--metas-primary-subtle);
   color: var(--metas-primary-pressed);
 }
+
+.context-menu__item--danger {
+  color: var(--danger);
+}
+
+.context-menu__item--danger:hover,
+.context-menu__item--danger:focus-visible {
+  background: var(--metas-danger-subtle);
+  color: var(--danger);
+}
 .readonly-field {
   margin: 0;
   padding: 10px 12px;

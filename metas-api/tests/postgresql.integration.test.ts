@@ -228,7 +228,7 @@ if (testDatabases === null) {
       assert.equal(pending.length, 0);
     });
 
-    await test('migrated schema inspector accepts migrations 001 through 019', async () => {
+    await test('migrated schema inspector accepts migrations 001 through 020', async () => {
       await validateMigratedSchema(migrationDatabase);
     });
 

@@ -20,7 +20,7 @@ export type MetasApiPath =
 
 export interface MetasApiRequest {
   body?: unknown;
-  method: 'GET' | 'POST';
+  method: 'DELETE' | 'GET' | 'POST';
   path: MetasApiPath;
   requestId: string;
   sessionToken?: string;
@@ -50,8 +50,10 @@ const allowedErrorCodes = new Set([
   'MANAGEMENT_STORE_INACTIVE',
   'MANAGEMENT_LINK_EXISTS',
   'MANAGEMENT_EMPLOYEE_EMAIL_EXISTS',
+  'MANAGEMENT_EMPLOYEE_ALREADY_DELETED',
   'MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED',
   'LAST_ACTIVE_MANAGER_REQUIRED',
+  'LAST_ACTIVE_MANAGER_DELETE_REQUIRED',
   'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER',
   'FIRST_ENROLLMENT_APPROVAL_REQUIRED',
   'FIRST_ENROLLMENT_NOT_ALLOWED',
@@ -77,10 +79,13 @@ const errorMessageFor = (status: number, code: string): string => {
   if (code === 'MANAGEMENT_STORE_INACTIVE') return 'Selecione uma farmácia ativa.';
   if (code === 'MANAGEMENT_EMPLOYEE_EMAIL_EXISTS')
     return 'Já existe uma pessoa cadastrada com este e-mail.';
+  if (code === 'MANAGEMENT_EMPLOYEE_ALREADY_DELETED') return 'O funcionário já foi excluído.';
   if (code === 'MANAGEMENT_MULTIPLE_STORES_UNSUPPORTED')
     return 'Esta pessoa já está vinculada a outra farmácia. O acesso a múltiplas farmácias ainda não está disponível.';
   if (code === 'LAST_ACTIVE_MANAGER_REQUIRED')
     return 'A farmácia precisa manter ao menos um gestor ativo.';
+  if (code === 'LAST_ACTIVE_MANAGER_DELETE_REQUIRED')
+    return 'Não é possível excluir o único gestor ativo desta farmácia.';
   if (code === 'FIRST_EMPLOYEE_MUST_BE_BOOTSTRAP_MANAGER')
     return 'O primeiro vínculo da farmácia deve ser um gestor ativo.';
   if (code === 'INVALID_GOOGLE_TOKEN' || code === 'PLATFORM_ADMIN_ACCESS_NOT_AUTHORIZED') {

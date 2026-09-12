@@ -7,6 +7,7 @@ import { createPlatformAdminSensitiveOperation } from '../platformAdmin/platform
 import type { PlatformAdminAuthenticationService } from '../platformAdmin/platformAdmin.types.js';
 import {
   employeeCreateInputSchema,
+  employeeDeleteInputSchema,
   employeeInputSchema,
   linkInputSchema,
   listInputSchema,
@@ -99,6 +100,17 @@ export const createManagementRouter = (
       ),
     );
   });
+  router.delete(
+    '/employees/:id',
+    createPlatformAdminSensitiveOperation(rateLimiter, stepUpTtlSeconds),
+    async (request, response) => {
+      const id = parseInput(z.uuid(), request.params.id);
+      const input = parseInput(employeeDeleteInputSchema, request.body);
+      response.json(
+        await service.deleteEmployee(request.platformAdminSession!, id, input, request.requestId),
+      );
+    },
+  );
   router.post('/employees/:id/link', async (request, response) => {
     const id = parseInput(z.uuid(), request.params.id);
     const input = parseInput(linkInputSchema, request.body);

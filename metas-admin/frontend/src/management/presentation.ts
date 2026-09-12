@@ -8,6 +8,7 @@ export const managementActionLabels: Record<string, string> = {
   EMPLOYEE_ACTIVATED: 'Vínculo reativado',
   EMPLOYEE_DEACTIVATED: 'Vínculo desativado',
   EMPLOYEE_CREATED: 'Pessoa adicionada',
+  EMPLOYEE_DELETED: 'Funcionário excluído',
   EMPLOYEE_LINKED: 'Vínculo criado',
 };
 

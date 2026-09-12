@@ -133,6 +133,51 @@ describe('gestão no BFF', () => {
       }),
     );
 
+    const deletion = { version: 1, userVersion: 1 };
+    const upstreamCallsBeforeDeniedDeletion = upstream.mock.calls.length;
+    const deletionWithoutCsrf = await request(app)
+      .delete(`/api/management/employees/${id}`)
+      .set('host', config.expectedHost)
+      .set('cookie', cookie)
+      .set('origin', config.publicOrigin)
+      .send(deletion);
+    expect(deletionWithoutCsrf.status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(upstreamCallsBeforeDeniedDeletion);
+    const deletionResponse = await request(app)
+      .delete(`/api/management/employees/${id}`)
+      .set('host', config.expectedHost)
+      .set('cookie', cookie + '; ' + csrfCookie)
+      .set('origin', config.publicOrigin)
+      .set('x-csrf-token', token)
+      .send(deletion);
+    expect(deletionResponse.status).toBe(200);
+    expect(upstream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'DELETE',
+        path: `/v1/platform-admin/management/employees/${id}`,
+        body: deletion,
+        sessionToken: 'a'.repeat(64),
+      }),
+    );
+
+    for (const invalid of [
+      { version: 0, userVersion: 1 },
+      { version: 1 },
+      { ...deletion, unexpected: true },
+    ]) {
+      expect(
+        (
+          await request(app)
+            .delete(`/api/management/employees/${id}`)
+            .set('host', config.expectedHost)
+            .set('cookie', cookie + '; ' + csrfCookie)
+            .set('origin', config.publicOrigin)
+            .set('x-csrf-token', token)
+            .send(invalid)
+        ).status,
+      ).toBe(422);
+    }
+
     for (const invalid of [
       { ...employee, role: 'ROOT' },
       { ...employee, email: 'invalido' },

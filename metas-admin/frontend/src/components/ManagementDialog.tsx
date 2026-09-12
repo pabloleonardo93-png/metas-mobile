@@ -9,6 +9,7 @@ import {
   type Employee,
   type Pharmacy,
 } from '../api/management.contracts';
+import { authenticateWithPasskey, supportsWebAuthn } from '../auth/webauthn';
 
 export const roleLabels = {
   GESTOR: 'Gestor',
@@ -17,7 +18,7 @@ export const roleLabels = {
   FARMACEUTICO: 'Farmacêutico',
 } as const;
 export type DialogSelection = {
-  mode: 'create' | 'edit' | 'details' | 'status' | 'link';
+  mode: 'create' | 'delete' | 'edit' | 'details' | 'status' | 'link';
   item: Pharmacy | Employee | null;
 };
 export interface ManagementSaveResult {
@@ -55,17 +56,19 @@ export const ManagementDialog = ({
   const employee = item && 'userId' in item ? item : null;
   const inactive = pharmacy ? !pharmacy.isActive : employee?.status === 'INATIVO';
   const title =
-    selection.mode === 'details'
-      ? 'Detalhes do cadastro'
-      : selection.mode === 'link'
-        ? 'Vincular a outra farmácia'
-        : selection.mode === 'status'
-          ? inactive
-            ? 'Reativar cadastro?'
-            : 'Desativar cadastro?'
-          : selection.mode === 'create'
-            ? 'Nova farmácia'
-            : 'Editar cadastro';
+    selection.mode === 'delete'
+      ? 'Excluir funcionário?'
+      : selection.mode === 'details'
+        ? 'Detalhes do cadastro'
+        : selection.mode === 'link'
+          ? 'Vincular a outra farmácia'
+          : selection.mode === 'status'
+            ? inactive
+              ? 'Reativar cadastro?'
+              : 'Desativar cadastro?'
+            : selection.mode === 'create'
+              ? 'Nova farmácia'
+              : 'Editar cadastro';
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -103,12 +106,18 @@ export const ManagementDialog = ({
     setBusy(true);
     setError('');
     try {
-      const result = await managementApi.save(
-        resource,
-        item?.id ?? null,
-        input,
-        selection.mode === 'link',
-      );
+      const result =
+        selection.mode === 'delete' && employee
+          ? await (async () => {
+              if (!supportsWebAuthn())
+                throw new Error('Este dispositivo não permite confirmar sua identidade.');
+              await authenticateWithPasskey();
+              return managementApi.deleteEmployee(employee.id, {
+                version: employee.version,
+                userVersion: employee.userVersion,
+              });
+            })()
+          : await managementApi.save(resource, item?.id ?? null, input, selection.mode === 'link');
       saved({ id: result.id, input });
     } catch (reason) {
       setError(safeManagementMessage(reason));
@@ -303,34 +312,45 @@ export const ManagementDialog = ({
             </div>
           </dl>
         </>
-      ) : selection.mode === 'status' || pending ? (
+      ) : selection.mode === 'status' || selection.mode === 'delete' || pending ? (
         <div className="confirmation">
-          <p>
-            {pending
-              ? 'A mudança de função encerra as sessões deste vínculo. A pessoa precisará entrar novamente.'
-              : inactive
-                ? 'O cadastro será reativado. As demais condições de acesso continuam sendo exigidas.'
-                : pharmacy
-                  ? 'O acesso dos funcionários desta farmácia será bloqueado e suas sessões serão encerradas. Os cadastros e o histórico serão preservados.'
-                  : 'O acesso por este vínculo será bloqueado e suas sessões serão encerradas. Outros vínculos permanecem inalterados. O último gestor ativo não pode ser desativado.'}
-          </p>
+          {selection.mode === 'delete' && employee ? (
+            <>
+              <p>Tem certeza de que deseja excluir {employee.name}?</p>
+              <p>Essa ação não poderá ser desfeita.</p>
+            </>
+          ) : (
+            <p>
+              {pending
+                ? 'A mudança de função encerra as sessões deste vínculo. A pessoa precisará entrar novamente.'
+                : inactive
+                  ? 'O cadastro será reativado. As demais condições de acesso continuam sendo exigidas.'
+                  : pharmacy
+                    ? 'O acesso dos funcionários desta farmácia será bloqueado e suas sessões serão encerradas. Os cadastros e o histórico serão preservados.'
+                    : 'O acesso por este vínculo será bloqueado e suas sessões serão encerradas. Outros vínculos permanecem inalterados. O último gestor ativo não pode ser desativado.'}
+            </p>
+          )}
           <div className="form-actions">
             <button className="button button--ghost" type="button" onClick={close} disabled={busy}>
               Cancelar
             </button>
             <button
-              className={`button ${!inactive && !pending ? 'button--danger' : 'button--primary'}`}
+              className={`button ${selection.mode === 'delete' || (!inactive && !pending) ? 'button--danger' : 'button--primary'}`}
               disabled={busy}
               type="button"
               onClick={() => void persist(pending ?? statusInput())}
             >
-              {busy
-                ? 'Salvando…'
-                : pending
-                  ? 'Confirmar alteração'
-                  : inactive
-                    ? 'Reativar'
-                    : 'Desativar'}
+              {selection.mode === 'delete'
+                ? busy
+                  ? 'Excluindo…'
+                  : 'Excluir'
+                : busy
+                  ? 'Salvando…'
+                  : pending
+                    ? 'Confirmar alteração'
+                    : inactive
+                      ? 'Reativar'
+                      : 'Desativar'}
             </button>
           </div>
         </div>
