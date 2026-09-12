@@ -644,8 +644,12 @@ select[aria-invalid='true'] {
 .row-actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  white-space: nowrap;
+}
+.row-actions > * {
+  flex-shrink: 0;
 }
 .text-action {
   min-height: 44px;
@@ -778,24 +782,26 @@ select[aria-invalid='true'] {
 }
 .context-menu-trigger {
   display: inline-grid;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   place-items: center;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;
-  background: transparent;
+  background: var(--metas-primary-subtle);
   color: var(--metas-primary-pressed);
   cursor: pointer;
 }
 .context-menu-trigger:hover,
 .context-menu-trigger[aria-expanded='true'] {
-  border-color: var(--line);
+  border-color: var(--metas-primary);
   background: var(--metas-primary-subtle);
 }
 .context-menu-trigger .admin-icon {
   width: 18px;
   height: 18px;
+  stroke-width: 2.5;
 }
 .context-menu {
   position: fixed;
@@ -1166,7 +1172,8 @@ select[aria-invalid='true'] {
   color: var(--metas-warning);
   background: var(--metas-warning-subtle);
 }
-.status-badge--admin-disabled {
+.status-badge--admin-disabled,
+.status-badge--admin-removed {
   color: var(--danger);
   background: var(--metas-danger-subtle);
 }
@@ -1301,6 +1308,9 @@ select[aria-invalid='true'] {
   }
   .directory-table .status-badge {
     justify-self: start;
+  }
+  .directory-table td[data-label='Ações'] {
+    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 560px) {

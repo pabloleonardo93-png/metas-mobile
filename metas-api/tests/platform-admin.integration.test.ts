@@ -2683,6 +2683,8 @@ if (testDatabases === null) {
              'list_platform_admin_webauthn_credentials',
              'create_platform_admin_webauthn_challenge',
              'create_platform_admin_invitation',
+             'purge_expired_platform_admins',
+             'remove_platform_admin_access',
              'consume_platform_admin_webauthn_challenge',
              'register_platform_admin_webauthn_credential',
              'complete_platform_admin_webauthn_authentication',
@@ -2701,7 +2703,7 @@ if (testDatabases === null) {
          ORDER BY procedure.proname`,
         { type: QueryTypes.SELECT },
       );
-      assert.equal(functions.length, 26);
+      assert.equal(functions.length, 28);
       assert.ok(
         functions.every(
           ({ appCanExecute, owner, publicCanExecute, searchPath }) =>
@@ -2723,6 +2725,9 @@ if (testDatabases === null) {
       );
       assert.equal(byName.get('require_platform_admin_step_up_context')?.operatorCanExecute, false);
       assert.equal(byName.get('require_platform_admin_step_up_context')?.platformCanExecute, false);
+      assert.equal(byName.get('purge_expired_platform_admins')?.migrationCanExecute, false);
+      assert.equal(byName.get('purge_expired_platform_admins')?.operatorCanExecute, false);
+      assert.equal(byName.get('purge_expired_platform_admins')?.platformCanExecute, false);
       for (const functionName of [
         'approve_platform_admin_first_enrollment',
         'get_platform_admin_first_enrollment_request_status',
@@ -2753,6 +2758,7 @@ if (testDatabases === null) {
         'create_platform_admin_invitation',
         'complete_platform_admin_mfa_recovery',
         'read_platform_admin_access',
+        'remove_platform_admin_access',
       ]) {
         assert.equal(byName.get(functionName)?.platformCanExecute, true);
         assert.equal(byName.get(functionName)?.migrationCanExecute, false);

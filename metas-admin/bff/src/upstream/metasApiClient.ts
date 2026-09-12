@@ -35,10 +35,15 @@ const upstreamErrorSchema = z
 const allowedErrorCodes = new Set([
   'PLATFORM_ADMIN_ACCESS_ALREADY_EXISTS',
   'PLATFORM_ADMIN_ACCESS_INVALID_INPUT',
+  'PLATFORM_ADMIN_ACCESS_INVALID_STATE',
   'PLATFORM_ADMIN_ACCESS_UNAVAILABLE',
   'FIRST_ENROLLMENT_REQUEST_NOT_AVAILABLE',
   'PLATFORM_ADMIN_INVITATION_ALREADY_PENDING',
   'PLATFORM_ADMIN_INVITATION_NOT_AVAILABLE',
+  'PLATFORM_ADMIN_ALREADY_REMOVED',
+  'PLATFORM_ADMIN_NOT_FOUND',
+  'PLATFORM_ADMIN_SELF_REMOVAL_FORBIDDEN',
+  'LAST_ACTIVE_PLATFORM_ADMIN_REQUIRED',
   'PLATFORM_ADMIN_SELF_APPROVAL_FORBIDDEN',
   'PLATFORM_ADMIN_STEP_UP_REQUIRED',
   'MANAGEMENT_MFA_REQUIRED',
@@ -71,6 +76,14 @@ const allowedErrorCodes = new Set([
 ]);
 
 const errorMessageFor = (status: number, code: string): string => {
+  if (code === 'PLATFORM_ADMIN_ACCESS_INVALID_STATE')
+    return 'Este acesso administrativo não pode ser removido.';
+  if (code === 'PLATFORM_ADMIN_ALREADY_REMOVED') return 'Este administrador já foi removido.';
+  if (code === 'PLATFORM_ADMIN_NOT_FOUND') return 'Administrador não encontrado.';
+  if (code === 'PLATFORM_ADMIN_SELF_REMOVAL_FORBIDDEN')
+    return 'Você não pode remover seu próprio acesso administrativo.';
+  if (code === 'LAST_ACTIVE_PLATFORM_ADMIN_REQUIRED')
+    return 'Não é possível remover o último administrador ativo da plataforma.';
   if (code === 'MANAGEMENT_VERSION_CONFLICT')
     return 'Este registro mudou. Atualize a lista e tente novamente.';
   if (code === 'MANAGEMENT_DUPLICATE') return 'Já existe um registro com esse identificador.';

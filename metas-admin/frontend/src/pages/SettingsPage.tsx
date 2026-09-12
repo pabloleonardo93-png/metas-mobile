@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { PlatformAdminAccessEntry } from '../api/platformAdminAccess.contracts';
 import { platformAdminAccessApi } from '../api/platformAdminAccessApi';
 import { useAuth } from '../auth/AuthContext';
 import { authenticateWithPasskey, supportsWebAuthn } from '../auth/webauthn';
 import { AppShell } from '../components/AppShell';
+import { RowActionsMenu } from '../components/RowActionsMenu';
 
 const statusLabels: Record<PlatformAdminAccessEntry['status'], string> = {
   ACTIVE: 'Ativo',
   AWAITING_FIRST_ACCESS: 'Aguardando primeiro acesso',
   AWAITING_DEVICE_APPROVAL: 'Aguardando aprovação do dispositivo',
   DISABLED: 'Desativado',
+  REMOVED: 'Removido',
 };
 
 const identityConfirmationError = (error: unknown): string => {
@@ -26,12 +28,15 @@ export const SettingsPage = (): React.JSX.Element => {
   const admin = state.kind === 'verified' ? state.admin : null;
   const [items, setItems] = useState<PlatformAdminAccessEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [administratorToRemove, setAdministratorToRemove] =
+    useState<PlatformAdminAccessEntry | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const operationInFlight = useRef(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -58,6 +63,8 @@ export const SettingsPage = (): React.JSX.Element => {
   }, [load]);
 
   const withIdentityConfirmation = async (operation: () => Promise<unknown>): Promise<void> => {
+    if (operationInFlight.current) return;
+    operationInFlight.current = true;
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -70,6 +77,7 @@ export const SettingsPage = (): React.JSX.Element => {
     } catch (caught) {
       setError(identityConfirmationError(caught));
     } finally {
+      operationInFlight.current = false;
       setBusy(false);
     }
   };
@@ -197,6 +205,18 @@ export const SettingsPage = (): React.JSX.Element => {
                               Aprovar dispositivo
                             </button>
                           )}
+                          {item.status === 'ACTIVE' && item.email !== admin?.primaryEmail && (
+                            <RowActionsMenu
+                              ariaLabel={`Mais ações para ${item.displayName}`}
+                              items={[
+                                {
+                                  destructive: true,
+                                  label: 'Remover administrador',
+                                  onSelect: () => setAdministratorToRemove(item),
+                                },
+                              ]}
+                            />
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -273,6 +293,74 @@ export const SettingsPage = (): React.JSX.Element => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {administratorToRemove && (
+        <div className="dialog-backdrop" role="presentation">
+          <div
+            className="management-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-admin-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !busy) {
+                event.preventDefault();
+                setAdministratorToRemove(null);
+              }
+            }}
+          >
+            <div className="dialog-heading">
+              <div>
+                <span className="eyebrow">Ação permanente</span>
+                <h2 id="remove-admin-title">Remover administrador?</h2>
+              </div>
+              <button
+                aria-label="Fechar"
+                className="dialog-close"
+                disabled={busy}
+                type="button"
+                onClick={() => setAdministratorToRemove(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="confirmation-copy">
+              <p>
+                Tem certeza de que deseja remover o acesso de{' '}
+                <strong>{administratorToRemove.displayName}</strong>?
+              </p>
+              <p>
+                Essa pessoa perderá o acesso imediatamente. Se nenhum novo acesso for autorizado em
+                até 30 dias, os dados administrativos elegíveis poderão ser removidos
+                definitivamente.
+              </p>
+            </div>
+            <div className="dialog-actions">
+              <button
+                autoFocus
+                className="button button--secondary"
+                disabled={busy}
+                type="button"
+                onClick={() => setAdministratorToRemove(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="button button--danger"
+                disabled={busy}
+                type="button"
+                onClick={() =>
+                  void withIdentityConfirmation(async () => {
+                    await platformAdminAccessApi.remove(administratorToRemove.id);
+                    setAdministratorToRemove(null);
+                    setMessage('Administrador removido com sucesso.');
+                  })
+                }
+              >
+                {busy ? 'Removendo…' : 'Remover'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </AppShell>

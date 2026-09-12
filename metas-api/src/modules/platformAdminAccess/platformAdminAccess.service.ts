@@ -16,6 +16,17 @@ const knownErrors: Readonly<Record<string, [number, string]>> = {
     'Já existe um acesso pendente para este e-mail.',
   ],
   PLATFORM_ADMIN_INVITATION_NOT_AVAILABLE: [409, 'Este acesso pendente não está mais disponível.'],
+  PLATFORM_ADMIN_ALREADY_REMOVED: [409, 'Este administrador já foi removido.'],
+  PLATFORM_ADMIN_ACCESS_INVALID_STATE: [409, 'Este acesso administrativo não pode ser removido.'],
+  PLATFORM_ADMIN_NOT_FOUND: [404, 'Administrador não encontrado.'],
+  PLATFORM_ADMIN_SELF_REMOVAL_FORBIDDEN: [
+    403,
+    'Você não pode remover seu próprio acesso administrativo.',
+  ],
+  LAST_ACTIVE_PLATFORM_ADMIN_REQUIRED: [
+    409,
+    'Não é possível remover o último administrador ativo da plataforma.',
+  ],
   PLATFORM_ADMIN_SELF_APPROVAL_FORBIDDEN: [
     403,
     'Outra pessoa administradora deve aprovar esta solicitação.',
@@ -53,6 +64,11 @@ export interface PlatformAdminAccessService {
   cancel(
     session: PlatformAdminSession,
     invitationId: string,
+    requestId: string,
+  ): Promise<{ id: string }>;
+  remove(
+    session: PlatformAdminSession,
+    administratorId: string,
     requestId: string,
   ): Promise<{ id: string }>;
   approveFirstEnrollment(
@@ -144,6 +160,35 @@ export class PostgresPlatformAdminAccessService implements PlatformAdminAccessSe
           ) AS id`,
           {
             replacements: { invitationId, minimumStepUpAt: this.minimumStepUpAt(), requestId },
+            transaction,
+            type: QueryTypes.SELECT,
+          },
+        );
+        if (!rows[0]?.id) throw new Error('PLATFORM_ADMIN_ACCESS_UNAVAILABLE');
+        return { id: rows[0].id };
+      });
+    } catch (error) {
+      throw accessError(error);
+    }
+  }
+
+  public async remove(
+    session: PlatformAdminSession,
+    administratorId: string,
+    requestId: string,
+  ): Promise<{ id: string }> {
+    try {
+      return await this.context(session, async (transaction) => {
+        const rows = await this.database.query<{ id: string }>(
+          `SELECT metas.remove_platform_admin_access(
+            CAST(:administratorId AS UUID), :minimumStepUpAt, CAST(:requestId AS UUID)
+          ) AS id`,
+          {
+            replacements: {
+              administratorId,
+              minimumStepUpAt: this.minimumStepUpAt(),
+              requestId,
+            },
             transaction,
             type: QueryTypes.SELECT,
           },

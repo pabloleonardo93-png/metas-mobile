@@ -1,4 +1,4 @@
-import { mutation, request } from './adminApi';
+import { destructiveMutation, mutation, request } from './adminApi';
 import {
   platformAdminAccessListSchema,
   platformAdminAccessMutationSchema,
@@ -20,6 +20,11 @@ export const platformAdminAccessApi = {
   async cancel(invitationId: string) {
     return platformAdminAccessMutationSchema.parse(
       await mutation(`/api/administrators/${invitationId}/cancel`, {}),
+    );
+  },
+  async remove(administratorId: string) {
+    return platformAdminAccessMutationSchema.parse(
+      await destructiveMutation(`/api/administrators/${administratorId}`, {}),
     );
   },
   async approve(enrollmentRequestId: string) {

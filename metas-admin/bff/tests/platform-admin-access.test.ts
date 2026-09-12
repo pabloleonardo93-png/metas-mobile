@@ -149,4 +149,38 @@ describe('acessos de administradores no BFF', () => {
       }),
     );
   });
+
+  it('remove administrador somente com CSRF, UUID válido e corpo estritamente vazio', async () => {
+    const upstream = vi.fn().mockResolvedValue({ id });
+    const app = createApp({ config, client: { request: upstream }, staticDirectory: null });
+    const withoutCsrf = await request(app)
+      .delete(`/api/administrators/${id}`)
+      .set('host', config.expectedHost)
+      .set('origin', config.publicOrigin)
+      .set('cookie', sessionCookie)
+      .send({});
+    expect(withoutCsrf.status).toBe(403);
+
+    const authority = await csrf(app);
+    const remove = (administratorId: string, body: object = {}) =>
+      request(app)
+        .delete(`/api/administrators/${administratorId}`)
+        .set('host', config.expectedHost)
+        .set('origin', config.publicOrigin)
+        .set('cookie', authority.cookie)
+        .set('x-csrf-token', authority.token)
+        .send(body);
+
+    expect((await remove(id)).status).toBe(200);
+    expect(upstream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: {},
+        method: 'DELETE',
+        path: `/v1/platform-admin/administrators/${id}`,
+      }),
+    );
+    expect((await remove('not-a-uuid')).status).toBe(422);
+    expect((await remove(id, { force: true })).status).toBe(422);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
 });

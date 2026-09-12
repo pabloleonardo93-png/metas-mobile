@@ -116,6 +116,9 @@ void test(
         VALUES (:identityId,:adminId,'GOOGLE','synthetic-subject',now());
       INSERT INTO metas.platform_admin_sessions(id,platform_admin_id,identity_id,token_hash,assurance_level,mfa_verified_at,step_up_verified_at,expires_at,idle_expires_at)
         VALUES (:sessionId,:adminId,:identityId,decode(repeat('ab',32),'hex'),'MFA_VERIFIED',now(),now(),now()+interval '1 hour',now()+interval '30 minutes');
+      INSERT INTO metas.platform_admin_webauthn_credentials(
+        platform_admin_id,credential_id,public_key,device_type,backed_up
+      ) VALUES(:adminId,'synthetic-admin-credential',decode('abcd','hex'),'singleDevice',FALSE);
     `,
         { replacements: { adminId, identityId, sessionId } },
       );
@@ -153,6 +156,70 @@ void test(
             type: QueryTypes.SELECT,
           },
         );
+      const provisionPlatformAdmin = async (
+        displayName: string,
+        email: string,
+        withCredential = true,
+      ) => {
+        const provisionedAdminId = randomUUID();
+        const provisionedIdentityId = randomUUID();
+        const provisionedSessionId = randomUUID();
+        const subject = `subject-${randomUUID()}`;
+        await admin.query(
+          `INSERT INTO metas.platform_admins(id,display_name,primary_email)
+             VALUES(:adminId,:displayName,:email);
+           INSERT INTO metas.platform_admin_identities(
+             id,platform_admin_id,provider,provider_subject,observed_email,provider_verified_at
+           ) VALUES(:identityId,:adminId,'GOOGLE',:subject,:email,now());
+           INSERT INTO metas.platform_admin_sessions(
+             id,platform_admin_id,identity_id,token_hash,assurance_level,mfa_verified_at,
+             step_up_verified_at,expires_at,idle_expires_at
+           ) VALUES(
+             :sessionId,:adminId,:identityId,:tokenHash,'MFA_VERIFIED',now(),now(),
+             now()+interval '1 hour',now()+interval '30 minutes'
+           )`,
+          {
+            replacements: {
+              adminId: provisionedAdminId,
+              displayName,
+              email,
+              identityId: provisionedIdentityId,
+              sessionId: provisionedSessionId,
+              subject,
+              tokenHash: randomBytes(32),
+            },
+          },
+        );
+        if (withCredential) {
+          await admin.query(
+            `INSERT INTO metas.platform_admin_webauthn_credentials(
+              platform_admin_id,credential_id,public_key,device_type,backed_up
+            ) VALUES(:adminId,:credentialId,:publicKey,'singleDevice',FALSE)`,
+            {
+              replacements: {
+                adminId: provisionedAdminId,
+                credentialId: `credential-${randomUUID()}`,
+                publicKey: Buffer.from('synthetic-public-key'),
+              },
+            },
+          );
+        }
+        return {
+          adminId: provisionedAdminId,
+          email,
+          identityId: provisionedIdentityId,
+          session: {
+            assuranceLevel: 'MFA_VERIFIED' as const,
+            expiresAt: '',
+            mfaVerifiedAt: new Date().toISOString(),
+            platformAdminId: provisionedAdminId,
+            sessionId: provisionedSessionId,
+            stepUpVerifiedAt: new Date().toISOString(),
+          },
+          sessionId: provisionedSessionId,
+          subject,
+        };
+      };
       const write = (
         operation: 'savePharmacy' | 'updateEmployee' | 'linkEmployee',
         id: string | null,
@@ -1055,6 +1122,326 @@ void test(
         },
       );
       await t.test(
+        'remoção revoga acesso imediatamente e reautorização exige novo convite e enrollment',
+        async () => {
+          const target = await provisionPlatformAdmin('Admin Removível', 'removivel@example.test');
+          await admin.query(
+            `INSERT INTO metas.platform_admin_first_enrollment_requests(
+               platform_admin_id,session_id,session_token_version,expires_at
+             ) VALUES(:adminId,:sessionId,0,now()+interval '10 minutes');
+             INSERT INTO metas.platform_admin_mfa_recovery_requests(
+               platform_admin_id,session_id,session_token_version,expires_at
+             ) VALUES(:adminId,:sessionId,0,now()+interval '10 minutes')`,
+            { replacements: { adminId: target.adminId, sessionId: target.sessionId } },
+          );
+          await assert.rejects(accessService.remove(session, adminId, randomUUID()), {
+            code: 'PLATFORM_ADMIN_SELF_REMOVAL_FORBIDDEN',
+          });
+          await accessService.remove(session, target.adminId, randomUUID());
+
+          const [removed] = await admin.query<{
+            active_credentials: string;
+            active_sessions: string;
+            disabled_identities: string;
+            enrollment_status: string;
+            removed_at: Date | null;
+            recovery_status: string;
+            status: string;
+          }>(
+            `SELECT admin.status,admin.removed_at,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_sessions session
+               WHERE session.platform_admin_id=admin.id AND session.revoked_at IS NULL) active_sessions,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+               WHERE credential.platform_admin_id=admin.id AND credential.revoked_at IS NULL) active_credentials,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_identities identity
+               WHERE identity.platform_admin_id=admin.id AND identity.disabled_at IS NOT NULL) disabled_identities,
+              (SELECT status FROM metas.platform_admin_first_enrollment_requests enrollment
+               WHERE enrollment.platform_admin_id=admin.id) enrollment_status,
+              (SELECT status FROM metas.platform_admin_mfa_recovery_requests recovery
+               WHERE recovery.platform_admin_id=admin.id) recovery_status
+             FROM metas.platform_admins admin WHERE admin.id=:adminId`,
+            { replacements: { adminId: target.adminId }, type: QueryTypes.SELECT },
+          );
+          assert.equal(removed?.status, 'REMOVED');
+          assert.ok(removed?.removed_at);
+          assert.equal(removed?.active_sessions, '0');
+          assert.equal(removed?.active_credentials, '0');
+          assert.equal(removed?.disabled_identities, '1');
+          assert.equal(removed?.enrollment_status, 'REVOKED');
+          assert.equal(removed?.recovery_status, 'REVOKED');
+          await assert.rejects(accessService.remove(session, target.adminId, randomUUID()), {
+            code: 'PLATFORM_ADMIN_ALREADY_REMOVED',
+          });
+          await assert.rejects(accessService.remove(session, randomUUID(), randomUUID()), {
+            code: 'PLATFORM_ADMIN_NOT_FOUND',
+          });
+          await assert.rejects(
+            googleLogin(target.email, target.subject),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_DENIED'),
+          );
+
+          const cancelled = await accessService.invite(
+            session,
+            { displayName: 'Admin Removível', email: target.email },
+            randomUUID(),
+          );
+          await accessService.cancel(session, cancelled.id, randomUUID());
+          await assert.rejects(
+            googleLogin(target.email, target.subject),
+            hasDatabaseMessage('PLATFORM_ADMIN_ACCESS_DENIED'),
+          );
+
+          const concurrentInvites = await Promise.allSettled([
+            accessService.invite(
+              session,
+              { displayName: 'Admin Reautorizada', email: target.email },
+              randomUUID(),
+            ),
+            accessService.invite(
+              session,
+              { displayName: 'Admin Reautorizada', email: target.email },
+              randomUUID(),
+            ),
+          ]);
+          assert.equal(concurrentInvites.filter(({ status }) => status === 'fulfilled').length, 1);
+          assert.equal(concurrentInvites.filter(({ status }) => status === 'rejected').length, 1);
+
+          const authenticated = await googleLogin(target.email, target.subject);
+          const reauthorizedSessionId = authenticated[0]!.session_id;
+          assert.equal(authenticated[0]?.assurance_level, 'GOOGLE_ONLY');
+          const [beforeEnrollment] = await admin.query<{
+            active_credentials: string;
+            old_session_revoked: boolean;
+            removed_at: Date | null;
+            status: string;
+          }>(
+            `SELECT admin.status,admin.removed_at,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+               WHERE credential.platform_admin_id=admin.id AND credential.revoked_at IS NULL) active_credentials,
+              (SELECT revoked_at IS NOT NULL FROM metas.platform_admin_sessions
+               WHERE id=:oldSessionId) old_session_revoked
+             FROM metas.platform_admins admin WHERE admin.id=:adminId`,
+            {
+              replacements: { adminId: target.adminId, oldSessionId: target.sessionId },
+              type: QueryTypes.SELECT,
+            },
+          );
+          assert.equal(beforeEnrollment?.status, 'ACTIVE');
+          assert.ok(beforeEnrollment?.removed_at);
+          assert.equal(beforeEnrollment?.active_credentials, '0');
+          assert.equal(beforeEnrollment?.old_session_revoked, true);
+
+          const [enrollment] = await withPlatformAdminDatabaseContext(
+            runtime,
+            { platformAdminId: target.adminId, sessionId: reauthorizedSessionId },
+            (transaction) =>
+              runtime.query<{ enrollment_request_id: string }>(
+                `SELECT * FROM metas.request_platform_admin_first_enrollment(
+                  CURRENT_TIMESTAMP+interval '10 minutes',CAST(:requestId AS UUID),NULL,NULL
+                )`,
+                { replacements: { requestId: randomUUID() }, transaction, type: QueryTypes.SELECT },
+              ),
+          );
+          await accessService.approveFirstEnrollment(
+            session,
+            enrollment!.enrollment_request_id,
+            randomUUID(),
+          );
+          const challengeId = (
+            await withPlatformAdminDatabaseContext(
+              runtime,
+              { platformAdminId: target.adminId, sessionId: reauthorizedSessionId },
+              (transaction) =>
+                runtime.query<{ id: string }>(
+                  `SELECT metas.create_platform_admin_webauthn_challenge(
+                    'REGISTRATION',:challengeHash,CURRENT_TIMESTAMP+interval '5 minutes',300
+                  ) id`,
+                  {
+                    replacements: { challengeHash: randomBytes(32) },
+                    transaction,
+                    type: QueryTypes.SELECT,
+                  },
+                ),
+            )
+          )[0]!.id;
+          await withPlatformAdminDatabaseContext(
+            runtime,
+            { platformAdminId: target.adminId, sessionId: reauthorizedSessionId },
+            async (transaction) => {
+              await runtime.query(
+                "SELECT * FROM metas.consume_platform_admin_webauthn_challenge(CAST(:id AS UUID),'REGISTRATION')",
+                { replacements: { id: challengeId }, transaction },
+              );
+              await runtime.query(
+                `SELECT * FROM metas.register_platform_admin_webauthn_credential(
+                  CAST(:challengeId AS UUID),:credentialId,:publicKey,0,ARRAY['internal']::TEXT[],
+                  'singleDevice',FALSE,'Novo dispositivo',:tokenHash,300,
+                  CAST(:requestId AS UUID),NULL,NULL
+                )`,
+                {
+                  replacements: {
+                    challengeId,
+                    credentialId: `credential-${randomUUID()}`,
+                    publicKey: Buffer.from('new-public-key'),
+                    requestId: randomUUID(),
+                    tokenHash: randomBytes(32),
+                  },
+                  transaction,
+                },
+              );
+            },
+          );
+          const [completed] = await admin.query<{
+            active_credentials: string;
+            removed_at: Date | null;
+          }>(
+            `SELECT admin.removed_at,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_webauthn_credentials credential
+               WHERE credential.platform_admin_id=admin.id AND credential.revoked_at IS NULL) active_credentials
+             FROM metas.platform_admins admin WHERE admin.id=:adminId`,
+            { replacements: { adminId: target.adminId }, type: QueryTypes.SELECT },
+          );
+          assert.equal(completed?.removed_at, null);
+          assert.equal(completed?.active_credentials, '1');
+          const [audit] = await admin.query<{ total: string }>(
+            `SELECT count(*)::TEXT total FROM metas.platform_admin_audit_events
+             WHERE action='PLATFORM_ADMIN_REMOVED' AND target_id=:adminId`,
+            { replacements: { adminId: target.adminId }, type: QueryTypes.SELECT },
+          );
+          assert.equal(audit?.total, '1');
+        },
+      );
+      await t.test(
+        'purge oportunístico respeita 30 dias, preserva auditoria e não toca em employees',
+        async () => {
+          const recent = await provisionPlatformAdmin('Removida Recente', 'recent@example.test');
+          const almostExpired = await provisionPlatformAdmin(
+            'Removida Quase Expirada',
+            'almost@example.test',
+          );
+          const expired = await provisionPlatformAdmin('Removida Expirada', 'person@example.test');
+          const invitedDuringRetention = await provisionPlatformAdmin(
+            'Removida Reautorizável',
+            'retention-invite@example.test',
+          );
+          await admin.query(
+            `UPDATE metas.platform_admins SET created_at=now()-interval '40 days',
+               status='REMOVED',removed_at=CASE id
+                 WHEN :recentId THEN now()-interval '29 days'
+                 WHEN :almostId THEN now()-interval '30 days'+interval '1 second'
+                 ELSE now()-interval '31 days' END
+             WHERE id IN(:recentId,:almostId,:expiredId);
+             UPDATE metas.platform_admin_identities SET disabled_at=now()
+               WHERE platform_admin_id IN(:recentId,:almostId,:expiredId);
+             UPDATE metas.platform_admin_sessions SET revoked_at=now()
+               WHERE platform_admin_id IN(:recentId,:almostId,:expiredId);
+             UPDATE metas.platform_admin_webauthn_credentials SET revoked_at=now()
+               WHERE platform_admin_id IN(:recentId,:almostId,:expiredId);
+             INSERT INTO metas.platform_admin_audit_events(
+               platform_admin_id,action,target_type,target_id,request_id,outcome,metadata
+             ) VALUES(
+               :expiredId,'PLATFORM_ADMIN_LOGIN','PLATFORM_ADMIN',:expiredId,
+               :requestId,'SUCCESS','{}'::jsonb
+             )`,
+            {
+              replacements: {
+                almostId: almostExpired.adminId,
+                expiredId: expired.adminId,
+                recentId: recent.adminId,
+                requestId: randomUUID(),
+              },
+            },
+          );
+
+          await accessService.remove(session, invitedDuringRetention.adminId, randomUUID());
+          await accessService.invite(
+            session,
+            { displayName: 'Reautorizada em Retenção', email: invitedDuringRetention.email },
+            randomUUID(),
+          );
+          await admin.query(
+            `UPDATE metas.platform_admins
+             SET created_at=now()-interval '40 days',removed_at=now()-interval '31 days'
+             WHERE id=:adminId`,
+            { replacements: { adminId: invitedDuringRetention.adminId } },
+          );
+          const concurrentPurgeAndLogin = await Promise.allSettled([
+            accessService.list(session),
+            googleLogin(invitedDuringRetention.email, invitedDuringRetention.subject),
+          ]);
+          assert.equal(
+            concurrentPurgeAndLogin.filter(({ status }) => status === 'fulfilled').length,
+            2,
+          );
+          const [retainedInvitation] = await admin.query<{
+            purged_at: Date | null;
+            status: string;
+          }>('SELECT status,purged_at FROM metas.platform_admins WHERE id=:adminId', {
+            replacements: { adminId: invitedDuringRetention.adminId },
+            type: QueryTypes.SELECT,
+          });
+          assert.equal(retainedInvitation?.status, 'ACTIVE');
+          assert.equal(retainedInvitation?.purged_at, null);
+
+          await accessService.list(session);
+          const retention = await admin.query<{
+            id: string;
+            primary_email: string;
+            purged_at: Date | null;
+          }>(
+            `SELECT id,primary_email::TEXT,purged_at FROM metas.platform_admins
+             WHERE id IN(:recentId,:almostId,:expiredId) ORDER BY id`,
+            {
+              replacements: {
+                almostId: almostExpired.adminId,
+                expiredId: expired.adminId,
+                recentId: recent.adminId,
+              },
+              type: QueryTypes.SELECT,
+            },
+          );
+          const byId = new Map(retention.map((row) => [row.id, row]));
+          assert.equal(byId.get(recent.adminId)?.purged_at, null);
+          assert.equal(byId.get(almostExpired.adminId)?.purged_at, null);
+          assert.ok(byId.get(expired.adminId)?.purged_at);
+          assert.notEqual(byId.get(expired.adminId)?.primary_email, expired.email);
+
+          const [preserved] = await admin.query<{
+            audit_events: string;
+            employee_users: string;
+            identities: string;
+            purge_events: string;
+          }>(
+            `SELECT
+              (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events
+               WHERE platform_admin_id=:adminId) audit_events,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_audit_events
+               WHERE action='PLATFORM_ADMIN_PURGED' AND target_id=:adminId) purge_events,
+              (SELECT count(*)::TEXT FROM metas.platform_admin_identities
+               WHERE platform_admin_id=:adminId) identities,
+              (SELECT count(*)::TEXT FROM metas.users user_account
+               JOIN metas.employees employee ON employee.user_id=user_account.id
+               WHERE user_account.primary_email=:email) employee_users`,
+            {
+              replacements: { adminId: expired.adminId, email: expired.email },
+              type: QueryTypes.SELECT,
+            },
+          );
+          assert.equal(preserved?.identities, '0');
+          assert.ok(Number(preserved?.employee_users) > 0);
+          assert.equal(preserved?.audit_events, '1');
+          assert.equal(preserved?.purge_events, '1');
+
+          await accessService.list(session);
+          const [idempotent] = await admin.query<{ total: string }>(
+            `SELECT count(*)::TEXT total FROM metas.platform_admin_audit_events
+             WHERE action='PLATFORM_ADMIN_PURGED' AND target_id=:adminId`,
+            { replacements: { adminId: expired.adminId }, type: QueryTypes.SELECT },
+          );
+          assert.equal(idempotent?.total, '1');
+        },
+      );
+      await t.test(
         'runtime sem acesso direto, operator sem EXECUTE, contexto ausente e Google-only bloqueados no banco',
         async () => {
           for (const sql of [
@@ -1190,6 +1577,40 @@ void test(
           );
         },
       );
+      await t.test('concorrência nunca remove os dois últimos administradores ativos', async () => {
+        const first = await provisionPlatformAdmin(
+          'Primeira Admin Concorrente',
+          'first.concurrent@example.test',
+        );
+        const second = await provisionPlatformAdmin(
+          'Segunda Admin Concorrente',
+          'second.concurrent@example.test',
+        );
+        await admin.query(
+          `UPDATE metas.platform_admins
+               SET status='REMOVED',removed_at=COALESCE(removed_at,now()),purged_at=NULL
+             WHERE status='ACTIVE' AND id NOT IN(:firstId,:secondId);
+             UPDATE metas.platform_admin_identities SET disabled_at=COALESCE(disabled_at,now())
+               WHERE platform_admin_id NOT IN(:firstId,:secondId);
+             UPDATE metas.platform_admin_sessions SET revoked_at=COALESCE(revoked_at,now())
+               WHERE platform_admin_id NOT IN(:firstId,:secondId);
+             UPDATE metas.platform_admin_webauthn_credentials SET revoked_at=COALESCE(revoked_at,now())
+               WHERE platform_admin_id NOT IN(:firstId,:secondId)`,
+          { replacements: { firstId: first.adminId, secondId: second.adminId } },
+        );
+        const concurrentService = new PostgresPlatformAdminAccessService(runtime, 300);
+        const removals = await Promise.allSettled([
+          concurrentService.remove(first.session, second.adminId, randomUUID()),
+          concurrentService.remove(second.session, first.adminId, randomUUID()),
+        ]);
+        assert.equal(removals.filter(({ status }) => status === 'fulfilled').length, 1);
+        assert.equal(removals.filter(({ status }) => status === 'rejected').length, 1);
+        const [remaining] = await admin.query<{ total: string }>(
+          "SELECT count(*)::TEXT total FROM metas.platform_admins WHERE status='ACTIVE'",
+          { type: QueryTypes.SELECT },
+        );
+        assert.equal(remaining?.total, '1');
+      });
     } finally {
       await Promise.all(connections.map((db) => db.close()));
       if (started)
