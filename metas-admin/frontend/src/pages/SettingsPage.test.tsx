@@ -11,6 +11,7 @@ const accessApiMocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   invite: vi.fn(),
   list: vi.fn(),
+  remove: vi.fn(),
 }));
 
 vi.mock('../auth/AuthContext', () => ({
@@ -67,6 +68,15 @@ const awaitingApproval = {
   enrollmentRequestId: '55555555-5555-4555-8555-555555555555',
   lastAccessAt: '2026-09-10T12:30:00.000Z',
 };
+const removableAdmin = {
+  id: '66666666-6666-4666-8666-666666666666',
+  displayName: 'Marian Cordeiro',
+  email: 'marian@example.test',
+  status: 'ACTIVE' as const,
+  invitationId: null,
+  enrollmentRequestId: null,
+  lastAccessAt: '2026-09-11T09:00:00.000Z',
+};
 
 const renderSettings = async () => {
   await act(async () => {
@@ -77,10 +87,13 @@ const renderSettings = async () => {
 
 describe('configurações de administradores', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    accessApiMocks.list.mockResolvedValue({ items: [currentAdmin, pending, awaitingApproval] });
+    vi.resetAllMocks();
+    accessApiMocks.list.mockResolvedValue({
+      items: [currentAdmin, pending, awaitingApproval, removableAdmin],
+    });
     accessApiMocks.invite.mockResolvedValue({ id: pending.id });
     accessApiMocks.cancel.mockResolvedValue({ id: pending.id });
+    accessApiMocks.remove.mockResolvedValue({ id: removableAdmin.id });
     accessApiMocks.approve.mockResolvedValue({
       id: awaitingApproval.enrollmentRequestId,
     });
@@ -101,6 +114,81 @@ describe('configurações de administradores', () => {
       within(currentAdminRow!).queryByRole('button', { name: 'Aprovar dispositivo' }),
     ).toBeNull();
     expect(screen.getByRole('button', { name: 'Cancelar acesso' })).toBeEnabled();
+    expect(
+      within(currentAdminRow!).queryByRole('button', { name: /Mais ações/iu }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('oferece remoção somente para outro administrador ativo e exige confirmação explícita', async () => {
+    const user = userEvent.setup();
+    await renderSettings();
+    const menuTrigger = await screen.findByRole('button', {
+      name: 'Mais ações para Marian Cordeiro',
+    });
+
+    await user.click(menuTrigger);
+    await user.click(screen.getByRole('menuitem', { name: 'Remover administrador' }));
+    const dialog = screen.getByRole('dialog', { name: 'Remover administrador?' });
+    expect(within(dialog).getByText(/Marian Cordeiro/iu)).toBeInTheDocument();
+    expect(within(dialog).getByText(/30 dias/iu)).toBeInTheDocument();
+    expect(accessApiMocks.remove).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }));
+    expect(screen.queryByRole('dialog', { name: 'Remover administrador?' })).toBeNull();
+    expect(accessApiMocks.remove).not.toHaveBeenCalled();
+  });
+
+  it('confirma identidade, bloqueia clique duplo e atualiza a lista após remover', async () => {
+    let finishRemoval!: () => void;
+    accessApiMocks.remove.mockReturnValue(
+      new Promise<{ id: string }>((resolve) => {
+        finishRemoval = () => resolve({ id: removableAdmin.id });
+      }),
+    );
+    accessApiMocks.list
+      .mockResolvedValueOnce({ items: [currentAdmin, pending, awaitingApproval, removableAdmin] })
+      .mockResolvedValueOnce({ items: [currentAdmin, pending, awaitingApproval] });
+    const user = userEvent.setup();
+    await renderSettings();
+    await user.click(
+      await screen.findByRole('button', { name: 'Mais ações para Marian Cordeiro' }),
+    );
+    await user.click(screen.getByRole('menuitem', { name: 'Remover administrador' }));
+    const removeButton = screen.getByRole('button', { name: 'Remover' });
+
+    await Promise.all([user.click(removeButton), user.click(removeButton)]);
+    await waitFor(() => expect(accessApiMocks.remove).toHaveBeenCalledOnce());
+    expect(authenticateWithPasskey).toHaveBeenCalledOnce();
+    expect(accessApiMocks.remove).toHaveBeenCalledWith(removableAdmin.id);
+    expect(screen.getByRole('button', { name: /^Removendo/iu })).toBeDisabled();
+
+    finishRemoval();
+    expect(await screen.findByText('Administrador removido com sucesso.')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Mais ações para Marian Cordeiro' }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it('fecha a confirmação com Escape e apresenta erro seguro da remoção', async () => {
+    const user = userEvent.setup();
+    await renderSettings();
+    const openRemoval = async () => {
+      await user.click(screen.getByRole('button', { name: 'Mais ações para Marian Cordeiro' }));
+      await user.click(screen.getByRole('menuitem', { name: 'Remover administrador' }));
+    };
+
+    await openRemoval();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Remover administrador?' })).toBeNull();
+
+    const removalError = new Error('Não é possível remover o último administrador ativo.');
+    removalError.name = 'AdminApiError';
+    accessApiMocks.remove.mockRejectedValueOnce(removalError);
+    await openRemoval();
+    await user.click(screen.getByRole('button', { name: 'Remover' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(removalError.message);
   });
 
   it('confirma identidade antes de autorizar acesso e envia somente nome e e-mail', async () => {

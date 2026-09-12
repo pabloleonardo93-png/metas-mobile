@@ -50,6 +50,10 @@ const setup = (
       calls.push({ method: 'cancel', arguments: args });
       return Promise.resolve({ id: otherId });
     },
+    remove: (...args) => {
+      calls.push({ method: 'remove', arguments: args });
+      return Promise.resolve({ id: otherId });
+    },
     approveFirstEnrollment: (...args) => {
       calls.push({ method: 'approve', arguments: args });
       return Promise.resolve({ id: otherId });
@@ -149,6 +153,23 @@ void test('convite, cancelamento e aprovação validam contratos estritos e enca
   ]) {
     assert.equal(response.status, 422);
   }
+});
+
+void test('remoção exige operação sensível, UUID válido e corpo estritamente vazio', async () => {
+  const { app, calls } = setup();
+  const remove = (administratorId: string, body: object = {}) =>
+    request(app)
+      .delete(`/administrators/${administratorId}`)
+      .auth('synthetic', { type: 'bearer' })
+      .send(body);
+
+  assert.equal((await request(app).delete(`/administrators/${otherId}`).send({})).status, 401);
+  assert.equal((await remove(otherId)).status, 200);
+  assert.equal(calls[0]?.method, 'remove');
+  assert.equal(calls[0]?.arguments[1], otherId);
+  assert.equal((await remove('not-a-uuid')).status, 422);
+  assert.equal((await remove(otherId, { force: true })).status, 422);
+  assert.equal(calls.length, 1);
 });
 
 void test('operações sensíveis aplicam rate limit e falham fechadas se o store estiver indisponível', async () => {

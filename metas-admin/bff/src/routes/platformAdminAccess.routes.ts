@@ -56,6 +56,18 @@ export const createPlatformAdminAccessRouter = (
     });
     response.status(201).json(parse(platformAdminAccessMutationSchema, result, true));
   });
+  router.delete('/:administratorId', csrf, async (request, response) => {
+    parse(z.object({}).strict(), request.body ?? {});
+    const administratorId = parse(z.uuid(), request.params.administratorId);
+    const result = await client.request({
+      method: 'DELETE',
+      path: `/v1/platform-admin/administrators/${administratorId}`,
+      body: {},
+      requestId: request.requestId,
+      sessionToken: session(request.get('cookie'))!,
+    });
+    response.json(parse(platformAdminAccessMutationSchema, result, true));
+  });
   const operations = [
     { route: '/:invitationId/cancel', parameter: 'invitationId', suffix: 'cancel' },
     { route: '/first-enrollment/:requestId/approve', parameter: 'requestId', suffix: 'approve' },

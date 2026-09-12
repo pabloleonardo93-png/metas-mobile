@@ -45,6 +45,11 @@ export const createPlatformAdminAccessRouter = (
     const input = parse(platformAdminInvitationInputSchema, request.body);
     response.status(201).json(await service.invite(sessionFrom(request), input, request.requestId));
   });
+  router.delete('/:administratorId', sensitiveOperation, async (request, response) => {
+    parse(z.object({}).strict(), request.body ?? {});
+    const administratorId = parse(z.uuid(), request.params.administratorId);
+    response.json(await service.remove(sessionFrom(request), administratorId, request.requestId));
+  });
   router.post('/:invitationId/cancel', sensitiveOperation, async (request, response) => {
     parse(z.object({}).strict(), request.body ?? {});
     const invitationId = parse(z.uuid(), request.params.invitationId);
