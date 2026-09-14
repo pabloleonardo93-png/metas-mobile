@@ -49,7 +49,7 @@ const securityHeaders = helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   hsts: { includeSubDomains: true, maxAge: 31_536_000, preload: true },
-  referrerPolicy: { policy: 'no-referrer' },
+  referrerPolicy: { policy: 'same-origin' },
 });
 
 const apiRequestId: RequestHandler = (request, response, next) => {

@@ -85,6 +85,22 @@ const postMutation = (
     )
     .send(body);
 
+const postGoogleLogin = (
+  app: ReturnType<typeof createApp>,
+  csrf: { cookie: string; token: string } | null,
+  sourceHeaders: Record<string, string>,
+) => {
+  let mutation = request(app)
+    .post('/api/auth/google')
+    .set('host', config.expectedHost)
+    .set(sourceHeaders)
+    .set('content-type', 'application/json');
+  if (csrf !== null) {
+    mutation = mutation.set('x-csrf-token', csrf.token).set('cookie', csrf.cookie);
+  }
+  return mutation.send({ credential: 'c'.repeat(40) });
+};
+
 describe('Admin BFF security boundary', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -98,6 +114,7 @@ describe('Admin BFF security boundary', () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.headers['content-security-policy']).toContain("default-src 'self'");
     expect(response.headers['permissions-policy']).toContain('publickey-credentials-get=(self)');
+    expect(response.headers['referrer-policy']).toBe('same-origin');
     const cookies = setCookieHeaders(response);
     expect(cookies[0]).toContain('__Host-metas-admin-csrf=');
     expect(cookies[0]).toContain('Secure');
@@ -128,6 +145,95 @@ describe('Admin BFF security boundary', () => {
       .set('host', 'preview-project.vercel.app')
       .set('x-forwarded-host', config.expectedHost);
     expect(spoofedForwardedHost.status).toBe(403);
+  });
+
+  it('accepts exact Origin and a same-origin Referer fallback without weakening CSRF', async () => {
+    const { client, requestMock } = createClient(() =>
+      Promise.resolve({
+        admin: {
+          assuranceLevel: 'GOOGLE_ONLY',
+          displayName: 'Admin Teste',
+          id: ADMIN_ID,
+          primaryEmail: 'admin@example.test',
+        },
+        expiresAt: '2026-09-01T12:00:00.000Z',
+        sessionToken: SESSION_TOKEN,
+      }),
+    );
+    const app = createApp({ client, config, logger, staticDirectory: null });
+    const csrf = await establishCsrf(app);
+
+    expect(
+      (
+        await postGoogleLogin(app, csrf, {
+          origin: config.publicOrigin,
+          'sec-fetch-mode': 'same-origin',
+          'sec-fetch-site': 'same-origin',
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await postGoogleLogin(app, csrf, {
+          referer: config.publicOrigin + '/entrar',
+          'sec-fetch-mode': 'same-origin',
+          'sec-fetch-site': 'same-origin',
+          'x-forwarded-host': config.expectedHost,
+          'x-forwarded-proto': 'https',
+        })
+      ).status,
+    ).toBe(200);
+    expect(requestMock).toHaveBeenCalledTimes(2);
+
+    const missingSource = await postGoogleLogin(app, csrf, {});
+    expect(missingSource.status).toBe(403);
+    expect(bodyFrom<{ code: string }>(missingSource).code).toBe('UNTRUSTED_ORIGIN');
+
+    const nullOrigin = await postGoogleLogin(app, csrf, {
+      origin: 'null',
+      referer: config.publicOrigin + '/entrar',
+    });
+    expect(nullOrigin.status).toBe(403);
+    expect(bodyFrom<{ code: string }>(nullOrigin).code).toBe('UNTRUSTED_ORIGIN');
+
+    const externalOrigin = await postGoogleLogin(app, csrf, {
+      origin: 'https://evil.example',
+    });
+    expect(externalOrigin.status).toBe(403);
+
+    const externalReferer = await postGoogleLogin(app, csrf, {
+      referer: 'https://evil.example/entrar',
+    });
+    expect(externalReferer.status).toBe(403);
+
+    const spoofedForwardedHost = await postGoogleLogin(app, csrf, {
+      referer: config.publicOrigin + '/entrar',
+      'x-forwarded-host': 'evil.example',
+    });
+    expect(spoofedForwardedHost.status).toBe(403);
+    expect(bodyFrom<{ code: string }>(spoofedForwardedHost).code).toBe('UNTRUSTED_HOST');
+
+    const downgradedForwardedProtocol = await postGoogleLogin(app, csrf, {
+      referer: config.publicOrigin + '/entrar',
+      'x-forwarded-proto': 'http',
+    });
+    expect(downgradedForwardedProtocol.status).toBe(403);
+    expect(bodyFrom<{ code: string }>(downgradedForwardedProtocol).code).toBe('UNTRUSTED_HOST');
+
+    const crossSiteMetadata = await postGoogleLogin(app, csrf, {
+      referer: config.publicOrigin + '/entrar',
+      'sec-fetch-site': 'cross-site',
+    });
+    expect(crossSiteMetadata.status).toBe(403);
+    expect(bodyFrom<{ code: string }>(crossSiteMetadata).code).toBe('UNTRUSTED_ORIGIN');
+
+    const missingCsrf = await postGoogleLogin(app, null, {
+      referer: config.publicOrigin + '/entrar',
+      'sec-fetch-site': 'same-origin',
+    });
+    expect(missingCsrf.status).toBe(403);
+    expect(bodyFrom<{ code: string }>(missingCsrf).code).toBe('CSRF_VALIDATION_FAILED');
+    expect(requestMock).toHaveBeenCalledTimes(2);
   });
 
   it('protects login with CSRF and keeps the API bearer out of the response', async () => {

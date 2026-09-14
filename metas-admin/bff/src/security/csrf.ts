@@ -32,6 +32,15 @@ const safeEqual = (left: string, right: string): boolean => {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 };
 
+const isTrustedReferer = (referer: string | undefined, publicOrigin: string): boolean => {
+  if (referer === undefined) return false;
+  try {
+    return new URL(referer).origin === publicOrigin;
+  } catch {
+    return false;
+  }
+};
+
 export const issueCsrfToken = (
   response: Response,
   config: AdminBffConfig,
@@ -47,10 +56,31 @@ export const issueCsrfToken = (
 };
 
 const validateTrustedRequest = (request: Request, config: AdminBffConfig): void => {
-  if (request.get('host') !== config.expectedHost) {
+  const forwardedHost = request.get('x-forwarded-host');
+  const forwardedProtocol = request.get('x-forwarded-proto');
+  const publicOrigin = new URL(config.publicOrigin);
+  if (
+    request.get('host') !== config.expectedHost ||
+    (forwardedHost !== undefined && forwardedHost !== config.expectedHost) ||
+    (forwardedProtocol !== undefined && forwardedProtocol !== publicOrigin.protocol.slice(0, -1))
+  ) {
     throw new BffError(403, 'UNTRUSTED_HOST', 'Origem da requisição não autorizada.');
   }
-  if (request.get('origin') !== config.publicOrigin) {
+
+  const fetchSite = request.get('sec-fetch-site');
+  if (fetchSite !== undefined && fetchSite !== 'same-origin') {
+    throw new BffError(403, 'UNTRUSTED_ORIGIN', 'Origem da requisição não autorizada.');
+  }
+
+  const origin = request.get('origin');
+  if (origin !== undefined) {
+    if (origin !== config.publicOrigin) {
+      throw new BffError(403, 'UNTRUSTED_ORIGIN', 'Origem da requisição não autorizada.');
+    }
+    return;
+  }
+
+  if (!isTrustedReferer(request.get('referer'), config.publicOrigin)) {
     throw new BffError(403, 'UNTRUSTED_ORIGIN', 'Origem da requisição não autorizada.');
   }
 };
